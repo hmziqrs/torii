@@ -58,11 +58,33 @@ pub fn init(cx: &mut App) {
     AppState::init(cx);
 
     // Restore persisted theme settings
-    if let Ok(json) = std::fs::read_to_string("target/state.json") {
-        if let Ok(s) = serde_json::from_str::<PersistedState>(&json) {
-            if let Some(show) = s.scrollbar_show {
-                gpui_component::Theme::global_mut(cx).scrollbar_show = show;
+    let persisted = std::fs::read_to_string("target/state.json")
+        .ok()
+        .and_then(|json| serde_json::from_str::<PersistedState>(&json).ok());
+
+    // Load extra themes from the themes/ directory (with hot-reload)
+    let persisted_for_closure = persisted.clone();
+    if let Err(err) = gpui_component::ThemeRegistry::watch_dir(
+        std::path::PathBuf::from("./themes"),
+        cx,
+        move |cx| {
+            if let Some(ref s) = persisted_for_closure {
+                if let Some(theme) = gpui_component::ThemeRegistry::global(cx)
+                    .themes()
+                    .get(&s.theme)
+                    .cloned()
+                {
+                    gpui_component::Theme::global_mut(cx).apply_config(&theme);
+                }
             }
+        },
+    ) {
+        tracing::error!("Failed to watch themes directory: {}", err);
+    }
+
+    if let Some(ref s) = persisted {
+        if let Some(show) = s.scrollbar_show {
+            gpui_component::Theme::global_mut(cx).scrollbar_show = show;
         }
     }
     cx.refresh_windows();
