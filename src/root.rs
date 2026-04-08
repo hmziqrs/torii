@@ -1,18 +1,26 @@
 use gpui::{prelude::*, *};
-use gpui_component::{ActiveTheme as _, Root, v_flex};
+use gpui_component::{
+    ActiveTheme as _, Icon, IconName, Root,
+    input::{Input, InputEvent, InputState},
+    resizable::{h_resizable, resizable_panel},
+    sidebar::{Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem},
+    v_flex, Sizable as _,
+};
 
-use crate::sidebar::{AppSidebar, Page};
+use crate::sidebar::Page;
 use crate::title_bar::AppTitleBar;
 use crate::views::{AboutPage, HomePage, SettingsPage};
 
 pub struct AppRoot {
     focus_handle: FocusHandle,
     title_bar: Entity<AppTitleBar>,
-    sidebar: Entity<AppSidebar>,
     active_page: Page,
+    collapsed: bool,
+    search_input: Entity<InputState>,
     home_page: Entity<HomePage>,
     settings_page: Entity<SettingsPage>,
     about_page: Entity<AboutPage>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl AppRoot {
@@ -22,26 +30,25 @@ impl AppRoot {
         cx: &mut Context<Self>,
     ) -> Self {
         let title_bar = cx.new(|cx| AppTitleBar::new(title, window, cx));
-        let sidebar = cx.new(|cx| AppSidebar::new(Page::Home, window, cx));
         let home_page = cx.new(|_| HomePage::new());
         let settings_page = cx.new(|cx| SettingsPage::new(window, cx));
         let about_page = cx.new(|_| AboutPage::new());
+        let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search..."));
 
-        // Listen for page changes from sidebar
-        cx.subscribe(&sidebar, |this, _, page: &Page, cx| {
-            this.active_page = *page;
+        let _subscriptions = vec![cx.subscribe(&search_input, |_, _, _: &InputEvent, cx| {
             cx.notify();
-        })
-        .detach();
+        })];
 
         Self {
             focus_handle: cx.focus_handle(),
             title_bar,
-            sidebar,
             active_page: Page::Home,
+            collapsed: false,
+            search_input,
             home_page,
             settings_page,
             about_page,
+            _subscriptions,
         }
     }
 
@@ -66,6 +73,43 @@ impl Render for AppRoot {
         let dialog_layer = Root::render_dialog_layer(window, cx);
         let notification_layer = Root::render_notification_layer(window, cx);
         let page_title = self.active_page.title();
+        let active_page = self.active_page;
+
+        let sidebar = Sidebar::new("app-sidebar")
+            .w(relative(1.))
+            .border_0()
+            .collapsed(self.collapsed)
+            .header(
+                v_flex().w_full().gap_4().child(
+                    SidebarHeader::new().w_full().child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(cx.theme().radius_lg)
+                            .bg(cx.theme().primary)
+                            .text_color(cx.theme().primary_foreground)
+                            .size_8()
+                            .flex_shrink_0()
+                            .child(Icon::new(IconName::Star)),
+                    ),
+                ),
+            )
+            .child(
+                SidebarGroup::new("Navigation").child(
+                    SidebarMenu::new().children(
+                        Page::all().iter().map(|page| {
+                            SidebarMenuItem::new(page.title())
+                                .icon(Icon::new(page.icon()).small())
+                                .active(active_page == *page)
+                                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                    this.active_page = *page;
+                                    cx.notify();
+                                }))
+                        }),
+                    ),
+                ),
+            );
 
         v_flex()
             .size_full()
@@ -76,32 +120,41 @@ impl Render for AppRoot {
                     .flex_1()
                     .overflow_hidden()
                     .child(
-                        div().flex().size_full().child(self.sidebar.clone()).child(
-                            v_flex()
-                                .flex_1()
-                                .h_full()
-                                .overflow_x_hidden()
-                                .child(
-                                    div()
-                                        .id("header")
-                                        .p_4()
-                                        .border_b_1()
-                                        .border_color(cx.theme().border)
+                        h_resizable("app-layout")
+                            .child(
+                                resizable_panel()
+                                    .size(px(255.))
+                                    .size_range(px(60.)..px(320.))
+                                    .child(sidebar),
+                            )
+                            .child(
+                                resizable_panel().child(
+                                    v_flex()
+                                        .flex_1()
+                                        .h_full()
+                                        .overflow_x_hidden()
                                         .child(
                                             div()
-                                                .text_xl()
-                                                .font_weight(FontWeight::BOLD)
-                                                .child(page_title),
+                                                .id("header")
+                                                .p_4()
+                                                .border_b_1()
+                                                .border_color(cx.theme().border)
+                                                .child(
+                                                    div()
+                                                        .text_xl()
+                                                        .font_weight(FontWeight::BOLD)
+                                                        .child(page_title),
+                                                ),
+                                        )
+                                        .child(
+                                            div()
+                                                .id("page")
+                                                .flex_1()
+                                                .overflow_y_scroll()
+                                                .child(self.active_page_view()),
                                         ),
-                                )
-                                .child(
-                                    div()
-                                        .id("page")
-                                        .flex_1()
-                                        .overflow_y_scroll()
-                                        .child(self.active_page_view()),
                                 ),
-                        ),
+                            ),
                     ),
             )
             .children(sheet_layer)
