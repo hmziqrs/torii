@@ -1,0 +1,223 @@
+use gpui::{
+    Action, App, AppContext as _, Bounds, Focusable as _, Global, KeyBinding, SharedString,
+    WindowBounds, WindowKind, WindowOptions, actions, px, size,
+};
+use gpui_component::{
+    ActiveTheme, Root, TitleBar, WindowExt, scroll::ScrollbarShow, text::markdown,
+};
+use serde::{Deserialize, Serialize};
+
+// ---------------------------------------------------------------------------
+// Actions
+// ---------------------------------------------------------------------------
+
+actions!(app, [About, Quit, ToggleSearch]);
+
+#[derive(Action, Clone, PartialEq, Eq, serde::Deserialize)]
+#[action(namespace = app, no_json)]
+pub struct SelectLocale(pub SharedString);
+
+#[derive(Action, Clone, PartialEq, Eq, serde::Deserialize)]
+#[action(namespace = app, no_json)]
+pub struct SelectFont(pub usize);
+
+#[derive(Action, Clone, PartialEq, Eq, serde::Deserialize)]
+#[action(namespace = app, no_json)]
+pub struct SelectRadius(pub usize);
+
+// ---------------------------------------------------------------------------
+// Global state
+// ---------------------------------------------------------------------------
+
+pub struct AppState;
+
+impl Global for AppState {}
+
+impl AppState {
+    fn init(cx: &mut App) {
+        cx.set_global::<AppState>(AppState);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------------
+
+pub fn init(cx: &mut App) {
+    use tracing_subscriber::{layer::SubscriberExt as _, util::SubscriberInitExt as _};
+    let _ = tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .with(
+            tracing_subscriber::EnvFilter::from_default_env()
+                .add_directive("gpui_starter=trace".parse().unwrap()),
+        )
+        .try_init();
+
+    // Must be called before using any gpui-component features
+    gpui_component::init(cx);
+    AppState::init(cx);
+
+    // Restore persisted theme settings
+    if let Ok(json) = std::fs::read_to_string("target/state.json") {
+        if let Ok(s) = serde_json::from_str::<PersistedState>(&json) {
+            if let Some(show) = s.scrollbar_show {
+                gpui_component::Theme::global_mut(cx).scrollbar_show = show;
+            }
+        }
+    }
+    cx.refresh_windows();
+
+    // Persist theme on change
+    cx.observe_global::<gpui_component::Theme>(|cx| {
+        let s = PersistedState {
+            theme: cx.theme().theme_name().clone(),
+            scrollbar_show: Some(cx.theme().scrollbar_show),
+        };
+        if let Ok(json) = serde_json::to_string_pretty(&s) {
+            let _ = std::fs::write("target/state.json", json);
+        }
+    })
+    .detach();
+
+    // Theme switching actions
+    cx.on_action(|switch: &SwitchTheme, cx| {
+        if let Some(config) = gpui_component::ThemeRegistry::global(cx)
+            .themes()
+            .get(&switch.0)
+            .cloned()
+        {
+            gpui_component::Theme::global_mut(cx).apply_config(&config);
+        }
+        cx.refresh_windows();
+    });
+    cx.on_action(|switch: &SwitchThemeMode, cx| {
+        gpui_component::Theme::change(switch.0, None, cx);
+        cx.refresh_windows();
+    });
+    cx.on_action(|locale: &SelectLocale, cx| {
+        rust_i18n::set_locale(&locale.0.as_str());
+        cx.refresh_windows();
+    });
+
+    // Key bindings
+    cx.bind_keys([
+        KeyBinding::new("/", ToggleSearch, None),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-q", Quit, None),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("alt-f4", Quit, None),
+    ]);
+
+    cx.on_action(|_: &Quit, cx| {
+        cx.quit();
+    });
+
+    cx.on_action(|_: &About, cx| {
+        if let Some(window) = cx.active_window().and_then(|w| w.downcast::<Root>()) {
+            cx.defer(move |cx| {
+                window
+                    .update(cx, |_, window, cx| {
+                        window.defer(cx, |window, cx| {
+                            window.open_alert_dialog(cx, |alert, _, _| {
+                                alert.title("About").description(markdown(
+                                    "GPUI Starter\n\n\
+                                    Version 0.1.0\n\n\
+                                    A boilerplate for GPUI desktop apps.",
+                                ))
+                            });
+                        });
+                    })
+                    .unwrap();
+            });
+        }
+    });
+
+    cx.activate(true);
+}
+
+// ---------------------------------------------------------------------------
+// Window creation
+// ---------------------------------------------------------------------------
+
+pub fn create_new_window(title: &str, cx: &mut App) {
+    let mut window_size = size(px(1400.0), px(900.0));
+    if let Some(display) = cx.primary_display() {
+        let display_size = display.bounds().size;
+        window_size.width = window_size.width.min(display_size.width * 0.85);
+        window_size.height = window_size.height.min(display_size.height * 0.85);
+    }
+    let window_bounds = Bounds::centered(None, window_size, cx);
+    let title = SharedString::from(title.to_string());
+
+    cx.spawn(async move |cx| {
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(window_bounds)),
+            titlebar: Some(TitleBar::title_bar_options()),
+            window_min_size: Some(gpui::Size {
+                width: px(480.),
+                height: px(320.),
+            }),
+            kind: WindowKind::Normal,
+            #[cfg(target_os = "linux")]
+            window_background: gpui::WindowBackgroundAppearance::Transparent,
+            #[cfg(target_os = "linux")]
+            window_decorations: Some(gpui::WindowDecorations::Client),
+            ..Default::default()
+        };
+
+        let window = cx
+            .open_window(options, |window, cx| {
+                let root_view =
+                    cx.new(|cx| crate::root::AppRoot::new(title.clone(), window, cx));
+
+                let focus_handle = root_view.focus_handle(cx);
+                window.defer(cx, move |window, cx| {
+                    focus_handle.focus(window, cx);
+                });
+
+                cx.new(|cx| Root::new(root_view, window, cx))
+            })
+            .expect("failed to open window");
+
+        window.update(cx, |_, window, _| {
+            window.activate_window();
+            window.set_window_title(&title);
+        })?;
+
+        Ok::<_, anyhow::Error>(())
+    })
+    .detach();
+}
+
+// ---------------------------------------------------------------------------
+// Persisted state
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PersistedState {
+    theme: SharedString,
+    scrollbar_show: Option<ScrollbarShow>,
+}
+
+impl Default for PersistedState {
+    fn default() -> Self {
+        Self {
+            theme: "Default Light".into(),
+            scrollbar_show: None,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Re-exported action types used by menus and title_bar
+// ---------------------------------------------------------------------------
+
+use gpui_component::ThemeMode;
+
+#[derive(Action, Clone, PartialEq, Eq, serde::Deserialize)]
+#[action(namespace = app, no_json)]
+pub struct SwitchTheme(pub SharedString);
+
+#[derive(Action, Clone, PartialEq, Eq, serde::Deserialize)]
+#[action(namespace = app, no_json)]
+pub struct SwitchThemeMode(pub ThemeMode);

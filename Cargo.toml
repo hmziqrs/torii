@@ -1,0 +1,53 @@
+[workspace]
+members = ["."]
+
+[workspace.dependencies]
+gpui = { git = "https://github.com/zed-industries/zed" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", features = [
+    "font-kit",
+    "x11",
+    "wayland",
+    "runtime_shaders",
+] }
+# Point to your local checkout of gpui-component.
+# Clone it with: git clone https://github.com/longbridge/gpui-component
+gpui-component = { path = "../gpui-component/crates/ui" }
+gpui-component-assets = { path = "../gpui-component/crates/assets" }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = [
+    "env-filter",
+    "fmt",
+    "registry",
+], default-features = false }
+rust-i18n = "3"
+
+[package]
+name = "gpui-starter"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+gpui.workspace = true
+gpui_platform.workspace = true
+gpui-component.workspace = true
+gpui-component-assets.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+rust-i18n.workspace = true
+
+[profile.dev]
+codegen-units = 16
+debug = "limited"
+split-debuginfo = "unpacked"
+
+[profile.dev.package]
+gpui = { opt-level = 3 }
+gpui_platform = { opt-level = 3 }
+gpui_macros = { opt-level = 3 }
