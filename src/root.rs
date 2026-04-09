@@ -9,7 +9,7 @@ use gpui_component::{
 
 use crate::sidebar::Page;
 use crate::title_bar::AppTitleBar;
-use crate::views::{AboutPage, HomePage, SettingsPage};
+use crate::views::{AboutPage, FormPage, HomePage, SettingsPage};
 
 pub struct AppRoot {
     focus_handle: FocusHandle,
@@ -18,6 +18,7 @@ pub struct AppRoot {
     collapsed: bool,
     search_input: Entity<InputState>,
     home_page: Entity<HomePage>,
+    form_page: Entity<FormPage>,
     settings_page: Entity<SettingsPage>,
     about_page: Entity<AboutPage>,
     _subscriptions: Vec<Subscription>,
@@ -31,6 +32,7 @@ impl AppRoot {
     ) -> Self {
         let title_bar = cx.new(|cx| AppTitleBar::new(title, window, cx));
         let home_page = cx.new(|_| HomePage::new());
+        let form_page = cx.new(|cx| FormPage::new(window, cx));
         let settings_page = cx.new(|cx| SettingsPage::new(window, cx));
         let about_page = cx.new(|_| AboutPage::new());
         let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search..."));
@@ -46,6 +48,7 @@ impl AppRoot {
             collapsed: false,
             search_input,
             home_page,
+            form_page,
             settings_page,
             about_page,
             _subscriptions,
@@ -55,6 +58,7 @@ impl AppRoot {
     fn active_page_view(&self) -> AnyView {
         match self.active_page {
             Page::Home => self.home_page.clone().into(),
+            Page::Form => self.form_page.clone().into(),
             Page::Settings => self.settings_page.clone().into(),
             Page::About => self.about_page.clone().into(),
         }

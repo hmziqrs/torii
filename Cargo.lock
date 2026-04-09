@@ -2348,6 +2348,7 @@ dependencies = [
  "gpui-component",
  "gpui-component-assets",
  "gpui_platform",
+ "regex",
  "rust-i18n",
  "serde",
  "serde_json",
