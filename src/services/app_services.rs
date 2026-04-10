@@ -12,7 +12,10 @@ use crate::{
     },
 };
 
-use super::{recovery::RecoveryCoordinator, ui_preferences::UiPreferencesStoreRef};
+use super::{
+    recovery::RecoveryCoordinator, secret_manager::SecretManager,
+    ui_preferences::UiPreferencesStoreRef,
+};
 
 #[derive(Clone)]
 pub struct Repositories {
@@ -32,6 +35,7 @@ pub struct AppServices {
     pub db: Arc<Database>,
     pub blob_store: Arc<BlobStore>,
     pub secret_store: SecretStoreRef,
+    pub secret_manager: SecretManager,
     pub repos: Repositories,
     pub ui_preferences: UiPreferencesStoreRef,
     pub recovery: RecoveryCoordinator,

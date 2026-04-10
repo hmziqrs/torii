@@ -23,7 +23,11 @@ pub struct RecoveryCoordinator {
 }
 
 impl RecoveryCoordinator {
-    pub fn new(db: Arc<Database>, history_repo: HistoryRepoRef, blob_store: Arc<BlobStore>) -> Self {
+    pub fn new(
+        db: Arc<Database>,
+        history_repo: HistoryRepoRef,
+        blob_store: Arc<BlobStore>,
+    ) -> Self {
         Self {
             db,
             history_repo,

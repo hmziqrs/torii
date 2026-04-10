@@ -3,11 +3,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use sqlx::Row as _;
 
-use crate::domain::{
-    ids::WorkspaceId,
-    revision::RevisionMetadata,
-    workspace::Workspace,
-};
+use crate::domain::{ids::WorkspaceId, revision::RevisionMetadata, workspace::Workspace};
 
 use super::{DbRef, RepoResult};
 

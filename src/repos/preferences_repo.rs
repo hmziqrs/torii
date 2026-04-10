@@ -36,8 +36,8 @@ impl PreferencesRepository for SqlitePreferencesRepository {
 
             if let Some(row) = row {
                 let value_json: String = row.get("value_json");
-                let parsed =
-                    serde_json::from_str::<UiPreferences>(&value_json).context("invalid ui preferences json")?;
+                let parsed = serde_json::from_str::<UiPreferences>(&value_json)
+                    .context("invalid ui preferences json")?;
                 Ok(Some(parsed))
             } else {
                 Ok(None)
@@ -46,7 +46,8 @@ impl PreferencesRepository for SqlitePreferencesRepository {
     }
 
     fn save_ui_preferences(&self, value: &UiPreferences) -> RepoResult<()> {
-        let value_json = serde_json::to_string(value).context("failed to serialize ui preferences")?;
+        let value_json =
+            serde_json::to_string(value).context("failed to serialize ui preferences")?;
         self.db.block_on(async {
             sqlx::query(
                 "INSERT INTO ui_preferences (key, value_json, updated_at)

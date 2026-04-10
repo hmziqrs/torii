@@ -41,9 +41,30 @@ fn migration_roundtrip_creates_and_reuses_schema() -> Result<()> {
     })?;
     assert_eq!(applied, 3);
 
+    let journal_mode: String = db.block_on(async {
+        sqlx::query_scalar("PRAGMA journal_mode;")
+            .fetch_one(db.pool())
+            .await
+    })?;
+    assert_eq!(journal_mode.to_lowercase(), "wal");
+
+    let foreign_keys: i64 = db.block_on(async {
+        sqlx::query_scalar("PRAGMA foreign_keys;")
+            .fetch_one(db.pool())
+            .await
+    })?;
+    assert_eq!(foreign_keys, 1);
+
+    let busy_timeout: i64 = db.block_on(async {
+        sqlx::query_scalar("PRAGMA busy_timeout;")
+            .fetch_one(db.pool())
+            .await
+    })?;
+    assert!(busy_timeout >= 5000);
+
     drop(db);
 
-    let db2 = gpui_starter::infra::db::Database::connect(&paths)?;
+    let db2 = torii::infra::db::Database::connect(&paths)?;
     let applied2: i64 = db2.block_on(async {
         sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations WHERE success = 1")
             .fetch_one(db2.pool())

@@ -55,18 +55,16 @@ impl Render for SettingsPage {
                     .items_center()
                     .justify_between()
                     .child(Label::new(es_fluent::localize("settings_dark_mode", None)))
-                    .child(
-                        Switch::new("dark-mode")
-                            .checked(self.dark_mode)
-                            .on_click(|checked, _, cx| {
-                                let mode = if *checked {
-                                    ThemeMode::Dark
-                                } else {
-                                    ThemeMode::Light
-                                };
-                                crate::app::set_theme_mode(mode, cx);
-                            }),
-                    ),
+                    .child(Switch::new("dark-mode").checked(self.dark_mode).on_click(
+                        |checked, _, cx| {
+                            let mode = if *checked {
+                                ThemeMode::Dark
+                            } else {
+                                ThemeMode::Light
+                            };
+                            crate::app::set_theme_mode(mode, cx);
+                        },
+                    )),
             )
             .child(
                 div()

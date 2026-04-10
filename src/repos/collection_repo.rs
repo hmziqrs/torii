@@ -162,7 +162,9 @@ impl CollectionRepository for SqliteCollectionRepository {
             existing_ids.sort();
             incoming_ids.sort();
             if existing_ids != incoming_ids {
-                return Err(anyhow!("collection reorder set does not match workspace contents"));
+                return Err(anyhow!(
+                    "collection reorder set does not match workspace contents"
+                ));
             }
 
             for (index, id) in ordered_ids.iter().enumerate() {

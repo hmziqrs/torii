@@ -2865,40 +2865,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gpui-starter"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "blake3",
- "bytes",
- "directories",
- "es-fluent",
- "es-fluent-lang",
- "es-fluent-manager-embedded",
- "gpui",
- "gpui-component",
- "gpui-component-assets",
- "gpui-form",
- "gpui_platform",
- "keyring",
- "koruma",
- "koruma-collection",
- "regex",
- "rust-i18n",
- "sea-query",
- "serde",
- "serde_json",
- "sqlx",
- "strum 0.28.0",
- "time",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
 name = "gpui_linux"
 version = "0.1.0"
 source = "git+https://github.com/zed-industries/zed#b473ead8a3e10f52bd6fb3d3ee4a1fb6691e4907"
@@ -7493,6 +7459,40 @@ name = "toml_writer"
 version = "1.1.1+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "756daf9b1013ebe47a8776667b466417e2d4c5679d441c26230efd9ef78692db"
+
+[[package]]
+name = "torii"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "bytes",
+ "directories",
+ "es-fluent",
+ "es-fluent-lang",
+ "es-fluent-manager-embedded",
+ "gpui",
+ "gpui-component",
+ "gpui-component-assets",
+ "gpui-form",
+ "gpui_platform",
+ "keyring",
+ "koruma",
+ "koruma-collection",
+ "regex",
+ "rust-i18n",
+ "sea-query",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "strum 0.28.0",
+ "time",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
 
 [[package]]
 name = "tower"

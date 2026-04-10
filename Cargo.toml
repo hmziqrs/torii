@@ -41,7 +41,7 @@ keyring = "3"
 blake3 = "1"
 
 [package]
-name = "gpui-starter"
+name = "torii"
 version = "0.1.0"
 edition = "2024"
 publish = false

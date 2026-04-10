@@ -1,5 +1,5 @@
 use gpui_component_assets::Assets;
-use gpui_starter::app;
+use torii::app;
 
 fn main() {
     let app = gpui_platform::application().with_assets(Assets);

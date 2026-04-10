@@ -1,5 +1,5 @@
 use anyhow::Result;
-use gpui_starter::domain::{
+use torii::domain::{
     ids::{BlobId, CollectionId, WorkspaceId},
     revision::RevisionMetadata,
 };

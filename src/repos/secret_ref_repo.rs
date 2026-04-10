@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use sqlx::Row as _;
 
-use crate::domain::{ids::SecretRefId, secret_ref::SecretRef, revision::now_unix_ts};
+use crate::domain::{ids::SecretRefId, revision::now_unix_ts, secret_ref::SecretRef};
 
 use super::{DbRef, RepoResult};
 
@@ -115,13 +115,15 @@ impl SecretRefRepository for SqliteSecretRefRepository {
 
     fn delete(&self, owner_kind: &str, owner_id: &str, secret_kind: &str) -> RepoResult<()> {
         self.db.block_on(async {
-            sqlx::query("DELETE FROM secret_refs WHERE owner_kind = ? AND owner_id = ? AND secret_kind = ?")
-                .bind(owner_kind)
-                .bind(owner_id)
-                .bind(secret_kind)
-                .execute(self.db.pool())
-                .await
-                .context("failed to delete secret ref")?;
+            sqlx::query(
+                "DELETE FROM secret_refs WHERE owner_kind = ? AND owner_id = ? AND secret_kind = ?",
+            )
+            .bind(owner_kind)
+            .bind(owner_id)
+            .bind(secret_kind)
+            .execute(self.db.pool())
+            .await
+            .context("failed to delete secret ref")?;
             Ok::<(), anyhow::Error>(())
         })
     }

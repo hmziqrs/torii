@@ -47,12 +47,13 @@ impl Global for LocaleState {}
 
 pub fn init(cx: &mut App) {
     use tracing_subscriber::{layer::SubscriberExt as _, util::SubscriberInitExt as _};
+    let mut filter = tracing_subscriber::EnvFilter::from_default_env();
+    if let Ok(directive) = "torii=trace".parse() {
+        filter = filter.add_directive(directive);
+    }
     let _ = tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
-        .with(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("gpui_starter=trace".parse().unwrap()),
-        )
+        .with(filter)
         .try_init();
 
     // Must be called before using any gpui-component features.
@@ -100,6 +101,17 @@ pub fn init(cx: &mut App) {
     if let Some(ref s) = persisted {
         if let Some(show) = s.scrollbar_show {
             gpui_component::Theme::global_mut(cx).scrollbar_show = show;
+        }
+        if let Some(font_size_px) = s.font_size_px {
+            gpui_component::Theme::global_mut(cx).font_size = px(font_size_px as f32);
+        }
+        if let Some(radius_px) = s.radius_px {
+            gpui_component::Theme::global_mut(cx).radius = px(radius_px as f32);
+            gpui_component::Theme::global_mut(cx).radius_lg = if cx.theme().radius > px(0.) {
+                cx.theme().radius + px(2.)
+            } else {
+                cx.theme().radius
+            };
         }
         if let Some(mode) = s.theme_mode.as_deref().and_then(parse_theme_mode) {
             set_theme_mode(mode, cx);
@@ -285,7 +297,10 @@ fn parse_theme_mode(mode: &str) -> Option<ThemeMode> {
 }
 
 fn persist_ui_preferences(cx: &App) {
-    let Some(services) = cx.try_global::<AppServicesGlobal>().map(|global| global.0.clone()) else {
+    let Some(services) = cx
+        .try_global::<AppServicesGlobal>()
+        .map(|global| global.0.clone())
+    else {
         return;
     };
 
@@ -298,6 +313,8 @@ fn persist_ui_preferences(cx: &App) {
             "light".to_string()
         }),
         locale: Some(current_locale(cx).to_string()),
+        font_size_px: Some(cx.theme().font_size.as_f32().round() as i32),
+        radius_px: Some(cx.theme().radius.as_f32().round() as i32),
     };
 
     if let Err(err) = services.ui_preferences.save(&snapshot) {

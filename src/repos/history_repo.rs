@@ -28,7 +28,8 @@ pub trait HistoryRepository: Send + Sync {
     ) -> RepoResult<()>;
     fn mark_failed(&self, id: HistoryEntryId, message: &str) -> RepoResult<()>;
     fn mark_pending_as_failed_on_startup(&self) -> RepoResult<usize>;
-    fn list_recent(&self, workspace_id: WorkspaceId, limit: usize) -> RepoResult<Vec<HistoryEntry>>;
+    fn list_recent(&self, workspace_id: WorkspaceId, limit: usize)
+    -> RepoResult<Vec<HistoryEntry>>;
     fn referenced_blob_hashes(&self) -> RepoResult<HashSet<String>>;
 }
 
@@ -188,7 +189,11 @@ impl HistoryRepository for SqliteHistoryRepository {
         })
     }
 
-    fn list_recent(&self, workspace_id: WorkspaceId, limit: usize) -> RepoResult<Vec<HistoryEntry>> {
+    fn list_recent(
+        &self,
+        workspace_id: WorkspaceId,
+        limit: usize,
+    ) -> RepoResult<Vec<HistoryEntry>> {
         self.db.block_on(async {
             let rows = sqlx::query(
                 "SELECT id, workspace_id, request_id, method, url, status_code, started_at, completed_at, state, blob_hash, blob_size, error_message, recovery_attempts, finalized_at, created_at, updated_at
@@ -208,10 +213,12 @@ impl HistoryRepository for SqliteHistoryRepository {
 
     fn referenced_blob_hashes(&self) -> RepoResult<HashSet<String>> {
         self.db.block_on(async {
-            let rows = sqlx::query("SELECT DISTINCT blob_hash FROM history_index WHERE blob_hash IS NOT NULL")
-                .fetch_all(self.db.pool())
-                .await
-                .context("failed to load history blob references")?;
+            let rows = sqlx::query(
+                "SELECT DISTINCT blob_hash FROM history_index WHERE blob_hash IS NOT NULL",
+            )
+            .fetch_all(self.db.pool())
+            .await
+            .context("failed to load history blob references")?;
             let mut values = HashSet::new();
             for row in rows {
                 let value: String = row.get("blob_hash");

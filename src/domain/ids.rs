@@ -15,10 +15,9 @@ macro_rules! typed_uuid_id {
             }
 
             pub fn parse(value: &str) -> Result<Self> {
-                Ok(Self(
-                    Uuid::parse_str(value)
-                        .with_context(|| format!("invalid {}: {}", stringify!($name), value))?,
-                ))
+                Ok(Self(Uuid::parse_str(value).with_context(|| {
+                    format!("invalid {}: {}", stringify!($name), value)
+                })?))
             }
 
             pub fn as_uuid(&self) -> Uuid {

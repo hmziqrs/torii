@@ -3,7 +3,7 @@ mod common;
 use std::sync::Arc;
 
 use anyhow::Result;
-use gpui_starter::{
+use torii::{
     infra::{
         blobs::BlobStore,
         secrets::{InMemorySecretStore, SecretStore},

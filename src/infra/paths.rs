@@ -26,7 +26,11 @@ impl AppPaths {
         )
     }
 
-    pub fn from_base_dirs(config_dir: PathBuf, data_dir: PathBuf, cache_dir: PathBuf) -> Result<Self> {
+    pub fn from_base_dirs(
+        config_dir: PathBuf,
+        data_dir: PathBuf,
+        cache_dir: PathBuf,
+    ) -> Result<Self> {
         let paths = Self {
             config_dir,
             data_dir,
@@ -52,8 +56,9 @@ impl AppPaths {
             .with_context(|| format!("failed to create data dir {}", self.data_dir.display()))?;
         std::fs::create_dir_all(&self.cache_dir)
             .with_context(|| format!("failed to create cache dir {}", self.cache_dir.display()))?;
-        std::fs::create_dir_all(self.blobs_dir())
-            .with_context(|| format!("failed to create blobs dir {}", self.blobs_dir().display()))?;
+        std::fs::create_dir_all(self.blobs_dir()).with_context(|| {
+            format!("failed to create blobs dir {}", self.blobs_dir().display())
+        })?;
         std::fs::create_dir_all(self.blobs_temp_dir()).with_context(|| {
             format!(
                 "failed to create blobs temp dir {}",

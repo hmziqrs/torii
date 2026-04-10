@@ -87,8 +87,8 @@ impl BlobStore {
             return Err(anyhow!("blob {} does not exist", hash));
         }
 
-        let mut file = File::open(&path)
-            .with_context(|| format!("failed to open blob {}", path.display()))?;
+        let mut file =
+            File::open(&path).with_context(|| format!("failed to open blob {}", path.display()))?;
         let mut buf = vec![0_u8; limit];
         let read = file
             .read(&mut buf)

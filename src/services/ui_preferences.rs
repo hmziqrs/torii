@@ -13,6 +13,8 @@ pub struct UiPreferencesSnapshot {
     pub scrollbar_show: Option<ScrollbarShow>,
     pub theme_mode: Option<String>,
     pub locale: Option<String>,
+    pub font_size_px: Option<i32>,
+    pub radius_px: Option<i32>,
 }
 
 impl Default for UiPreferencesSnapshot {
@@ -22,6 +24,8 @@ impl Default for UiPreferencesSnapshot {
             scrollbar_show: None,
             theme_mode: Some("light".to_string()),
             locale: Some("en".to_string()),
+            font_size_px: Some(16),
+            radius_px: Some(6),
         }
     }
 }
@@ -33,6 +37,8 @@ impl From<UiPreferences> for UiPreferencesSnapshot {
             scrollbar_show: value.scrollbar_show,
             theme_mode: value.theme_mode,
             locale: value.locale,
+            font_size_px: value.font_size_px,
+            radius_px: value.radius_px,
         }
     }
 }
@@ -44,6 +50,8 @@ impl From<UiPreferencesSnapshot> for UiPreferences {
             scrollbar_show: value.scrollbar_show,
             theme_mode: value.theme_mode,
             locale: value.locale,
+            font_size_px: value.font_size_px,
+            radius_px: value.radius_px,
         }
     }
 }

@@ -3,7 +3,7 @@ mod common;
 use std::collections::HashSet;
 
 use anyhow::Result;
-use gpui_starter::infra::blobs::BlobStore;
+use torii::infra::blobs::BlobStore;
 
 #[test]
 fn blob_store_writes_reads_and_cleans_orphans() -> Result<()> {

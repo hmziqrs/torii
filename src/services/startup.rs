@@ -24,6 +24,7 @@ use crate::{
 use super::{
     app_services::{AppServices, Repositories},
     recovery::RecoveryCoordinator,
+    secret_manager::SecretManager,
     ui_preferences::{
         InMemoryUiPreferencesStore, SqliteUiPreferencesStore, UiPreferencesSnapshot,
         UiPreferencesStoreRef,
@@ -49,9 +50,11 @@ fn build_app_services() -> Result<AppServices> {
     let collection_repo: CollectionRepoRef = Arc::new(SqliteCollectionRepository::new(db.clone()));
     let folder_repo: FolderRepoRef = Arc::new(SqliteFolderRepository::new(db.clone()));
     let request_repo: RequestRepoRef = Arc::new(SqliteRequestRepository::new(db.clone()));
-    let environment_repo: EnvironmentRepoRef = Arc::new(SqliteEnvironmentRepository::new(db.clone()));
+    let environment_repo: EnvironmentRepoRef =
+        Arc::new(SqliteEnvironmentRepository::new(db.clone()));
     let history_repo: HistoryRepoRef = Arc::new(SqliteHistoryRepository::new(db.clone()));
-    let preferences_repo: PreferencesRepoRef = Arc::new(SqlitePreferencesRepository::new(db.clone()));
+    let preferences_repo: PreferencesRepoRef =
+        Arc::new(SqlitePreferencesRepository::new(db.clone()));
     let secret_ref_repo: SecretRefRepoRef = Arc::new(SqliteSecretRefRepository::new(db.clone()));
 
     let secret_store: SecretStoreRef = Arc::new(KeyringSecretStore::new(format!(
@@ -60,6 +63,17 @@ fn build_app_services() -> Result<AppServices> {
         crate::infra::paths::APP_ORGANIZATION,
         crate::infra::paths::APP_NAME
     )));
+    let secret_manager = SecretManager::new(
+        secret_ref_repo.clone(),
+        secret_store.clone(),
+        "keyring",
+        format!(
+            "{}.{}.{}",
+            crate::infra::paths::APP_QUALIFIER,
+            crate::infra::paths::APP_ORGANIZATION,
+            crate::infra::paths::APP_NAME
+        ),
+    );
     let ui_preferences: UiPreferencesStoreRef =
         Arc::new(SqliteUiPreferencesStore::new(preferences_repo.clone()));
 
@@ -73,6 +87,7 @@ fn build_app_services() -> Result<AppServices> {
         db,
         blob_store,
         secret_store,
+        secret_manager,
         repos: Repositories {
             workspace: workspace_repo,
             collection: collection_repo,
@@ -108,35 +123,48 @@ fn fallback_app_services() -> AppServices {
         Ok(db) => Arc::new(db),
         Err(err) => {
             tracing::error!("failed to initialize fallback sqlite: {err}");
-            let second_try_paths = AppPaths::from_test_base(&std::env::temp_dir().join("torii-last-resort"))
-                .unwrap_or(AppPaths {
-                    config_dir: std::env::temp_dir().join("torii-config-last"),
-                    data_dir: std::env::temp_dir().join("torii-data-last"),
-                    cache_dir: std::env::temp_dir().join("torii-cache-last"),
-                });
+            let second_try_paths =
+                AppPaths::from_test_base(&std::env::temp_dir().join("torii-last-resort"))
+                    .unwrap_or(AppPaths {
+                        config_dir: std::env::temp_dir().join("torii-config-last"),
+                        data_dir: std::env::temp_dir().join("torii-data-last"),
+                        cache_dir: std::env::temp_dir().join("torii-cache-last"),
+                    });
             Arc::new(
-                Database::connect(&second_try_paths)
-                    .unwrap_or_else(|fatal| panic!("unable to initialize fallback database: {fatal}")),
+                Database::connect(&second_try_paths).unwrap_or_else(|fatal| {
+                    panic!("unable to initialize fallback database: {fatal}")
+                }),
             )
         }
     };
 
-    let blob_store = Arc::new(
-        BlobStore::new(&fallback_paths).unwrap_or_else(|err| {
-            panic!("unable to initialize fallback blob store: {err}");
-        }),
-    );
+    let blob_store = Arc::new(BlobStore::new(&fallback_paths).unwrap_or_else(|err| {
+        panic!("unable to initialize fallback blob store: {err}");
+    }));
 
     let workspace_repo: WorkspaceRepoRef = Arc::new(SqliteWorkspaceRepository::new(db.clone()));
     let collection_repo: CollectionRepoRef = Arc::new(SqliteCollectionRepository::new(db.clone()));
     let folder_repo: FolderRepoRef = Arc::new(SqliteFolderRepository::new(db.clone()));
     let request_repo: RequestRepoRef = Arc::new(SqliteRequestRepository::new(db.clone()));
-    let environment_repo: EnvironmentRepoRef = Arc::new(SqliteEnvironmentRepository::new(db.clone()));
+    let environment_repo: EnvironmentRepoRef =
+        Arc::new(SqliteEnvironmentRepository::new(db.clone()));
     let history_repo: HistoryRepoRef = Arc::new(SqliteHistoryRepository::new(db.clone()));
-    let preferences_repo: PreferencesRepoRef = Arc::new(SqlitePreferencesRepository::new(db.clone()));
+    let preferences_repo: PreferencesRepoRef =
+        Arc::new(SqlitePreferencesRepository::new(db.clone()));
     let secret_ref_repo: SecretRefRepoRef = Arc::new(SqliteSecretRefRepository::new(db.clone()));
 
     let secret_store: SecretStoreRef = Arc::new(InMemorySecretStore::new());
+    let secret_manager = SecretManager::new(
+        secret_ref_repo.clone(),
+        secret_store.clone(),
+        "memory",
+        format!(
+            "{}.{}.{}",
+            crate::infra::paths::APP_QUALIFIER,
+            crate::infra::paths::APP_ORGANIZATION,
+            crate::infra::paths::APP_NAME
+        ),
+    );
     let ui_preferences: UiPreferencesStoreRef = Arc::new(InMemoryUiPreferencesStore::new(Some(
         UiPreferencesSnapshot::default(),
     )));
@@ -149,6 +177,7 @@ fn fallback_app_services() -> AppServices {
         db,
         blob_store,
         secret_store,
+        secret_manager,
         repos: Repositories {
             workspace: workspace_repo,
             collection: collection_repo,

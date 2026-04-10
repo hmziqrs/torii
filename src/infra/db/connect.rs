@@ -2,8 +2,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use sqlx::{
-    ConnectOptions as _,
-    SqlitePool,
+    ConnectOptions as _, SqlitePool,
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
 

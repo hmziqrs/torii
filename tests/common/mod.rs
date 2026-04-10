@@ -1,5 +1,5 @@
 use anyhow::Result;
-use gpui_starter::infra::{db::Database, paths::AppPaths};
+use torii::infra::{db::Database, paths::AppPaths};
 use uuid::Uuid;
 
 pub fn test_paths(suite: &str) -> Result<AppPaths> {

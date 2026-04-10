@@ -3,7 +3,7 @@ mod common;
 use std::sync::Arc;
 
 use anyhow::Result;
-use gpui_starter::repos::{
+use torii::repos::{
     collection_repo::{CollectionRepository, SqliteCollectionRepository},
     folder_repo::{FolderRepository, SqliteFolderRepository},
     request_repo::{RequestRepository, SqliteRequestRepository},
@@ -45,9 +45,11 @@ fn folder_move_and_reorder_remains_consistent() -> Result<()> {
         target_folders.iter().any(|folder| folder.id == child.id),
         "child folder should move with its root"
     );
-    assert!(target_folders
-        .iter()
-        .all(|folder| folder.collection_id == target_collection.id));
+    assert!(
+        target_folders
+            .iter()
+            .all(|folder| folder.collection_id == target_collection.id)
+    );
 
     let target_requests = request_repo.list_by_collection(target_collection.id)?;
     assert!(
@@ -74,7 +76,9 @@ fn folder_move_and_reorder_remains_consistent() -> Result<()> {
     folder_repo.delete(root.id)?;
     let after_delete_requests = request_repo.list_by_collection(target_collection.id)?;
     assert!(
-        !after_delete_requests.iter().any(|item| item.id == request.id),
+        !after_delete_requests
+            .iter()
+            .any(|item| item.id == request.id),
         "deleting a folder subtree must delete descendant requests"
     );
 
