@@ -180,6 +180,10 @@ Each in-flight operation gets:
 - `Task<()>` handle for GPUI-side cancellation
 - Protocol cancellation primitive (abort handle/token)
 - Operation ID and lifecycle FSM
+- Explicit task ownership policy:
+  - Long-lived operations: store `Task` on owning entity
+  - Fire-and-forget operations: call `.detach()`
+  - Never drop tasks accidentally (drop means cancel)
 
 Required transitions:
 - `Sending/Waiting/Receiving -> Cancelled` on user cancel
@@ -205,6 +209,71 @@ Required features:
 - Shared app data store is global
 - Window UI state remains window-local entities
 - Active selection and ephemeral filters are per-window, never global unless explicitly synchronized
+- Conflict policy is explicit per domain object:
+  - Requests/collections/environments carry revision/version metadata
+  - Default strategy: optimistic write with conflict detection
+  - On conflict: prompt merge/reload or apply deterministic last-write-wins policy by object type
+
+## 4.8 Fallible async operations policy
+
+All async operations that touch app/window/entity state are treated as fallible.
+
+Rules:
+- Never rely on `unwrap()`/`expect()` after async boundaries for app/window/entity updates
+- Handle dropped-app and dropped-window cases as normal shutdown behavior
+- Treat failed `update`/`read` calls as non-fatal unless invariants are violated
+- Emit structured logs/metrics for failure categories (dropped target, cancellation, real error)
+
+## 4.9 Security and credential storage
+
+Persistence must separate operational data from secrets.
+
+Rules:
+- API tokens, passwords, OAuth refresh/access tokens are stored in OS credential store (keychain/secret service), not SQLite/blob files
+- SQLite/blob store only opaque secret references/IDs
+- Export/import flows require explicit secret redaction or rebind flow
+- Telemetry/logging must never include raw secret values
+
+## 4.10 Protocol-specific backpressure defaults
+
+Default overflow behavior is defined by protocol:
+
+- HTTP response streaming:
+  - Keep bounded preview buffer in memory
+  - Continue writing full body to disk blob
+  - UI updates are batched on cadence
+
+- WebSocket:
+  - Bounded inbound queue + bounded visible ring buffer
+  - On sustained overflow: drop oldest visible messages, increment dropped counter
+  - Optional pause control if protocol/session supports it
+
+- gRPC server/bidi streaming:
+  - Bounded decode queue and bounded rendered message buffer
+  - On overflow: apply flow-control/backpressure first; if still saturated, degrade to sampled rendering and persist full stream payload to disk
+
+These defaults can be tuned, but behavior must be deterministic and test-covered.
+
+## 4.11 Virtualization requirements
+
+Large list-based UI surfaces must use virtualization:
+- history list
+- collection/request tree with large node counts
+- stream/message viewers
+
+Requirements:
+- no full render of entire dataset for steady-state interaction
+- scrolling and selection stay smooth under target maximum dataset size
+- virtualization behavior is validated by performance tests
+
+## 4.12 Entity update safety (lease/reentrancy)
+
+Entity updates must avoid unsafe nested update patterns on the same entity in a single logical operation.
+
+Rules:
+- do not re-enter mutable update of the same entity from within its own active update path
+- defer/queue follow-up updates when needed
+- include regression tests for reentrancy and lifecycle race conditions
 
 ---
 
@@ -233,6 +302,7 @@ pub enum BodyRef {
 - Replace unbounded `Vec<WsMessage>` with ring buffer
 - Keep aggregate counters separately (`total_received`, `dropped_count`)
 - Store full transcript optionally to disk by policy
+- Maintain protocol-level backpressure counters (queue depth, dropped frames, flush latency)
 
 ## 5.3 History model
 
@@ -250,9 +320,12 @@ Track and expose metrics:
 - response truncation count
 - persistence latency and failure count
 - cancelled-vs-completed request ratios
+- conflict-detection rate across windows
+- async update failure categories (dropped app/window/entity)
 
 Add guardrails:
-- hard fail with clear UI error when memory caps cannot be honored
+- graceful degradation first (truncate preview, spill to disk, pause stream, disable heavy pane features)
+- hard fail with clear UI error only when safety/integrity cannot be preserved
 - rate-limited warnings for repeated stream overflow
 
 ---
@@ -269,11 +342,19 @@ Add guardrails:
 - 100+ concurrent tab simulation
 - high-throughput WS stream with coalesced rendering assertions
 - restart recovery with partially written history
+- window-close during in-flight request/stream (no panic, clean terminal state)
+- multi-window concurrent edit conflict handling path
 
 ## 7.3 Performance tests
 - large payload benchmarks (10MB, 50MB, 200MB)
 - long stream soak tests
 - memory plateau tests proving caps and eviction work
+- render frame-time checks for virtualized history/stream panes under large datasets
+
+## 7.4 Security tests
+- secret-at-rest checks (no plaintext credentials in DB/blob files)
+- redaction checks for logs/exports
+- keychain lookup failure behavior
 
 ---
 
@@ -286,6 +367,10 @@ This architecture is considered scale-ready only when:
 - Persistence is crash-safe and migration-backed
 - Multi-window ownership rules are explicit and tested
 - Performance/memory tests pass under target workload
+- Async app/window/entity failures are handled without panics
+- Task lifecycle is explicit (`hold` or `detach`) with no accidental cancellation
+- Secrets are stored in platform credential storage, never plaintext in app DB/blobs
+- Large list UIs are virtualized and meet target frame-time thresholds
 
 ---
 
@@ -297,6 +382,10 @@ This architecture is considered scale-ready only when:
 4. Replace stream `Vec` buffers with bounded ring buffers + batch notify.
 5. Add operation IDs + cancellation tokens across HTTP/WS/gRPC.
 6. Add stress/perf test suite and memory budget enforcement.
+7. Add explicit task lifecycle lint/checklist (`retain or detach`).
+8. Add platform keychain-backed secret store and redaction tests.
+9. Add protocol-specific backpressure defaults and overflow behavior tests.
+10. Add multi-window conflict detection/resolution for mutable shared resources.
 
 ---
 
@@ -305,3 +394,18 @@ This architecture is considered scale-ready only when:
 V1 should be treated as a strong technical primer, not a final production architecture.
 
 This V2 document is the corrected baseline for implementation.
+
+---
+
+## 11. GPUI Standards Recheck Addendum
+
+Additional shortcomings identified during standards recheck:
+
+1. Task lifecycle must be explicit. Spawns require intentional ownership (`store Task`) or detachment.
+2. Async operations are fallible by design; dropped app/window/entity targets are expected conditions.
+3. Secret handling requires platform credential storage integration, not DB/blob-only persistence.
+4. Large history/stream UIs require virtualization as a hard requirement, not an optional optimization.
+5. Reentrancy/lease hazards must be tested in entity update flows to avoid runtime panics.
+6. Backpressure policy must define per-protocol defaults rather than generic overflow options.
+
+These are now encoded in Sections 4, 6, 7, 8, and 9 as implementation requirements.
