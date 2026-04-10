@@ -24,6 +24,9 @@ tracing-subscriber = { version = "0.3", features = [
 ], default-features = false }
 rust-i18n = "3"
 regex = "1"
+gpui-form = { path = "../gpui-form/crates/gpui-form" }
+koruma = "0.7"
+koruma-collection = { version = "0.7", features = ["email"] }
 
 [package]
 name = "gpui-starter"
@@ -43,6 +46,9 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 rust-i18n.workspace = true
 regex.workspace = true
+gpui-form.workspace = true
+koruma.workspace = true
+koruma-collection.workspace = true
 
 [profile.dev]
 codegen-units = 16
