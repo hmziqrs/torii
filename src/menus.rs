@@ -4,8 +4,8 @@ use gpui_component::{
 };
 
 use crate::app::{
-    About, Quit, SelectLocaleEnglish, SelectLocaleSimplifiedChinese, SwitchTheme, SwitchThemeMode,
-    current_locale,
+    About, LocaleState, Quit, SelectLocaleEnglish, SelectLocaleSimplifiedChinese, SwitchTheme,
+    SwitchThemeMode, current_locale,
 };
 
 pub fn init(title: impl Into<SharedString>, cx: &mut App) -> Entity<AppMenuBar> {
@@ -29,6 +29,14 @@ pub fn init(title: impl Into<SharedString>, cx: &mut App) -> Entity<AppMenuBar> 
     });
 
     cx.observe_global::<Theme>({
+        let title = title.clone();
+        let app_menu_bar = app_menu_bar.clone();
+        move |cx| {
+            update_app_menu(title.clone(), app_menu_bar.clone(), cx);
+        }
+    })
+    .detach();
+    cx.observe_global::<LocaleState>({
         let title = title.clone();
         let app_menu_bar = app_menu_bar.clone();
         move |cx| {
