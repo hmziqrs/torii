@@ -293,6 +293,8 @@ Exit criteria:
 
 Goal: establish the Postman-style item editing model before protocol execution complexity expands.
 
+Detailed execution document: [docs/phase-2.md](docs/phase-2.md)
+
 Scope:
 
 - Introduce one unified tab host driven by item kind and item ID
