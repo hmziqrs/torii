@@ -9,10 +9,8 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", features = [
     "wayland",
     "runtime_shaders",
 ] }
-# Point to your local checkout of gpui-component.
-# Clone it with: git clone https://github.com/longbridge/gpui-component
-gpui-component = { path = "../gpui-component/crates/ui" }
-gpui-component-assets = { path = "../gpui-component/crates/assets" }
+gpui-component = "0.5.1"
+gpui-component-assets = "0.5.1"
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -24,13 +22,23 @@ tracing-subscriber = { version = "0.3", features = [
 ], default-features = false }
 rust-i18n = "3"
 regex = "1"
-gpui-form = { path = "../gpui-form/crates/gpui-form" }
+gpui-form = "0.5.1"
 koruma = { version = "0.7", features = ["fluent"] }
 koruma-collection = { version = "0.7", features = ["email", "url", "fluent"] }
 es-fluent = { version = "0.14", features = ["derive"] }
 es-fluent-lang = "0.14"
 es-fluent-manager-embedded = "0.14"
 strum = "0.28"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio-util = "0.7"
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls", "migrate"] }
+sea-query = "0.32"
+directories = "6"
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
+bytes = "1"
+keyring = "3"
+blake3 = "1"
 
 [package]
 name = "gpui-starter"
@@ -57,6 +65,16 @@ es-fluent.workspace = true
 es-fluent-lang.workspace = true
 es-fluent-manager-embedded.workspace = true
 strum.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+sqlx.workspace = true
+sea-query.workspace = true
+directories.workspace = true
+uuid.workspace = true
+time.workspace = true
+bytes.workspace = true
+keyring.workspace = true
+blake3.workspace = true
 
 [build-dependencies]
 es-fluent = { workspace = true, features = ["build"] }

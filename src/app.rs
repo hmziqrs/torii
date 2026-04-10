@@ -1,14 +1,16 @@
 use es_fluent::EsFluent;
 use es_fluent_lang::es_fluent_language;
 use gpui::{
-    Action, App, AppContext as _, Bounds, Focusable as _, Global, KeyBinding, SharedString,
-    WindowBounds, WindowKind, WindowOptions, actions, px, size,
+    Action, App, AppContext as _, Bounds, Focusable as _, KeyBinding, SharedString, WindowBounds,
+    WindowKind, WindowOptions, actions, px, size,
 };
-use gpui_component::{
-    ActiveTheme, Root, TitleBar, WindowExt, scroll::ScrollbarShow, text::markdown,
-};
-use serde::{Deserialize, Serialize};
+use gpui_component::{ActiveTheme, Root, TitleBar, WindowExt, text::markdown};
 use strum::EnumIter;
+
+use crate::services::{
+    app_services::AppServicesGlobal, startup::bootstrap_app_services,
+    ui_preferences::UiPreferencesSnapshot,
+};
 
 // ---------------------------------------------------------------------------
 // Languages (es-fluent)
@@ -37,20 +39,6 @@ pub struct SelectFont(pub usize);
 pub struct SelectRadius(pub usize);
 
 // ---------------------------------------------------------------------------
-// Global state
-// ---------------------------------------------------------------------------
-
-pub struct AppState;
-
-impl Global for AppState {}
-
-impl AppState {
-    fn init(cx: &mut App) {
-        cx.set_global::<AppState>(AppState);
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
 
@@ -69,14 +57,20 @@ pub fn init(cx: &mut App) {
 
     // Initialize es-fluent i18n for app and form text
     es_fluent_manager_embedded::init();
-    es_fluent_manager_embedded::select_language(<_ as Into<es_fluent::unic_langid::LanguageIdentifier>>::into(Languages::default()));
+    es_fluent_manager_embedded::select_language(<_ as Into<
+        es_fluent::unic_langid::LanguageIdentifier,
+    >>::into(Languages::default()));
 
-    AppState::init(cx);
+    let services = bootstrap_app_services();
+    cx.set_global(AppServicesGlobal(services.clone()));
 
-    // Restore persisted theme settings
-    let persisted = std::fs::read_to_string("target/state.json")
-        .ok()
-        .and_then(|json| serde_json::from_str::<PersistedState>(&json).ok());
+    let persisted = match services.ui_preferences.load() {
+        Ok(value) => value,
+        Err(err) => {
+            tracing::error!("failed to load UI preferences: {err}");
+            None
+        }
+    };
 
     // Load extra themes from the themes/ directory (with hot-reload)
     let persisted_for_closure = persisted.clone();
@@ -107,12 +101,13 @@ pub fn init(cx: &mut App) {
 
     // Persist theme on change
     cx.observe_global::<gpui_component::Theme>(|cx| {
-        let s = PersistedState {
+        let snapshot = UiPreferencesSnapshot {
             theme: cx.theme().theme_name().clone(),
             scrollbar_show: Some(cx.theme().scrollbar_show),
         };
-        if let Ok(json) = serde_json::to_string_pretty(&s) {
-            let _ = std::fs::write("target/state.json", json);
+        let services = cx.global::<AppServicesGlobal>().0.clone();
+        if let Err(err) = services.ui_preferences.save(&snapshot) {
+            tracing::error!("failed to save UI preferences: {err}");
         }
     })
     .detach();
@@ -135,7 +130,11 @@ pub fn init(cx: &mut App) {
     cx.on_action(|locale: &SelectLocale, cx| {
         rust_i18n::set_locale(&locale.0.as_str());
         es_fluent_manager_embedded::select_language(
-            locale.0.as_str().parse().unwrap_or_else(|_| es_fluent::unic_langid::langid!("en")),
+            locale
+                .0
+                .as_str()
+                .parse()
+                .unwrap_or_else(|_| es_fluent::unic_langid::langid!("en")),
         );
         cx.refresh_windows();
     });
@@ -156,19 +155,19 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &About, cx| {
         if let Some(window) = cx.active_window().and_then(|w| w.downcast::<Root>()) {
             cx.defer(move |cx| {
-                window
-                    .update(cx, |_, window, cx| {
-                        window.defer(cx, |window, cx| {
-                            window.open_alert_dialog(cx, |alert, _, _| {
-                                alert.title("About").description(markdown(
-                                    "GPUI Starter\n\n\
-                                    Version 0.1.0\n\n\
-                                    A boilerplate for GPUI desktop apps.",
-                                ))
-                            });
+                if let Err(err) = window.update(cx, |_, window, cx| {
+                    window.defer(cx, |window, cx| {
+                        window.open_alert_dialog(cx, |alert, _, _| {
+                            alert.title("About").description(markdown(
+                                "GPUI Starter\n\n\
+                                Version 0.1.0\n\n\
+                                A boilerplate for GPUI desktop apps.",
+                            ))
                         });
-                    })
-                    .unwrap();
+                    });
+                }) {
+                    tracing::error!("failed to open about dialog: {err}");
+                }
             });
         }
     });
@@ -206,19 +205,16 @@ pub fn create_new_window(title: &str, cx: &mut App) {
             ..Default::default()
         };
 
-        let window = cx
-            .open_window(options, |window, cx| {
-                let root_view =
-                    cx.new(|cx| crate::root::AppRoot::new(title.clone(), window, cx));
+        let window = cx.open_window(options, |window, cx| {
+            let root_view = cx.new(|cx| crate::root::AppRoot::new(title.clone(), window, cx));
 
-                let focus_handle = root_view.focus_handle(cx);
-                window.defer(cx, move |window, cx| {
-                    focus_handle.focus(window, cx);
-                });
+            let focus_handle = root_view.focus_handle(cx);
+            window.defer(cx, move |window, cx| {
+                focus_handle.focus(window, cx);
+            });
 
-                cx.new(|cx| Root::new(root_view, window, cx))
-            })
-            .expect("failed to open window");
+            cx.new(|cx| Root::new(root_view, window, cx))
+        })?;
 
         window.update(cx, |_, window, _| {
             window.activate_window();
@@ -228,25 +224,6 @@ pub fn create_new_window(title: &str, cx: &mut App) {
         Ok::<_, anyhow::Error>(())
     })
     .detach();
-}
-
-// ---------------------------------------------------------------------------
-// Persisted state
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct PersistedState {
-    theme: SharedString,
-    scrollbar_show: Option<ScrollbarShow>,
-}
-
-impl Default for PersistedState {
-    fn default() -> Self {
-        Self {
-            theme: "Default Light".into(),
-            scrollbar_show: None,
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------

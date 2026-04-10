@@ -1,7 +1,9 @@
 mod app;
 mod i18n;
+mod infra;
 mod menus;
 mod root;
+mod services;
 mod sidebar;
 mod title_bar;
 mod views;

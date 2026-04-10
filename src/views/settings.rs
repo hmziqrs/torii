@@ -1,9 +1,6 @@
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme as _, WindowExt as _, v_flex,
-    button::Button,
-    label::Label,
-    switch::Switch,
+    ActiveTheme as _, WindowExt as _, button::Button, label::Label, switch::Switch, v_flex,
 };
 
 pub struct SettingsPage {
@@ -25,7 +22,10 @@ impl Render for SettingsPage {
             .p_6()
             .gap_6()
             .child(
-                div().text_xl().font_weight(FontWeight::BOLD).child("Settings"),
+                div()
+                    .text_xl()
+                    .font_weight(FontWeight::BOLD)
+                    .child("Settings"),
             )
             .child(
                 div()
