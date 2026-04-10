@@ -13,21 +13,6 @@ pub fn init(title: impl Into<SharedString>, cx: &mut App) -> Entity<AppMenuBar> 
     let title: SharedString = title.into();
     update_app_menu(title.clone(), app_menu_bar.clone(), cx);
 
-    cx.on_action({
-        let title = title.clone();
-        let app_menu_bar = app_menu_bar.clone();
-        move |_: &SelectLocaleEnglish, cx| {
-            update_app_menu(title.clone(), app_menu_bar.clone(), cx);
-        }
-    });
-    cx.on_action({
-        let title = title.clone();
-        let app_menu_bar = app_menu_bar.clone();
-        move |_: &SelectLocaleSimplifiedChinese, cx| {
-            update_app_menu(title.clone(), app_menu_bar.clone(), cx);
-        }
-    });
-
     cx.observe_global::<Theme>({
         let title = title.clone();
         let app_menu_bar = app_menu_bar.clone();
