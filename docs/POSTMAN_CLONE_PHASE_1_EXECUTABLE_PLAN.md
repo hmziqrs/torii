@@ -436,16 +436,24 @@ Those depend on this persistence layer and should not be pulled forward.
 
 ## 9. Phase 1 Acceptance Checklist
 
-- [ ] SQLite opens from app-managed data paths with WAL mode enabled
-- [ ] SQL migrations run automatically at startup
-- [ ] Domain IDs and revision metadata are stable and test-covered
-- [ ] Repository interfaces exist for all Phase 1 persisted objects
-- [ ] Tree mutations are transactional and invariant-checked
-- [ ] Blob writes are atomic and restart-safe
-- [ ] Secret values live only in OS credential storage
-- [ ] UI preferences no longer use `target/state.json` as source of truth
-- [ ] Startup recovery cleans temp/orphan/incomplete persistence artifacts
-- [ ] Migration, recovery, repository, and secret-at-rest tests pass
+- [x] SQLite opens from app-managed data paths with WAL mode enabled
+- [x] SQL migrations run automatically at startup
+- [x] Domain IDs and revision metadata are stable and test-covered
+- [x] Repository interfaces exist for all Phase 1 persisted objects
+- [x] Tree mutations are transactional and invariant-checked
+- [x] Blob writes are atomic and restart-safe
+- [x] Secret values live only in OS credential storage
+- [x] UI preferences no longer use `target/state.json` as source of truth
+- [x] Startup recovery cleans temp/orphan/incomplete persistence artifacts
+- [x] Migration, recovery, repository, and secret-at-rest tests pass
+
+### Status (2026-04-11)
+
+Phase 1 is complete in this repository based on the acceptance checklist above.
+
+Greenfield note:
+- Legacy backward-compat migration from `target/state.json` into SQLite was intentionally removed per project direction.
+- `target/state.json` is not used as an active durable store.
 
 ## 10. First Concrete Implementation Order in This Repo
 
