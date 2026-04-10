@@ -55,6 +55,97 @@ These are not optional if the app is meant to scale:
 - Use bounded queues, ring buffers, batching, and virtualization for large/streaming surfaces
 - Treat app/window/entity update failure after async boundaries as expected behavior, not panic-worthy
 
+## 3.1 Implementation Library Baseline
+
+Use the existing boilerplate as the base instead of inventing a separate stack.
+
+- `gpui` for app/window/entity/task architecture
+- `gpui-component` for shared UI primitives, layouts, menus, inputs, panels, and styling conventions
+- `tokio` for the async runtime used by database, networking, file watching, and background coordination
+- `tokio-util` for cancellation and async coordination primitives such as `CancellationToken`
+- `anyhow` for app/service-level error propagation
+- `bytes` for efficient request/response body buffers and previews
+- `http` for shared HTTP request/response/header/method types
+- `url` for URL parsing and normalization
+- `sqlx` with SQLite support for database access, migrations, and typed persistence operations
+- `sea-query` as the dynamic SQL builder on top of `sqlx` for filters, ordering, tree operations, and history queries
+- `reqwest` for REST and GraphQL HTTP transport
+- WebSocket library:
+  - prefer `tokio-tungstenite`
+  - use it behind a protocol adapter so the UI/state layers do not depend on wire details
+- gRPC library:
+  - use `tonic` with `prost`
+  - add `prost-reflect` when dynamic descriptor/reflection support is needed
+  - keep reflection/descriptor handling behind a service boundary
+- `keyring` for OS credential storage
+- `directories` for OS-correct config/data/cache paths
+- `time` for timestamps, retention windows, and human-readable time formatting
+- `uuid` for stable IDs; prefer UUIDv7 for sortable persisted records
+- `notify-debouncer-full` for local folder watching and debounced file change reconciliation
+- `ignore` for `.gitignore`-aware local folder scanning
+- Git integration library:
+  - prefer a dedicated adapter layer so the app can use either `gix`, `git2`, or controlled `git` subprocesses without leaking that choice into UI/state code
+- `blake3` for blob/content hashing
+- `zstd` for optional response/transcript compression when persisted payload volume grows
+- `serde` and `serde_json` for file-backed metadata, import/export, and structured snapshots
+- `tracing` and `tracing-subscriber` for logs, metrics hooks, and failure categorization
+
+## 3.1.1 Database Choice
+
+Preferred choice for this app:
+
+- `sqlx` + `sea-query`
+
+Reasoning:
+
+- This app is repository-driven, not ORM-driven
+- A Postman-like desktop client has a lot of dynamic querying:
+  - history filtering
+  - tree reordering
+  - descendant deletion
+  - sync metadata updates
+  - conflict queries
+  - mixed read models for sidebars, tabs, history, and linked-folder reconciliation
+- We need tight control over SQLite schema, transactions, migrations, and query shape
+- `sea-query` helps with dynamic SQL construction without forcing the entire persistence model into ORM entities
+
+Not preferred as the primary persistence layer:
+
+- SeaORM
+
+Why:
+
+- SeaORM is built on top of SQLx and SeaQuery, so it adds another abstraction layer on top of the stack we would still rely on
+- The core app model here is not a typical CRUD-heavy service with mostly row-to-entity mapping
+- A large part of the persistence work is custom query logic, projection tables, history indexes, blob references, and sync/conflict flows where explicit SQL is usually the cleaner fit
+
+Acceptable limited use:
+
+- If later there is a narrow area with straightforward CRUD and clear entity relations, SeaORM could be introduced locally for that slice only
+- It should not become the default persistence abstraction for the whole app unless the data model becomes much more ORM-shaped than this plan assumes
+
+## 3.2 UI Component Rule
+
+The current boilerplate is already built on `gpui-component`.
+
+Rules:
+
+- Before building a new custom component, check whether `gpui-component` already provides the needed primitive or composition path
+- Prefer extending or composing `gpui-component` patterns before introducing custom low-level GPUI elements
+- Only build custom components when Postman-specific behavior cannot be expressed cleanly through existing `gpui-component` building blocks
+- New custom components should still follow `gpui-component` styling tokens and interaction patterns
+
+## 3.3 Localization Rule
+
+No raw user-facing strings should be introduced in app UI code.
+
+Rules:
+
+- All labels, buttons, tooltips, menus, notifications, empty states, errors, placeholders, and dialog copy must come from Fluent-based i18n
+- Use the existing Fluent setup in the repo rather than ad hoc string constants
+- New features are not complete until their Fluent keys and translations are added
+- Raw strings are acceptable only for non-user-facing internals such as logs, metrics keys, schema names, and protocol constants
+
 ## 4. Product Model
 
 ## 4.1 Core domain objects
@@ -386,6 +477,8 @@ These apply in every phase:
 - No large list surface without virtualization plan
 - No persistent model mutation without repository transaction coverage
 - No async UI update path that assumes app/window/entity survival
+- No new custom UI component before checking `gpui-component` first
+- No raw user-facing strings; all UI copy must be Fluent-based i18n
 - No feature that bypasses metrics and structured error reporting
 
 ## 7. Required Validation Gates
