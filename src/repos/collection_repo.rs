@@ -117,6 +117,15 @@ impl CollectionRepository for SqliteCollectionRepository {
     fn move_to_workspace(&self, id: CollectionId, workspace_id: WorkspaceId) -> RepoResult<()> {
         self.db.block_on(async {
             let mut tx = self.db.pool().begin().await?;
+            let previous_workspace_id: Option<String> =
+                sqlx::query_scalar("SELECT workspace_id FROM collections WHERE id = ?")
+                    .bind(id.to_string())
+                    .fetch_optional(&mut *tx)
+                    .await?;
+            let Some(previous_workspace_id) = previous_workspace_id else {
+                return Err(anyhow!("collection does not exist"));
+            };
+            let previous_workspace_id = WorkspaceId::parse(&previous_workspace_id)?;
             let next_order: i64 = sqlx::query_scalar(
                 "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM collections WHERE workspace_id = ?",
             )
@@ -135,6 +144,9 @@ impl CollectionRepository for SqliteCollectionRepository {
             .bind(id.to_string())
             .execute(&mut *tx)
             .await?;
+
+            normalize_workspace_sort_orders(&mut tx, previous_workspace_id).await?;
+            normalize_workspace_sort_orders(&mut tx, workspace_id).await?;
             tx.commit().await?;
             Ok::<(), anyhow::Error>(())
         })
@@ -187,14 +199,59 @@ impl CollectionRepository for SqliteCollectionRepository {
 
     fn delete(&self, id: CollectionId) -> RepoResult<()> {
         self.db.block_on(async {
+            let mut tx = self.db.pool().begin().await?;
+            let workspace_id: Option<String> =
+                sqlx::query_scalar("SELECT workspace_id FROM collections WHERE id = ?")
+                    .bind(id.to_string())
+                    .fetch_optional(&mut *tx)
+                    .await?;
+            let Some(workspace_id) = workspace_id else {
+                return Ok::<(), anyhow::Error>(());
+            };
+            let workspace_id = WorkspaceId::parse(&workspace_id)?;
+
             sqlx::query("DELETE FROM collections WHERE id = ?")
                 .bind(id.to_string())
-                .execute(self.db.pool())
+                .execute(&mut *tx)
                 .await
                 .context("failed to delete collection")?;
+            normalize_workspace_sort_orders(&mut tx, workspace_id).await?;
+            tx.commit().await?;
             Ok::<(), anyhow::Error>(())
         })
     }
+}
+
+async fn normalize_workspace_sort_orders(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    workspace_id: WorkspaceId,
+) -> RepoResult<()> {
+    let rows = sqlx::query(
+        "SELECT id FROM collections
+         WHERE workspace_id = ?
+         ORDER BY sort_order ASC, id ASC",
+    )
+    .bind(workspace_id.to_string())
+    .fetch_all(&mut **tx)
+    .await?;
+
+    let updated_at = now_unix_ts();
+    for (index, row) in rows.iter().enumerate() {
+        let id: String = row.get("id");
+        sqlx::query(
+            "UPDATE collections
+             SET sort_order = ?, updated_at = ?, revision = revision + 1
+             WHERE id = ? AND workspace_id = ?",
+        )
+        .bind(index as i64)
+        .bind(updated_at)
+        .bind(id)
+        .bind(workspace_id.to_string())
+        .execute(&mut **tx)
+        .await?;
+    }
+
+    Ok(())
 }
 
 fn map_collection_row(row: sqlx::sqlite::SqliteRow) -> RepoResult<Collection> {

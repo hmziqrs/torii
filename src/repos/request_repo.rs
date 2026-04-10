@@ -149,6 +149,22 @@ impl RequestRepository for SqliteRequestRepository {
     ) -> RepoResult<()> {
         self.db.block_on(async {
             let mut tx = self.db.pool().begin().await?;
+            let source_row = sqlx::query(
+                "SELECT collection_id, parent_folder_id FROM requests WHERE id = ?",
+            )
+            .bind(id.to_string())
+            .fetch_optional(&mut *tx)
+            .await?;
+            let Some(source_row) = source_row else {
+                return Err(anyhow!("request does not exist"));
+            };
+            let source_collection_id =
+                CollectionId::parse(source_row.get::<&str, _>("collection_id"))?;
+            let source_parent_folder_id = source_row
+                .get::<Option<String>, _>("parent_folder_id")
+                .map(|value| FolderId::parse(&value))
+                .transpose()?;
+
             if let Some(parent) = parent_folder_id {
                 let parent_exists: Option<i64> = sqlx::query_scalar(
                     "SELECT 1 FROM folders WHERE id = ? AND collection_id = ?",
@@ -184,6 +200,10 @@ impl RequestRepository for SqliteRequestRepository {
             .bind(id.to_string())
             .execute(&mut *tx)
             .await?;
+
+            normalize_request_sort_orders(&mut tx, source_collection_id, source_parent_folder_id)
+                .await?;
+            normalize_request_sort_orders(&mut tx, collection_id, parent_folder_id).await?;
 
             tx.commit().await?;
             Ok::<(), anyhow::Error>(())
@@ -242,14 +262,64 @@ impl RequestRepository for SqliteRequestRepository {
 
     fn delete(&self, id: RequestId) -> RepoResult<()> {
         self.db.block_on(async {
+            let mut tx = self.db.pool().begin().await?;
+            let row =
+                sqlx::query("SELECT collection_id, parent_folder_id FROM requests WHERE id = ?")
+                    .bind(id.to_string())
+                    .fetch_optional(&mut *tx)
+                    .await?;
+            let Some(row) = row else {
+                return Ok::<(), anyhow::Error>(());
+            };
+            let collection_id = CollectionId::parse(row.get::<&str, _>("collection_id"))?;
+            let parent_folder_id = row
+                .get::<Option<String>, _>("parent_folder_id")
+                .map(|value| FolderId::parse(&value))
+                .transpose()?;
+
             sqlx::query("DELETE FROM requests WHERE id = ?")
                 .bind(id.to_string())
-                .execute(self.db.pool())
+                .execute(&mut *tx)
                 .await
                 .context("failed to delete request")?;
+            normalize_request_sort_orders(&mut tx, collection_id, parent_folder_id).await?;
+            tx.commit().await?;
             Ok::<(), anyhow::Error>(())
         })
     }
+}
+
+async fn normalize_request_sort_orders(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    collection_id: CollectionId,
+    parent_folder_id: Option<FolderId>,
+) -> RepoResult<()> {
+    let rows = sqlx::query(
+        "SELECT id FROM requests
+         WHERE collection_id = ? AND parent_folder_id IS ?
+         ORDER BY sort_order ASC, id ASC",
+    )
+    .bind(collection_id.to_string())
+    .bind(parent_folder_id.map(|it| it.to_string()))
+    .fetch_all(&mut **tx)
+    .await?;
+
+    let updated_at = now_unix_ts();
+    for (index, row) in rows.iter().enumerate() {
+        let id: String = row.get("id");
+        sqlx::query(
+            "UPDATE requests
+             SET sort_order = ?, updated_at = ?, revision = revision + 1
+             WHERE id = ?",
+        )
+        .bind(index as i64)
+        .bind(updated_at)
+        .bind(id)
+        .execute(&mut **tx)
+        .await?;
+    }
+
+    Ok(())
 }
 
 fn map_request_row(row: sqlx::sqlite::SqliteRow) -> RepoResult<RequestItem> {

@@ -243,7 +243,7 @@ Tasks:
 - Implement SQLite-backed versions using `sqlx` plus `sea-query` where query shape is dynamic
 - Define tree invariants explicitly:
   - parent must exist
-  - sibling ordering is contiguous
+  - sibling ordering is contiguous after reorder, delete, and move-out operations
   - cross-collection moves are transactional
   - parent delete removes descendants atomically
 - Add transactional mutation APIs for:
@@ -318,7 +318,7 @@ Definition of done:
 - DB fixtures and blob files contain no raw secret material
 - Secret lookup failures are surfaced as typed errors, not panics
 
-## Slice 6: UI Preferences Migration Off `target/state.json`
+## Slice 6: UI Preferences Cutover Off `target/state.json`
 
 Purpose: use a real repository-backed settings path as the first live consumer of the new persistence stack.
 
@@ -326,10 +326,8 @@ Tasks:
 
 - Create `ui_preferences` repository
 - Move theme, scrollbar, font, radius, and future layout tokens into structured durable settings
-- Add one-time migration logic:
-  - read existing `target/state.json` if present
-  - import supported fields into `ui_preferences`
-  - stop treating the file as the source of truth
+- Remove `target/state.json` as a source of truth for new builds
+- If legacy import is reintroduced later, keep it as a one-shot compatibility path rather than an ongoing dual-write system
 - Update `src/app.rs` startup to load preferences from repositories via services
 - Update settings writes to flow through repositories instead of raw file writes
 
@@ -376,7 +374,6 @@ Required tests:
   - migration roundtrip
   - restart recovery after partial blob/history write
   - transactional create/move/delete flows
-  - settings migration from `target/state.json`
   - keychain failure handling
 - Security tests:
   - secret-at-rest verification against SQLite fixture contents
@@ -412,7 +409,7 @@ Use small, reviewable slices in this order:
    - security tests
 5. `phase1-settings-migration`
    - `ui_preferences`
-   - migration from `target/state.json`
+   - cutover off `target/state.json`
    - running app integration
 6. `phase1-recovery-and-hardening`
    - startup recovery coordinator
@@ -440,7 +437,7 @@ Those depend on this persistence layer and should not be pulled forward.
 - [x] SQL migrations run automatically at startup
 - [x] Domain IDs and revision metadata are stable and test-covered
 - [x] Repository interfaces exist for all Phase 1 persisted objects
-- [x] Tree mutations are transactional and invariant-checked
+- [x] Tree mutations are transactional and compact sibling ordering after reorder/delete/move-out
 - [x] Blob writes are atomic and restart-safe
 - [x] Secret values live only in OS credential storage
 - [x] UI preferences no longer use `target/state.json` as source of truth

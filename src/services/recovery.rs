@@ -57,6 +57,28 @@ impl RecoveryCoordinator {
             .history_repo
             .referenced_blob_hashes()
             .context("failed to query referenced blob hashes")?;
+        let request_body_hashes = self
+            .db
+            .block_on(async {
+                let rows = sqlx::query(
+                    "SELECT DISTINCT body_blob_hash
+                     FROM requests
+                     WHERE body_blob_hash IS NOT NULL",
+                )
+                .fetch_all(self.db.pool())
+                .await?;
+
+                let mut values = HashSet::new();
+                for row in rows {
+                    let value: String = sqlx::Row::get(&row, "body_blob_hash");
+                    values.insert(value);
+                }
+
+                Ok::<HashSet<String>, sqlx::Error>(values)
+            })
+            .context("failed to query request blob hashes")?;
+        let mut referenced_hashes = referenced_hashes;
+        referenced_hashes.extend(request_body_hashes);
         let orphan_blob_removed = self
             .blob_store
             .cleanup_orphan_blobs(&referenced_hashes)

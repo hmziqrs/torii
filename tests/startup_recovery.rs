@@ -6,7 +6,9 @@ use anyhow::Result;
 use torii::{
     infra::blobs::BlobStore,
     repos::{
+        collection_repo::{CollectionRepository, SqliteCollectionRepository},
         history_repo::{HistoryRepository, SqliteHistoryRepository},
+        request_repo::{RequestRepository, SqliteRequestRepository},
         workspace_repo::{SqliteWorkspaceRepository, WorkspaceRepository},
     },
     services::recovery::RecoveryCoordinator,
@@ -59,6 +61,53 @@ fn startup_recovery_reconciles_pending_history_and_orphans() -> Result<()> {
     assert!(!orphan_blob.path.exists(), "orphan blob should be deleted");
     assert!(referenced_blob.path.exists(), "referenced blob must remain");
     assert!(!temp_path.exists(), "stale temp file should be removed");
+
+    Ok(())
+}
+
+#[test]
+fn startup_recovery_preserves_request_body_blobs() -> Result<()> {
+    let (paths, db) = common::test_database("startup-recovery-request-blobs")?;
+    let db = Arc::new(db);
+    let blob_store = Arc::new(BlobStore::new(&paths)?);
+    let workspace_repo = SqliteWorkspaceRepository::new(db.clone());
+    let collection_repo = SqliteCollectionRepository::new(db.clone());
+    let request_repo = SqliteRequestRepository::new(db.clone());
+    let history_repo = Arc::new(SqliteHistoryRepository::new(db.clone()));
+
+    let workspace = workspace_repo.create("Main")?;
+    let collection = collection_repo.create(workspace.id, "Collection")?;
+    let request = request_repo.create(
+        collection.id,
+        None,
+        "Request",
+        "POST",
+        "https://request-body.local",
+    )?;
+
+    let request_blob = blob_store.write_bytes(b"request-body", Some("text/plain"))?;
+    db.block_on(async {
+        sqlx::query("UPDATE requests SET body_blob_hash = ? WHERE id = ?")
+            .bind(&request_blob.hash)
+            .bind(request.id.to_string())
+            .execute(db.pool())
+            .await
+    })?;
+
+    let orphan_blob = blob_store.write_bytes(b"orphan", Some("text/plain"))?;
+    let recovery = RecoveryCoordinator::new(db.clone(), history_repo, blob_store.clone())
+        .with_stale_temp_max_age(std::time::Duration::ZERO);
+    let report = recovery.run_startup_recovery()?;
+
+    assert!(
+        request_blob.path.exists(),
+        "request body blob should be preserved by recovery"
+    );
+    assert!(
+        !orphan_blob.path.exists(),
+        "unreferenced blob should still be removed"
+    );
+    assert!(report.orphan_blob_removed >= 1);
 
     Ok(())
 }
