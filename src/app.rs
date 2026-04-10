@@ -135,7 +135,7 @@ pub fn init(cx: &mut App) {
     cx.on_action(|locale: &SelectLocale, cx| {
         rust_i18n::set_locale(&locale.0.as_str());
         es_fluent_manager_embedded::select_language(
-            locale.0.as_str().parse().unwrap_or_else(|_| unic_langid::langid!("en")),
+            locale.0.as_str().parse().unwrap_or_else(|_| es_fluent::unic_langid::langid!("en")),
         );
         cx.refresh_windows();
     });

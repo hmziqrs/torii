@@ -1,4 +1,4 @@
-use es_fluent::{EsFluentThis as _, ToFluentString as _};
+use es_fluent::{EsFluentThis, EsFluentVariants, ToFluentString as _};
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme as _, WindowExt as _, h_flex, v_flex,
@@ -304,17 +304,17 @@ impl Render for FormPage {
                                             if valid && this.agree_terms {
                                                 this.submitted = true;
                                                 window.push_notification(
-                                                    es_fluent::localize!("form_notification_submitted", None),
+                                                    es_fluent::localize("form_notification_submitted", None),
                                                     cx,
                                                 );
                                             } else if valid && !this.agree_terms {
                                                 window.push_notification(
-                                                    es_fluent::localize!("form_notification_agree_terms", None),
+                                                    es_fluent::localize("form_notification_agree_terms", None),
                                                     cx,
                                                 );
                                             } else {
                                                 window.push_notification(
-                                                    es_fluent::localize!("form_notification_fix_errors", None),
+                                                    es_fluent::localize("form_notification_fix_errors", None),
                                                     cx,
                                                 );
                                             }
@@ -324,7 +324,7 @@ impl Render for FormPage {
                                 .child(
                                     Button::new("reset")
                                         .ghost()
-                                        .label(es_fluent::localize!("form_reset", None))
+                                        .label(es_fluent::localize("form_reset", None))
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.on_reset(window, cx);
                                         })),
