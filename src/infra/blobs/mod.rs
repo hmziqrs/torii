@@ -72,6 +72,20 @@ impl BlobStore {
         )
     }
 
+    pub fn write_from_reader(
+        &self,
+        reader: impl Read,
+        media_type: Option<&str>,
+    ) -> Result<BlobMetadata> {
+        writer::write_from_reader(
+            &self.root_dir,
+            &self.temp_dir,
+            reader,
+            media_type,
+            self.preview_bytes,
+        )
+    }
+
     pub fn exists(&self, hash: &str) -> bool {
         self.path_for_hash(hash).exists()
     }
@@ -100,6 +114,11 @@ impl BlobStore {
     pub fn read_all(&self, hash: &str) -> Result<Vec<u8>> {
         let path = self.path_for_hash(hash);
         std::fs::read(&path).with_context(|| format!("failed to read blob {}", path.display()))
+    }
+
+    pub fn open_read(&self, hash: &str) -> Result<File> {
+        let path = self.path_for_hash(hash);
+        File::open(&path).with_context(|| format!("failed to open blob {}", path.display()))
     }
 
     pub fn cleanup_stale_temp_files(&self, older_than: Duration) -> Result<usize> {

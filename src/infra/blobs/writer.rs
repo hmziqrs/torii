@@ -1,6 +1,6 @@
 use std::{
     fs::OpenOptions,
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -68,15 +68,78 @@ pub fn write_atomic(
 pub fn write_from_reader(
     root_dir: &Path,
     temp_dir: &Path,
-    mut reader: impl std::io::Read,
+    mut reader: impl Read,
     media_type: Option<&str>,
     preview_bytes: usize,
 ) -> Result<BlobMetadata> {
-    let mut bytes = Vec::new();
-    reader
-        .read_to_end(&mut bytes)
-        .context("failed to read blob source")?;
-    write_atomic(root_dir, temp_dir, &bytes, media_type, preview_bytes)
+    std::fs::create_dir_all(root_dir)
+        .with_context(|| format!("failed to create {}", root_dir.display()))?;
+    std::fs::create_dir_all(temp_dir)
+        .with_context(|| format!("failed to create {}", temp_dir.display()))?;
+
+    let preview_limit = preview_bytes.max(1);
+    let temp_file_name = format!("{}.tmp", Uuid::now_v7());
+    let temp_path = temp_dir.join(temp_file_name);
+    let mut hasher = blake3::Hasher::new();
+    let mut preview = Vec::with_capacity(preview_limit);
+    let mut size_bytes = 0_u64;
+
+    {
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temp_path)
+            .with_context(|| format!("failed to create temp blob {}", temp_path.display()))?;
+        let mut buf = vec![0_u8; 16 * 1024];
+
+        loop {
+            let read = reader
+                .read(&mut buf)
+                .context("failed to read blob source")?;
+            if read == 0 {
+                break;
+            }
+
+            let chunk = &buf[..read];
+            file.write_all(chunk)
+                .with_context(|| format!("failed to write temp blob {}", temp_path.display()))?;
+            hasher.update(chunk);
+            size_bytes += read as u64;
+
+            if preview.len() < preview_limit {
+                let remaining = preview_limit - preview.len();
+                preview.extend_from_slice(&chunk[..read.min(remaining)]);
+            }
+        }
+
+        file.sync_all()
+            .with_context(|| format!("failed to fsync temp blob {}", temp_path.display()))?;
+    }
+
+    let hash = hasher.finalize().to_hex().to_string();
+    let final_path = root_dir.join(&hash);
+    if !final_path.exists() {
+        std::fs::rename(&temp_path, &final_path).with_context(|| {
+            format!(
+                "failed to atomically move blob {} -> {}",
+                temp_path.display(),
+                final_path.display()
+            )
+        })?;
+    } else {
+        std::fs::remove_file(&temp_path)
+            .with_context(|| format!("failed to remove stale temp {}", temp_path.display()))?;
+    }
+
+    Ok(BlobMetadata {
+        blob_id: hash.clone(),
+        hash,
+        size_bytes,
+        media_type: media_type.map(ToOwned::to_owned),
+        preview_truncated: size_bytes > preview.len() as u64,
+        preview,
+        path: final_path,
+    })
 }
 
 #[allow(dead_code)]
