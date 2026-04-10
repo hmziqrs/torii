@@ -241,18 +241,29 @@ Definition of done:
 
 Purpose: make tab sessions durable and window-local.
 
+Session ID lifecycle:
+
+- each `WorkspaceSession` gets a UUIDv7 session ID at creation time
+- the session ID is persisted in `tab_session_state` and used to scope restore on restart
+- a new window always gets a new session ID; the restore service matches sessions to windows by loading all known sessions and assigning them (single-window case is trivial; multi-window matching strategy can start as "restore most recent session for the primary window")
+- if a session ID references items that no longer exist, those tabs are silently skipped
+- if the window or entity is dropped during async restore (per `state_management.md` fallibility rules), restore treats this as a no-op — no panic, no partial state
+
 Tasks:
 
 - add `session_restore` service:
   - restore tab session before rendering main content
   - gracefully skip missing/deleted items
-- scope tab stacks by window/session id
+  - treat window/entity loss during async restore as expected
+- scope tab stacks by session ID
 - persist tab session on mutation and on window close
 
 Definition of done:
 
 - restart reconstructs tab order + active tab
 - window-local state remains isolated between windows
+- restore with missing items does not panic or leave partial tab state
+- dropped window during async restore path does not panic
 
 ## Slice 6: Deletion Cleanup Rules
 
@@ -307,11 +318,15 @@ The following are not part of Phase 2:
 ## 8. Phase 2 Acceptance Checklist
 
 - [ ] `WorkspaceSession` and `TabManager` entities exist and own window-local tab state
+- [ ] `WorkspaceSession` has a stable session ID used to scope tab persistence
 - [ ] Page-driven routing is replaced by item-driven tab routing
+- [ ] Sidebar renders a workspace item tree from existing repos, not static page entries
+- [ ] Settings and About are accessible as utility tab kinds without page routing
 - [ ] One-tab-per-item open/focus rule is enforced
 - [ ] Tab close and reorder behavior is deterministic and test-covered
 - [ ] Item tabs render workspace/collection/folder/environment/request kinds
-- [ ] Tab session state persists and restores from SQLite
+- [ ] Tab session state persists and restores from SQLite scoped by session ID
+- [ ] Tab session schema contains no request-draft or dirty-state columns
 - [ ] Deleting items closes matching tabs; parent delete closes descendants
 - [ ] Sidebar selection and tab focus are kept in sync
 - [ ] All new user-facing strings are Fluent-based
@@ -321,9 +336,10 @@ The following are not part of Phase 2:
 
 1. Add item/tab identity model and `WorkspaceSession` scaffolding (Slice 0a)
 2. Replace page routing with session-driven tab routing (Slice 0b)
-3. Add `tab_session_state` migration and repository
-4. Implement tab host with open/focus/close/reorder core behavior
-5. Wire item-kind renderers and sidebar integration
-6. Add restore/persist flows for tab session
-7. Add delete cascade tab cleanup
-8. Land validation gates and stabilize
+3. Add workspace catalog read model and minimal sidebar tree (Slice 0c)
+4. Add `tab_session_state` migration and repository
+5. Implement tab host with open/focus/close/reorder core behavior
+6. Wire item-kind renderers and sidebar integration
+7. Add restore/persist flows for tab session
+8. Add delete cascade tab cleanup
+9. Land validation gates and stabilize
