@@ -1,6 +1,6 @@
 # Postman Clone Implementation Plan
 
-> Based on `docs/STATE_MANAGEMENT_RESEARCH_V2.md`
+> Based on `docs/state_management.md`
 > Date: 2026-04-10
 
 ## 1. Goal
@@ -260,11 +260,11 @@ Exit criteria:
 - Task ownership rules are documented in code: retain or detach, never accidental drop
 - Basic metrics hooks exist for memory, queue depth, and cancellation outcomes
 
-## Phase 1 (P0): SQLite, Blob Store, and Repositories
+## Phase 1 (P0): SQLite, Blob Store, and Repositories [x]
 
 Goal: make persistence crash-safe before adding real request workflows.
 
-Detailed execution document: [docs/POSTMAN_CLONE_PHASE_1_EXECUTABLE_PLAN.md](docs/POSTMAN_CLONE_PHASE_1_EXECUTABLE_PLAN.md)
+Detailed execution document: [docs/completed/phase-1.md](docs/completed/phase-1.md)
 
 Scope:
 
@@ -513,8 +513,8 @@ Every phase should ship with the relevant tests, not as a later cleanup item.
 
 ## 8. Recommended Execution Order Inside the Repo
 
-1. Replace current temporary settings persistence with real settings storage and services
-2. Land DB schema + repositories + blob storage
+1. [x] Replace current temporary settings persistence with real settings storage and services
+2. [x] Land DB schema + repositories + blob storage
 3. Build workspace/session/tab system
 4. Build REST editor and response lifecycle
 5. Build tree CRUD + drag/drop + environments
