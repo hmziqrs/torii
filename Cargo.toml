@@ -26,7 +26,7 @@ rust-i18n = "3"
 regex = "1"
 gpui-form = { path = "../gpui-form/crates/gpui-form" }
 koruma = "0.7"
-koruma-collection = { version = "0.7", features = ["email"] }
+koruma-collection = { version = "0.7", features = ["email", "url"] }
 
 [package]
 name = "gpui-starter"

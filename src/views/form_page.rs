@@ -1,6 +1,6 @@
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme as _, Disableable as _, WindowExt as _, h_flex, v_flex,
+    ActiveTheme as _, WindowExt as _, h_flex, v_flex,
     button::{Button, ButtonVariants as _},
     checkbox::Checkbox,
     form::{field, v_form},
@@ -9,7 +9,10 @@ use gpui_component::{
 };
 use gpui_form::GpuiForm;
 use koruma::Koruma;
-use koruma_collection::{collection::NonEmptyValidation, format::EmailValidation};
+use koruma_collection::{
+    collection::NonEmptyValidation,
+    format::{EmailValidation, UrlValidation},
+};
 
 // ---------------------------------------------------------------------------
 // Form model with derive macros
@@ -31,9 +34,11 @@ pub struct RegistrationForm {
     pub password: String,
 
     #[gpui_form(component(input))]
+    #[koruma(NonEmptyValidation::<_>)]
     pub phone: String,
 
     #[gpui_form(component(input))]
+    #[koruma(UrlValidation::<_>)]
     pub website: String,
 }
 
@@ -251,7 +256,16 @@ impl Render for FormPage {
                     .child(
                         field()
                             .label("Website")
-                            .description("Optional. Your personal or company site.")
+                            .description_fn({
+                                let error = error_for("website");
+                                move |_, _| {
+                                    div().flex().flex_col().gap_1()
+                                        .child(div().child("Optional. Your personal or company site."))
+                                        .when_some(error.clone(), |el, err| {
+                                            el.child(div().text_color(danger).text_xs().child(err))
+                                        })
+                                }
+                            })
                             .child(Input::new(&self.fields.website_input)),
                     )
                     // Terms

@@ -3588,6 +3588,7 @@ dependencies = [
  "email_address",
  "es-fluent",
  "koruma",
+ "url",
 ]
 
 [[package]]
