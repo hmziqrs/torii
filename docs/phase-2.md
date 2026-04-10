@@ -115,14 +115,16 @@ Purpose: define the identity and state contracts without touching routing yet.
 
 Tasks:
 
-- introduce `ItemKind` and `ItemKey` (`kind + stable id`)
+- introduce `ItemKind` and `ItemKey` (`kind + stable id`); `ItemKind` includes both persisted kinds (workspace, collection, folder, environment, request) and fixed utility kinds (settings, about) that have no backing repository row
 - introduce `TabState` and `TabManager` core model (window-local)
 - introduce `WorkspaceSession` entity owning tab manager, sidebar selection, and window layout state as fields
+- generate a stable session ID (UUIDv7) per `WorkspaceSession` at creation time; this ID scopes all tab persistence and restore for the window
 
 Definition of done:
 
 - `ItemKey` equality and `TabManager` open/focus/close logic are implemented and unit-tested
-- `WorkspaceSession` entity compiles and can be instantiated in isolation
+- utility `ItemKind` variants compile and are distinguishable from persisted kinds
+- `WorkspaceSession` entity compiles with a stable session ID and can be instantiated in isolation
 - no UI or routing changes yet
 
 ## Slice 0b: Session-Driven Routing Replacement
@@ -139,6 +141,24 @@ Definition of done:
 - `root` no longer relies on hard-coded page enum for active content
 - opening same item key twice resolves to focus, not duplicate tab creation
 
+## Slice 0c: Workspace Catalog Read Model + Minimal Sidebar Tree
+
+Purpose: provide the read-side data that item-driven sidebar actions and tab renderers depend on. Without this, Slices 3-4 have no items to render or navigate.
+
+Tasks:
+
+- add a selected-workspace concept to `WorkspaceSession` (which workspace the sidebar is scoped to)
+- add a workspace tree read model that loads collections, folders, requests, and environments for the selected workspace from existing repos into a sidebar-renderable structure
+- render a minimal sidebar tree replacing the static `Page` entries — enough to click an item and trigger `open_or_focus` on the tab manager
+- handle the empty-workspace / no-workspace-selected state
+
+Definition of done:
+
+- sidebar shows the item tree for the selected workspace using data from existing repos
+- clicking a tree item calls through to `TabManager::open_or_focus`
+- the old static `Page`-based sidebar entries are fully removed
+- utility surfaces (Settings, About) are accessible from sidebar or menu without relying on `Page` routing
+
 ## Slice 1: Durable Tab Session Schema + Repo
 
 Purpose: make tab state survive restart.
@@ -146,21 +166,23 @@ Purpose: make tab state survive restart.
 Tasks:
 
 - add migration `0004_tab_session_state.sql`:
-  - window/session identifier
+  - session ID (UUIDv7, matches `WorkspaceSession.session_id`) as the scoping key
   - tab order
   - active tab key
-  - pinned/dirty metadata as needed
+  - pinned metadata
   - timestamps/revision fields
+  - no dirty/draft columns — request draft tracking is Phase 3 scope
 - add `tab_session_repo` trait + SQLite implementation
 - add basic read/write API for:
   - save current tab stack
-  - load tab stack by window/session
+  - load tab stack by session ID
   - clear on reset
 
 Definition of done:
 
-- repo roundtrip persists/reloads ordered tab list and active key
+- repo roundtrip persists/reloads ordered tab list and active key scoped by session ID
 - no GPUI entity types leak into repo interfaces
+- schema contains no request-editor or draft state columns
 
 ## Slice 2: Tab Host + Behavior
 
