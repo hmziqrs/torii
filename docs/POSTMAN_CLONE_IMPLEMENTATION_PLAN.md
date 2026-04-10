@@ -264,6 +264,8 @@ Exit criteria:
 
 Goal: make persistence crash-safe before adding real request workflows.
 
+Detailed execution document: [docs/POSTMAN_CLONE_PHASE_1_EXECUTABLE_PLAN.md](docs/POSTMAN_CLONE_PHASE_1_EXECUTABLE_PLAN.md)
+
 Scope:
 
 - Add SQLite layer with WAL mode, migrations, and repository APIs
