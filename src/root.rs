@@ -35,7 +35,10 @@ impl AppRoot {
         let form_page = cx.new(|cx| FormPage::new(window, cx));
         let settings_page = cx.new(|cx| SettingsPage::new(window, cx));
         let about_page = cx.new(|_| AboutPage::new());
-        let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search..."));
+        let search_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(&es_fluent::localize("root_search_placeholder", None))
+        });
 
         let _subscriptions = vec![cx.subscribe(&search_input, |_, _, _: &InputEvent, cx| {
             cx.notify();
@@ -100,8 +103,8 @@ impl Render for AppRoot {
                 ),
             )
             .child(
-                SidebarGroup::new("Navigation").child(SidebarMenu::new().children(
-                    Page::all().iter().map(|page| {
+                SidebarGroup::new(es_fluent::localize("root_navigation", None)).child(
+                    SidebarMenu::new().children(Page::all().iter().map(|page| {
                         SidebarMenuItem::new(page.title())
                             .icon(Icon::new(page.icon()).small())
                             .active(active_page == *page)
@@ -109,8 +112,8 @@ impl Render for AppRoot {
                                 this.active_page = *page;
                                 cx.notify();
                             }))
-                    }),
-                )),
+                    })),
+                ),
             );
 
         v_flex()

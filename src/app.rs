@@ -148,11 +148,12 @@ pub fn init(cx: &mut App) {
                 if let Err(err) = window.update(cx, |_, window, cx| {
                     window.defer(cx, |window, cx| {
                         window.open_alert_dialog(cx, |alert, _, _| {
-                            alert.title("About").description(markdown(
-                                "GPUI Starter\n\n\
-                                Version 0.1.0\n\n\
-                                A boilerplate for GPUI desktop apps.",
-                            ))
+                            alert
+                                .title(es_fluent::localize("app_about_title", None))
+                                .description(markdown(&es_fluent::localize(
+                                    "app_about_description",
+                                    None,
+                                )))
                         });
                     });
                 }) {

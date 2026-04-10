@@ -49,6 +49,7 @@ settings_title = 设置
 settings_dark_mode = 深色模式
 settings_push_notification = 推送通知
 settings_notify = 通知
+settings_hello_notification = 来自设置页的问候！
 
 ## FormPage
 
@@ -61,3 +62,55 @@ form_reset = 重置
 form_notification_submitted = 表单提交成功！
 form_notification_agree_terms = 您必须同意条款和条件
 form_notification_fix_errors = 请修正表单中的错误
+
+## App
+
+window_title_main = 我的应用
+app_about_title = 关于
+app_about_description = GPUI Starter
+    版本 0.1.0
+    一个用于构建 GPUI 桌面应用的样板项目。
+
+## Root
+
+root_search_placeholder = 搜索...
+root_navigation = 导航
+
+## Menu
+
+menu_about = 关于
+menu_appearance = 外观
+menu_appearance_light = 浅色
+menu_appearance_dark = 深色
+menu_quit = 退出
+menu_edit = 编辑
+menu_undo = 撤销
+menu_redo = 重做
+menu_cut = 剪切
+menu_copy = 复制
+menu_paste = 粘贴
+menu_select_all = 全选
+menu_window = 窗口
+menu_toggle_search = 切换搜索
+menu_language = 语言
+menu_language_english = 英文
+menu_language_simplified_chinese = 简体中文
+menu_theme = 主题
+
+## TitleBar
+
+titlebar_theme_label = 主题：
+titlebar_no_notifications = 暂无新通知
+titlebar_font_size = 字体大小
+titlebar_font_size_large = 大
+titlebar_font_size_medium_default = 中（默认）
+titlebar_font_size_small = 小
+titlebar_border_radius = 边框圆角
+titlebar_radius_8 = 8 像素
+titlebar_radius_6_default = 6 像素（默认）
+titlebar_radius_4 = 4 像素
+titlebar_radius_0 = 0 像素
+
+## HomePage Logs
+
+home_get_started_clicked = 已点击“开始使用”！

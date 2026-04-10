@@ -50,42 +50,69 @@ fn build_menus(title: impl Into<SharedString>, cx: &App) -> Vec<Menu> {
         Menu {
             name: title.into(),
             items: vec![
-                MenuItem::action("About", About),
+                MenuItem::action(es_fluent::localize("menu_about", None), About),
                 MenuItem::Separator,
                 MenuItem::Submenu(Menu {
-                    name: "Appearance".into(),
+                    name: es_fluent::localize("menu_appearance", None).into(),
                     items: vec![
-                        MenuItem::action("Light", SwitchThemeMode(ThemeMode::Light))
-                            .checked(!cx.theme().mode.is_dark()),
-                        MenuItem::action("Dark", SwitchThemeMode(ThemeMode::Dark))
-                            .checked(cx.theme().mode.is_dark()),
+                        MenuItem::action(
+                            es_fluent::localize("menu_appearance_light", None),
+                            SwitchThemeMode(ThemeMode::Light),
+                        )
+                        .checked(!cx.theme().mode.is_dark()),
+                        MenuItem::action(
+                            es_fluent::localize("menu_appearance_dark", None),
+                            SwitchThemeMode(ThemeMode::Dark),
+                        )
+                        .checked(cx.theme().mode.is_dark()),
                     ],
                     disabled: false,
                 }),
                 theme_menu(cx),
                 language_menu(cx),
                 MenuItem::Separator,
-                MenuItem::action("Quit", Quit),
+                MenuItem::action(es_fluent::localize("menu_quit", None), Quit),
             ],
             disabled: false,
         },
         Menu {
-            name: "Edit".into(),
+            name: es_fluent::localize("menu_edit", None).into(),
             items: vec![
-                MenuItem::action("Undo", gpui_component::input::Undo),
-                MenuItem::action("Redo", gpui_component::input::Redo),
+                MenuItem::action(
+                    es_fluent::localize("menu_undo", None),
+                    gpui_component::input::Undo,
+                ),
+                MenuItem::action(
+                    es_fluent::localize("menu_redo", None),
+                    gpui_component::input::Redo,
+                ),
                 MenuItem::separator(),
-                MenuItem::action("Cut", gpui_component::input::Cut),
-                MenuItem::action("Copy", gpui_component::input::Copy),
-                MenuItem::action("Paste", gpui_component::input::Paste),
+                MenuItem::action(
+                    es_fluent::localize("menu_cut", None),
+                    gpui_component::input::Cut,
+                ),
+                MenuItem::action(
+                    es_fluent::localize("menu_copy", None),
+                    gpui_component::input::Copy,
+                ),
+                MenuItem::action(
+                    es_fluent::localize("menu_paste", None),
+                    gpui_component::input::Paste,
+                ),
                 MenuItem::separator(),
-                MenuItem::action("Select All", gpui_component::input::SelectAll),
+                MenuItem::action(
+                    es_fluent::localize("menu_select_all", None),
+                    gpui_component::input::SelectAll,
+                ),
             ],
             disabled: false,
         },
         Menu {
-            name: "Window".into(),
-            items: vec![MenuItem::action("Toggle Search", crate::app::ToggleSearch)],
+            name: es_fluent::localize("menu_window", None).into(),
+            items: vec![MenuItem::action(
+                es_fluent::localize("menu_toggle_search", None),
+                crate::app::ToggleSearch,
+            )],
             disabled: false,
         },
     ]
@@ -94,10 +121,18 @@ fn build_menus(title: impl Into<SharedString>, cx: &App) -> Vec<Menu> {
 fn language_menu(_: &App) -> MenuItem {
     let locale = rust_i18n::locale().to_string();
     MenuItem::Submenu(Menu {
-        name: "Language".into(),
+        name: es_fluent::localize("menu_language", None).into(),
         items: vec![
-            MenuItem::action("English", SelectLocale("en".into())).checked(locale == "en"),
-            MenuItem::action("简体中文", SelectLocale("zh-CN".into())).checked(locale == "zh-CN"),
+            MenuItem::action(
+                es_fluent::localize("menu_language_english", None),
+                SelectLocale("en".into()),
+            )
+            .checked(locale == "en"),
+            MenuItem::action(
+                es_fluent::localize("menu_language_simplified_chinese", None),
+                SelectLocale("zh-CN".into()),
+            )
+            .checked(locale == "zh-CN"),
         ],
         disabled: false,
     })
@@ -107,7 +142,7 @@ fn theme_menu(cx: &App) -> MenuItem {
     let themes = ThemeRegistry::global(cx).sorted_themes();
     let current_name = cx.theme().theme_name();
     MenuItem::Submenu(Menu {
-        name: "Theme".into(),
+        name: es_fluent::localize("menu_theme", None).into(),
         items: themes
             .iter()
             .map(|theme| {

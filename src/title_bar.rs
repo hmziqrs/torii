@@ -61,7 +61,7 @@ impl Render for AppTitleBar {
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child((self.child.clone())(window, cx))
                     .child(
-                        Label::new("theme:")
+                        Label::new(es_fluent::localize("titlebar_theme_label", None))
                             .secondary(cx.theme().theme_name())
                             .text_sm(),
                     )
@@ -73,7 +73,10 @@ impl Render for AppTitleBar {
                             .compact()
                             .icon(IconName::Bell)
                             .on_click(|_, window, cx| {
-                                window.push_notification("No new notifications", cx);
+                                window.push_notification(
+                                    es_fluent::localize("titlebar_no_notifications", None),
+                                    cx,
+                                );
                             }),
                     ),
             )
@@ -139,24 +142,44 @@ impl Render for SettingsDropdown {
                     .icon(IconName::Settings2)
                     .dropdown_menu(move |menu, _window, _cx| {
                         menu.scrollable(true)
-                            .label("Font Size")
-                            .menu_with_check("Large", font_size == 18, Box::new(SelectFont(18)))
+                            .label(es_fluent::localize("titlebar_font_size", None))
                             .menu_with_check(
-                                "Medium (default)",
+                                es_fluent::localize("titlebar_font_size_large", None),
+                                font_size == 18,
+                                Box::new(SelectFont(18)),
+                            )
+                            .menu_with_check(
+                                es_fluent::localize("titlebar_font_size_medium_default", None),
                                 font_size == 16,
                                 Box::new(SelectFont(16)),
                             )
-                            .menu_with_check("Small", font_size == 14, Box::new(SelectFont(14)))
-                            .separator()
-                            .label("Border Radius")
-                            .menu_with_check("8px", radius == 8, Box::new(SelectRadius(8)))
                             .menu_with_check(
-                                "6px (default)",
+                                es_fluent::localize("titlebar_font_size_small", None),
+                                font_size == 14,
+                                Box::new(SelectFont(14)),
+                            )
+                            .separator()
+                            .label(es_fluent::localize("titlebar_border_radius", None))
+                            .menu_with_check(
+                                es_fluent::localize("titlebar_radius_8", None),
+                                radius == 8,
+                                Box::new(SelectRadius(8)),
+                            )
+                            .menu_with_check(
+                                es_fluent::localize("titlebar_radius_6_default", None),
                                 radius == 6,
                                 Box::new(SelectRadius(6)),
                             )
-                            .menu_with_check("4px", radius == 4, Box::new(SelectRadius(4)))
-                            .menu_with_check("0px", radius == 0, Box::new(SelectRadius(0)))
+                            .menu_with_check(
+                                es_fluent::localize("titlebar_radius_4", None),
+                                radius == 4,
+                                Box::new(SelectRadius(4)),
+                            )
+                            .menu_with_check(
+                                es_fluent::localize("titlebar_radius_0", None),
+                                radius == 0,
+                                Box::new(SelectRadius(0)),
+                            )
                     })
                     .anchor(Corner::TopRight),
             )

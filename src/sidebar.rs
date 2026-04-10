@@ -9,12 +9,12 @@ pub enum Page {
 }
 
 impl Page {
-    pub fn title(&self) -> &'static str {
+    pub fn title(&self) -> String {
         match self {
-            Page::Home => "Home",
-            Page::Form => "Form",
-            Page::Settings => "Settings",
-            Page::About => "About",
+            Page::Home => es_fluent::localize("page-Home", None),
+            Page::Form => es_fluent::localize("page-Form", None),
+            Page::Settings => es_fluent::localize("page-Settings", None),
+            Page::About => es_fluent::localize("page-About", None),
         }
     }
 

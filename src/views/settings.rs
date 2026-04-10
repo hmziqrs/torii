@@ -25,14 +25,14 @@ impl Render for SettingsPage {
                 div()
                     .text_xl()
                     .font_weight(FontWeight::BOLD)
-                    .child("Settings"),
+                    .child(es_fluent::localize("settings_title", None)),
             )
             .child(
                 div()
                     .flex()
                     .items_center()
                     .justify_between()
-                    .child(Label::new("Dark Mode"))
+                    .child(Label::new(es_fluent::localize("settings_dark_mode", None)))
                     .child(
                         Switch::new("dark-mode")
                             .checked(self.dark_mode)
@@ -46,12 +46,18 @@ impl Render for SettingsPage {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .child(Label::new("Push a Notification"))
+                    .child(Label::new(es_fluent::localize(
+                        "settings_push_notification",
+                        None,
+                    )))
                     .child(
                         Button::new("notify")
-                            .label("Notify")
+                            .label(es_fluent::localize("settings_notify", None))
                             .on_click(|_, window, cx| {
-                                window.push_notification("Hello from Settings!", cx);
+                                window.push_notification(
+                                    es_fluent::localize("settings_hello_notification", None),
+                                    cx,
+                                );
                             }),
                     ),
             )

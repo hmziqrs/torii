@@ -17,6 +17,6 @@ fn main() {
         app::init(cx);
         cx.activate(true);
 
-        app::create_new_window("My App", cx);
+        app::create_new_window(&es_fluent::localize("window_title_main", None), cx);
     });
 }

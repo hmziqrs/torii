@@ -49,6 +49,7 @@ settings_title = Settings
 settings_dark_mode = Dark Mode
 settings_push_notification = Push a Notification
 settings_notify = Notify
+settings_hello_notification = Hello from Settings!
 
 ## FormPage
 
@@ -61,3 +62,55 @@ form_reset = Reset
 form_notification_submitted = Form submitted successfully!
 form_notification_agree_terms = You must agree to the terms and conditions
 form_notification_fix_errors = Please fix the errors in the form
+
+## App
+
+window_title_main = My App
+app_about_title = About
+app_about_description = GPUI Starter
+    Version 0.1.0
+    A boilerplate for GPUI desktop apps.
+
+## Root
+
+root_search_placeholder = Search...
+root_navigation = Navigation
+
+## Menu
+
+menu_about = About
+menu_appearance = Appearance
+menu_appearance_light = Light
+menu_appearance_dark = Dark
+menu_quit = Quit
+menu_edit = Edit
+menu_undo = Undo
+menu_redo = Redo
+menu_cut = Cut
+menu_copy = Copy
+menu_paste = Paste
+menu_select_all = Select All
+menu_window = Window
+menu_toggle_search = Toggle Search
+menu_language = Language
+menu_language_english = English
+menu_language_simplified_chinese = Simplified Chinese
+menu_theme = Theme
+
+## TitleBar
+
+titlebar_theme_label = theme:
+titlebar_no_notifications = No new notifications
+titlebar_font_size = Font Size
+titlebar_font_size_large = Large
+titlebar_font_size_medium_default = Medium (default)
+titlebar_font_size_small = Small
+titlebar_border_radius = Border Radius
+titlebar_radius_8 = 8px
+titlebar_radius_6_default = 6px (default)
+titlebar_radius_4 = 4px
+titlebar_radius_0 = 0px
+
+## HomePage Logs
+
+home_get_started_clicked = Get Started clicked!
