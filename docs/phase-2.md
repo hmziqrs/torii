@@ -21,6 +21,7 @@ Phase 2 must produce a stable shell for Phase 3 request execution without rework
 These are mandatory for this phase:
 
 - Keep hot UI state in per-window entities (`WorkspaceSession`, `TabManager`, selection/layout state)
+- `SidebarState` and `WindowLayoutState` from the plan are intentionally folded into `WorkspaceSession` as owned fields, not separate entities — this keeps window-local state under a single ownership root
 - Do not model long-lived catalogs as `Vec<Entity<_>>` or `HashMap<Id, Entity<_>>`
 - Treat post-`await` app/window/entity updates as fallible; no `unwrap()`/`expect()` on those paths
 - Keep task ownership explicit (retain long-lived tasks, detach fire-and-forget intentionally)
@@ -37,6 +38,10 @@ Current code is still page-driven:
 - no durable `tab_session_state` repository/table yet
 
 Phase 2 starts by replacing page identity with item identity.
+
+Note: the current `Page` enum includes `Settings` and `About`, which are not persisted items. These become fixed utility tab kinds (e.g. `ItemKind::Settings`, `ItemKind::About`) that participate in the tab host but have no backing repository row and are excluded from session persistence. They render their existing views through the same renderer contract as item tabs.
+
+Draft tabs (unsaved new items with temporary IDs, per `plan.md` Section 4.3) are explicitly deferred to Phase 3. Phase 2 only opens tabs for already-persisted items and the fixed utility kinds above.
 
 ## 4. Phase 2 Deliverables
 
@@ -104,16 +109,30 @@ Notes:
 
 ## 6. Execution Slices
 
-## Slice 0: Item Identity + Session Scaffolding
+## Slice 0a: Item Identity + Session Data Model
 
-Purpose: define the contracts that replace page-style routing.
+Purpose: define the identity and state contracts without touching routing yet.
 
 Tasks:
 
 - introduce `ItemKind` and `ItemKey` (`kind + stable id`)
 - introduce `TabState` and `TabManager` core model (window-local)
-- introduce `WorkspaceSession` entity owning tab/selection/layout state
-- replace `Page`-based active content routing in `src/root.rs` with session-driven tab routing skeleton
+- introduce `WorkspaceSession` entity owning tab manager, sidebar selection, and window layout state as fields
+
+Definition of done:
+
+- `ItemKey` equality and `TabManager` open/focus/close logic are implemented and unit-tested
+- `WorkspaceSession` entity compiles and can be instantiated in isolation
+- no UI or routing changes yet
+
+## Slice 0b: Session-Driven Routing Replacement
+
+Purpose: swap the page enum for session-driven tab routing.
+
+Tasks:
+
+- replace `Page`-based active content routing in `src/root.rs` with `WorkspaceSession`-driven tab routing skeleton
+- wire `WorkspaceSession` creation into the window lifecycle
 
 Definition of done:
 
@@ -235,11 +254,11 @@ Purpose: avoid declaring Phase 2 done with unstable tab/session behavior.
 
 Required tests:
 
-- Unit tests:
-  - tab key equality and one-tab-per-item dedupe
-  - reorder invariants and active-tab fallback rules
-  - title/icon resolution by item kind
-- Integration tests:
+- Unit tests (as `#[cfg(test)]` modules in source files):
+  - tab key equality and one-tab-per-item dedupe (in `item_key.rs`)
+  - reorder invariants and active-tab fallback rules (in `tab_manager.rs`)
+  - title/icon resolution by item kind (in renderer modules)
+- Integration tests (in `tests/` directory):
   - open same item twice focuses existing tab
   - close/delete parent closes descendant tabs
   - restart restores tab order and active tab
@@ -278,10 +297,11 @@ The following are not part of Phase 2:
 
 ## 9. First Concrete Implementation Order
 
-1. Add item/tab identity model and `WorkspaceSession` scaffolding
-2. Add `tab_session_state` migration and repository
-3. Implement tab host with open/focus/close/reorder core behavior
-4. Wire item-kind renderers and sidebar integration
-5. Add restore/persist flows for tab session
-6. Add delete cascade tab cleanup
-7. Land validation gates and stabilize
+1. Add item/tab identity model and `WorkspaceSession` scaffolding (Slice 0a)
+2. Replace page routing with session-driven tab routing (Slice 0b)
+3. Add `tab_session_state` migration and repository
+4. Implement tab host with open/focus/close/reorder core behavior
+5. Wire item-kind renderers and sidebar integration
+6. Add restore/persist flows for tab session
+7. Add delete cascade tab cleanup
+8. Land validation gates and stabilize
