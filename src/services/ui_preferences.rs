@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 pub struct UiPreferencesSnapshot {
     pub theme: SharedString,
     pub scrollbar_show: Option<ScrollbarShow>,
+    pub theme_mode: Option<String>,
+    pub locale: Option<String>,
 }
 
 impl Default for UiPreferencesSnapshot {
@@ -16,6 +18,8 @@ impl Default for UiPreferencesSnapshot {
         Self {
             theme: "Default Light".into(),
             scrollbar_show: None,
+            theme_mode: Some("light".to_string()),
+            locale: Some("en".to_string()),
         }
     }
 }

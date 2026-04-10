@@ -3,7 +3,10 @@ use gpui_component::{
     ActiveTheme as _, GlobalState, Theme, ThemeMode, ThemeRegistry, menu::AppMenuBar,
 };
 
-use crate::app::{About, Quit, SelectLocale, SwitchTheme, SwitchThemeMode};
+use crate::app::{
+    About, Quit, SelectLocaleEnglish, SelectLocaleSimplifiedChinese, SwitchTheme, SwitchThemeMode,
+    current_locale,
+};
 
 pub fn init(title: impl Into<SharedString>, cx: &mut App) -> Entity<AppMenuBar> {
     let app_menu_bar = AppMenuBar::new(cx);
@@ -13,7 +16,14 @@ pub fn init(title: impl Into<SharedString>, cx: &mut App) -> Entity<AppMenuBar> 
     cx.on_action({
         let title = title.clone();
         let app_menu_bar = app_menu_bar.clone();
-        move |_: &SelectLocale, cx| {
+        move |_: &SelectLocaleEnglish, cx| {
+            update_app_menu(title.clone(), app_menu_bar.clone(), cx);
+        }
+    });
+    cx.on_action({
+        let title = title.clone();
+        let app_menu_bar = app_menu_bar.clone();
+        move |_: &SelectLocaleSimplifiedChinese, cx| {
             update_app_menu(title.clone(), app_menu_bar.clone(), cx);
         }
     });
@@ -118,21 +128,21 @@ fn build_menus(title: impl Into<SharedString>, cx: &App) -> Vec<Menu> {
     ]
 }
 
-fn language_menu(_: &App) -> MenuItem {
-    let locale = rust_i18n::locale().to_string();
+fn language_menu(cx: &App) -> MenuItem {
+    let locale = current_locale(cx).to_string();
     MenuItem::Submenu(Menu {
         name: es_fluent::localize("menu_language", None).into(),
         items: vec![
             MenuItem::action(
                 es_fluent::localize("menu_language_english", None),
-                SelectLocale("en".into()),
+                SelectLocaleEnglish,
             )
             .checked(locale == "en"),
             MenuItem::action(
                 es_fluent::localize("menu_language_simplified_chinese", None),
-                SelectLocale("zh-CN".into()),
+                SelectLocaleSimplifiedChinese,
             )
-            .checked(locale == "zh-CN"),
+            .checked(locale == "zh-CN" || locale == "zh"),
         ],
         disabled: false,
     })

@@ -47,6 +47,9 @@ about_version = GPUI Starter v0.1.0
 
 settings_title = Settings
 settings_dark_mode = Dark Mode
+settings_language = Language
+settings_language_english = English
+settings_language_simplified_chinese = Simplified Chinese
 settings_push_notification = Push a Notification
 settings_notify = Notify
 settings_hello_notification = Hello from Settings!

@@ -1,8 +1,8 @@
 use gpui::{
-    Action, App, AppContext as _, Bounds, Focusable as _, KeyBinding, SharedString, WindowBounds,
-    WindowKind, WindowOptions, actions, px, size,
+    Action, App, AppContext as _, Bounds, Focusable as _, Global, KeyBinding, SharedString,
+    WindowBounds, WindowKind, WindowOptions, actions, px, size,
 };
-use gpui_component::{ActiveTheme, Root, TitleBar, WindowExt, text::markdown};
+use gpui_component::{ActiveTheme, Root, Theme, ThemeMode, TitleBar, WindowExt, text::markdown};
 
 use crate::services::{
     app_services::AppServicesGlobal, startup::bootstrap_app_services,
@@ -16,8 +16,12 @@ use crate::services::{
 actions!(app, [About, Quit, ToggleSearch]);
 
 #[derive(Action, Clone, PartialEq, Eq, serde::Deserialize)]
-#[action(namespace = app, no_json)]
-pub struct SelectLocale(pub SharedString);
+#[action(namespace = app)]
+pub struct SelectLocaleEnglish;
+
+#[derive(Action, Clone, PartialEq, Eq, serde::Deserialize)]
+#[action(namespace = app)]
+pub struct SelectLocaleSimplifiedChinese;
 
 #[derive(Action, Clone, PartialEq, Eq, serde::Deserialize)]
 #[action(namespace = app, no_json)]
@@ -26,6 +30,16 @@ pub struct SelectFont(pub usize);
 #[derive(Action, Clone, PartialEq, Eq, serde::Deserialize)]
 #[action(namespace = app, no_json)]
 pub struct SelectRadius(pub usize);
+
+pub const LOCALE_EN: &str = "en";
+pub const LOCALE_ZH_CN: &str = "zh-CN";
+
+#[derive(Clone)]
+pub struct LocaleState {
+    pub current: SharedString,
+}
+
+impl Global for LocaleState {}
 
 // ---------------------------------------------------------------------------
 // Init
@@ -43,13 +57,7 @@ pub fn init(cx: &mut App) {
 
     // Must be called before using any gpui-component features.
     gpui_component::init(cx);
-
-    // Initialize es-fluent i18n for app and form text
     es_fluent_manager_embedded::init();
-    let startup_locale = rust_i18n::locale()
-        .parse()
-        .unwrap_or_else(|_| es_fluent::unic_langid::langid!("en"));
-    es_fluent_manager_embedded::select_language(startup_locale);
 
     let services = bootstrap_app_services();
     cx.set_global(AppServicesGlobal(services.clone()));
@@ -61,6 +69,13 @@ pub fn init(cx: &mut App) {
             None
         }
     };
+
+    let startup_locale_source = persisted
+        .as_ref()
+        .and_then(|snapshot| snapshot.locale.as_deref())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| rust_i18n::locale().to_string());
+    set_locale(&startup_locale_source, cx);
 
     // Load extra themes from the themes/ directory (with hot-reload)
     let persisted_for_closure = persisted.clone();
@@ -86,19 +101,15 @@ pub fn init(cx: &mut App) {
         if let Some(show) = s.scrollbar_show {
             gpui_component::Theme::global_mut(cx).scrollbar_show = show;
         }
+        if let Some(mode) = s.theme_mode.as_deref().and_then(parse_theme_mode) {
+            set_theme_mode(mode, cx);
+        }
     }
     cx.refresh_windows();
 
     // Persist theme on change
-    cx.observe_global::<gpui_component::Theme>(|cx| {
-        let snapshot = UiPreferencesSnapshot {
-            theme: cx.theme().theme_name().clone(),
-            scrollbar_show: Some(cx.theme().scrollbar_show),
-        };
-        let services = cx.global::<AppServicesGlobal>().0.clone();
-        if let Err(err) = services.ui_preferences.save(&snapshot) {
-            tracing::error!("failed to save UI preferences: {err}");
-        }
+    cx.observe_global::<Theme>(|cx| {
+        persist_ui_preferences(cx);
     })
     .detach();
 
@@ -114,19 +125,13 @@ pub fn init(cx: &mut App) {
         cx.refresh_windows();
     });
     cx.on_action(|switch: &SwitchThemeMode, cx| {
-        gpui_component::Theme::change(switch.0, None, cx);
-        cx.refresh_windows();
+        set_theme_mode(switch.0, cx);
     });
-    cx.on_action(|locale: &SelectLocale, cx| {
-        rust_i18n::set_locale(&locale.0.as_str());
-        es_fluent_manager_embedded::select_language(
-            locale
-                .0
-                .as_str()
-                .parse()
-                .unwrap_or_else(|_| es_fluent::unic_langid::langid!("en")),
-        );
-        cx.refresh_windows();
+    cx.on_action(|_: &SelectLocaleEnglish, cx| {
+        set_locale(LOCALE_EN, cx);
+    });
+    cx.on_action(|_: &SelectLocaleSimplifiedChinese, cx| {
+        set_locale(LOCALE_ZH_CN, cx);
     });
 
     // Key bindings
@@ -217,12 +222,6 @@ pub fn create_new_window(title: &str, cx: &mut App) {
     .detach();
 }
 
-// ---------------------------------------------------------------------------
-// Re-exported action types used by menus and title_bar
-// ---------------------------------------------------------------------------
-
-use gpui_component::ThemeMode;
-
 #[derive(Action, Clone, PartialEq, Eq, serde::Deserialize)]
 #[action(namespace = app, no_json)]
 pub struct SwitchTheme(pub SharedString);
@@ -230,3 +229,78 @@ pub struct SwitchTheme(pub SharedString);
 #[derive(Action, Clone, PartialEq, Eq, serde::Deserialize)]
 #[action(namespace = app, no_json)]
 pub struct SwitchThemeMode(pub ThemeMode);
+
+pub fn current_locale(cx: &App) -> SharedString {
+    cx.try_global::<LocaleState>()
+        .map(|state| state.current.clone())
+        .unwrap_or_else(|| normalize_locale(&rust_i18n::locale().to_string()))
+}
+
+pub fn set_locale(locale: &str, cx: &mut App) {
+    let locale = normalize_locale(locale);
+    apply_locale(locale.as_ref());
+    cx.set_global(LocaleState {
+        current: locale.clone(),
+    });
+    persist_ui_preferences(cx);
+    cx.refresh_windows();
+}
+
+pub fn set_theme_mode(mode: ThemeMode, cx: &mut App) {
+    Theme::change(mode, None, cx);
+    cx.refresh_windows();
+}
+
+fn normalize_locale(locale: &str) -> SharedString {
+    match locale {
+        "zh" | LOCALE_ZH_CN => LOCALE_ZH_CN.into(),
+        "en-US" | LOCALE_EN => LOCALE_EN.into(),
+        other => other.to_string().into(),
+    }
+}
+
+fn resolve_language_identifier(locale: &str) -> es_fluent::unic_langid::LanguageIdentifier {
+    match locale {
+        "zh-CN" | "zh" => es_fluent::unic_langid::langid!("zh-CN"),
+        "en" | "en-US" => es_fluent::unic_langid::langid!("en"),
+        _ => locale
+            .parse()
+            .unwrap_or_else(|_| es_fluent::unic_langid::langid!("en")),
+    }
+}
+
+fn apply_locale(locale: &str) {
+    rust_i18n::set_locale(locale);
+    let language = resolve_language_identifier(locale);
+    es_fluent_manager_embedded::select_language(language.clone());
+    es_fluent::select_language(&language);
+}
+
+fn parse_theme_mode(mode: &str) -> Option<ThemeMode> {
+    match mode {
+        "light" => Some(ThemeMode::Light),
+        "dark" => Some(ThemeMode::Dark),
+        _ => None,
+    }
+}
+
+fn persist_ui_preferences(cx: &App) {
+    let Some(services) = cx.try_global::<AppServicesGlobal>().map(|global| global.0.clone()) else {
+        return;
+    };
+
+    let snapshot = UiPreferencesSnapshot {
+        theme: cx.theme().theme_name().clone(),
+        scrollbar_show: Some(cx.theme().scrollbar_show),
+        theme_mode: Some(if cx.theme().mode.is_dark() {
+            "dark".to_string()
+        } else {
+            "light".to_string()
+        }),
+        locale: Some(current_locale(cx).to_string()),
+    };
+
+    if let Err(err) = services.ui_preferences.save(&snapshot) {
+        tracing::error!("failed to save UI preferences: {err}");
+    }
+}
