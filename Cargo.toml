@@ -25,8 +25,12 @@ tracing-subscriber = { version = "0.3", features = [
 rust-i18n = "3"
 regex = "1"
 gpui-form = { path = "../gpui-form/crates/gpui-form" }
-koruma = "0.7"
-koruma-collection = { version = "0.7", features = ["email", "url"] }
+koruma = { version = "0.7", features = ["fluent"] }
+koruma-collection = { version = "0.7", features = ["email", "url", "fluent"] }
+es-fluent = { version = "0.14", features = ["derive"] }
+es-fluent-lang = "0.14"
+es-fluent-manager-embedded = "0.14"
+strum = "0.28"
 
 [package]
 name = "gpui-starter"
@@ -49,6 +53,13 @@ regex.workspace = true
 gpui-form.workspace = true
 koruma.workspace = true
 koruma-collection.workspace = true
+es-fluent.workspace = true
+es-fluent-lang.workspace = true
+es-fluent-manager-embedded.workspace = true
+strum.workspace = true
+
+[build-dependencies]
+es-fluent = { workspace = true, features = ["build"] }
 
 [profile.dev]
 codegen-units = 16

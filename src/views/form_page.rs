@@ -1,3 +1,4 @@
+use es_fluent::{EsFluentThis as _, ToFluentString as _};
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme as _, WindowExt as _, h_flex, v_flex,
@@ -8,7 +9,7 @@ use gpui_component::{
     scroll::ScrollableElement as _,
 };
 use gpui_form::GpuiForm;
-use koruma::Koruma;
+use koruma::{Koruma, KorumaAllFluent};
 use koruma_collection::{
     collection::NonEmptyValidation,
     format::{EmailValidation, UrlValidation},
@@ -18,8 +19,10 @@ use koruma_collection::{
 // Form model with derive macros
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Debug, Default, GpuiForm, Koruma)]
-#[gpui_form(koruma)]
+#[derive(Clone, Debug, Default, EsFluentThis, EsFluentVariants, GpuiForm, Koruma, KorumaAllFluent)]
+#[fluent_this(origin, variants)]
+#[fluent_variants(keys = ["description", "label"])]
+#[gpui_form(koruma(fluent))]
 pub struct RegistrationForm {
     #[gpui_form(component(input))]
     #[koruma(NonEmptyValidation::<_>)]
@@ -139,14 +142,14 @@ impl Render for FormPage {
         let error_for = |field_name: &str| -> Option<String> {
             validation_errors.as_ref().and_then(|e| {
                 let errs: Vec<String> = match field_name {
-                    "name" => e.name().all().iter().map(|v| format!("{:?}", v)).collect(),
-                    "email" => e.email().all().iter().map(|v| format!("{:?}", v)).collect(),
-                    "password" => e.password().all().iter().map(|v| format!("{:?}", v)).collect(),
-                    "phone" => e.phone().all().iter().map(|v| format!("{:?}", v)).collect(),
-                    "website" => e.website().all().iter().map(|v| format!("{:?}", v)).collect(),
+                    "name" => e.name().all().iter().map(|v| v.to_fluent_string()).collect(),
+                    "email" => e.email().all().iter().map(|v| v.to_fluent_string()).collect(),
+                    "password" => e.password().all().iter().map(|v| v.to_fluent_string()).collect(),
+                    "phone" => e.phone().all().iter().map(|v| v.to_fluent_string()).collect(),
+                    "website" => e.website().all().iter().map(|v| v.to_fluent_string()).collect(),
                     _ => Vec::new(),
                 };
-                if errs.is_empty() { None } else { Some(errs.join(", ")) }
+                if errs.is_empty() { None } else { Some(errs.join("\n")) }
             })
         };
 
@@ -161,13 +164,13 @@ impl Render for FormPage {
                 div()
                     .text_xl()
                     .font_weight(FontWeight::BOLD)
-                    .child("Create Account"),
+                    .child(es_fluent::localize("form_page_title", None)),
             )
             .child(
                 div()
                     .text_sm()
                     .text_color(cx.theme().muted_foreground)
-                    .child("Powered by gpui-form + koruma validation"),
+                    .child(es_fluent::localize("form_page_subtitle", None)),
             )
             .when(self.submitted, |this| {
                 this.child(
@@ -178,7 +181,7 @@ impl Render for FormPage {
                         .border_1()
                         .border_color(cx.theme().success)
                         .text_color(cx.theme().success)
-                        .child("Account created successfully! Check your email for verification."),
+                        .child(es_fluent::localize("form_page_success", None)),
                 )
             })
             .child(
@@ -187,13 +190,14 @@ impl Render for FormPage {
                     // Name
                     .child(
                         field()
-                            .label("Full Name")
+                            .label(RegistrationFormLabelVariants::Name.to_fluent_string())
                             .required(true)
                             .description_fn({
                                 let error = error_for("name");
+                                let description = RegistrationFormDescriptionVariants::Name.to_fluent_string();
                                 move |_, _| {
                                     div().flex().flex_col().gap_1()
-                                        .child(div().child("Enter your full name."))
+                                        .child(div().child(description.clone()))
                                         .when_some(error.clone(), |el, err| {
                                             el.child(div().text_color(danger).text_xs().child(err))
                                         })
@@ -204,13 +208,14 @@ impl Render for FormPage {
                     // Email
                     .child(
                         field()
-                            .label("Email")
+                            .label(RegistrationFormLabelVariants::Email.to_fluent_string())
                             .required(true)
                             .description_fn({
                                 let error = error_for("email");
+                                let description = RegistrationFormDescriptionVariants::Email.to_fluent_string();
                                 move |_, _| {
                                     div().flex().flex_col().gap_1()
-                                        .child(div().child("We'll never share your email with anyone else."))
+                                        .child(div().child(description.clone()))
                                         .when_some(error.clone(), |el, err| {
                                             el.child(div().text_color(danger).text_xs().child(err))
                                         })
@@ -221,13 +226,14 @@ impl Render for FormPage {
                     // Password
                     .child(
                         field()
-                            .label("Password")
+                            .label(RegistrationFormLabelVariants::Password.to_fluent_string())
                             .required(true)
                             .description_fn({
                                 let error = error_for("password");
+                                let description = RegistrationFormDescriptionVariants::Password.to_fluent_string();
                                 move |_, _| {
                                     div().flex().flex_col().gap_1()
-                                        .child(div().child("Choose a strong password."))
+                                        .child(div().child(description.clone()))
                                         .when_some(error.clone(), |el, err| {
                                             el.child(div().text_color(danger).text_xs().child(err))
                                         })
@@ -238,13 +244,14 @@ impl Render for FormPage {
                     // Phone
                     .child(
                         field()
-                            .label("Phone")
+                            .label(RegistrationFormLabelVariants::Phone.to_fluent_string())
                             .required(true)
                             .description_fn({
                                 let error = error_for("phone");
+                                let description = RegistrationFormDescriptionVariants::Phone.to_fluent_string();
                                 move |_, _| {
                                     div().flex().flex_col().gap_1()
-                                        .child(div().child("Format: (555) 123-4567"))
+                                        .child(div().child(description.clone()))
                                         .when_some(error.clone(), |el, err| {
                                             el.child(div().text_color(danger).text_xs().child(err))
                                         })
@@ -255,12 +262,13 @@ impl Render for FormPage {
                     // Website (optional)
                     .child(
                         field()
-                            .label("Website")
+                            .label(RegistrationFormLabelVariants::Website.to_fluent_string())
                             .description_fn({
                                 let error = error_for("website");
+                                let description = RegistrationFormDescriptionVariants::Website.to_fluent_string();
                                 move |_, _| {
                                     div().flex().flex_col().gap_1()
-                                        .child(div().child("Optional. Your personal or company site."))
+                                        .child(div().child(description.clone()))
                                         .when_some(error.clone(), |el, err| {
                                             el.child(div().text_color(danger).text_xs().child(err))
                                         })
@@ -272,7 +280,7 @@ impl Render for FormPage {
                     .child(
                         field().label_indent(false).child(
                             Checkbox::new("agree-terms")
-                                .label("I agree to the Terms and Conditions")
+                                .label(es_fluent::localize("form_agree_terms", None))
                                 .checked(self.agree_terms)
                                 .on_click(cx.listener(|this, checked: &bool, _, cx| {
                                     this.agree_terms = *checked;
@@ -289,17 +297,26 @@ impl Render for FormPage {
                                 .child(
                                     Button::new("submit")
                                         .primary()
-                                        .label("Create Account")
+                                        .label(es_fluent::localize("form_submit", None))
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.touched = true;
                                             let valid = this.current_data.validate().is_ok();
                                             if valid && this.agree_terms {
                                                 this.submitted = true;
-                                                window.push_notification("Form submitted successfully!", cx);
+                                                window.push_notification(
+                                                    es_fluent::localize!("form_notification_submitted", None),
+                                                    cx,
+                                                );
                                             } else if valid && !this.agree_terms {
-                                                window.push_notification("You must agree to the terms and conditions", cx);
+                                                window.push_notification(
+                                                    es_fluent::localize!("form_notification_agree_terms", None),
+                                                    cx,
+                                                );
                                             } else {
-                                                window.push_notification("Please fix the errors in the form", cx);
+                                                window.push_notification(
+                                                    es_fluent::localize!("form_notification_fix_errors", None),
+                                                    cx,
+                                                );
                                             }
                                             cx.notify();
                                         })),
@@ -307,7 +324,7 @@ impl Render for FormPage {
                                 .child(
                                     Button::new("reset")
                                         .ghost()
-                                        .label("Reset")
+                                        .label(es_fluent::localize!("form_reset", None))
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.on_reset(window, cx);
                                         })),

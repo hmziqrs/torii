@@ -1,3 +1,5 @@
+use es_fluent::EsFluent;
+use es_fluent_lang::es_fluent_language;
 use gpui::{
     Action, App, AppContext as _, Bounds, Focusable as _, Global, KeyBinding, SharedString,
     WindowBounds, WindowKind, WindowOptions, actions, px, size,
@@ -6,6 +8,15 @@ use gpui_component::{
     ActiveTheme, Root, TitleBar, WindowExt, scroll::ScrollbarShow, text::markdown,
 };
 use serde::{Deserialize, Serialize};
+use strum::EnumIter;
+
+// ---------------------------------------------------------------------------
+// Languages (es-fluent)
+// ---------------------------------------------------------------------------
+
+#[es_fluent_language]
+#[derive(Clone, Copy, Debug, EnumIter, EsFluent, PartialEq)]
+pub enum Languages {}
 
 // ---------------------------------------------------------------------------
 // Actions
@@ -55,6 +66,11 @@ pub fn init(cx: &mut App) {
 
     // Must be called before using any gpui-component features
     gpui_component::init(cx);
+
+    // Initialize es-fluent i18n for app and form text
+    es_fluent_manager_embedded::init();
+    es_fluent_manager_embedded::select_language(<_ as Into<es_fluent::unic_langid::LanguageIdentifier>>::into(Languages::default()));
+
     AppState::init(cx);
 
     // Restore persisted theme settings
@@ -118,6 +134,9 @@ pub fn init(cx: &mut App) {
     });
     cx.on_action(|locale: &SelectLocale, cx| {
         rust_i18n::set_locale(&locale.0.as_str());
+        es_fluent_manager_embedded::select_language(
+            locale.0.as_str().parse().unwrap_or_else(|_| unic_langid::langid!("en")),
+        );
         cx.refresh_windows();
     });
 

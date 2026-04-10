@@ -1660,6 +1660,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d7bb7b22f7245058bd4940d0fc8fd23392823be26512b657cf34236b4512263"
 dependencies = [
  "arc-swap",
+ "es-fluent-derive",
  "es-fluent-derive-core",
  "es-fluent-manager-core",
  "es-fluent-toml",
@@ -1668,6 +1669,22 @@ dependencies = [
  "rust-embed",
  "tracing",
  "unic-langid",
+]
+
+[[package]]
+name = "es-fluent-derive"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f688b6410facf3c36ec417d5f8fa5347fd42cf2ca707d7d2a7cef3a416b2aa6f"
+dependencies = [
+ "darling",
+ "es-fluent-derive-core",
+ "heck 0.5.0",
+ "proc-macro-error2",
+ "proc-macro2",
+ "quote",
+ "strum 0.27.2",
+ "syn",
 ]
 
 [[package]]
@@ -1697,6 +1714,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "es-fluent-lang"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be55904a3798d1b400fdc7c8e1542f948ece25f6d3627a4d17f61244eca9c166"
+dependencies = [
+ "es-fluent-lang-macro",
+ "es-fluent-manager-core",
+ "fluent-bundle",
+ "inventory",
+ "rust-embed",
+ "tracing",
+ "unic-langid",
+]
+
+[[package]]
+name = "es-fluent-lang-macro"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "640f9b8452abed1b1d47de5493944a35917eb7a46e2ef2a592cd117343916d5b"
+dependencies = [
+ "es-fluent-manager-core",
+ "es-fluent-toml",
+ "heck 0.5.0",
+ "proc-macro-error2",
+ "proc-macro2",
+ "quote",
+ "syn",
+ "unic-langid",
+]
+
+[[package]]
 name = "es-fluent-manager-core"
 version = "0.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1710,6 +1758,33 @@ dependencies = [
  "rust-embed",
  "tracing",
  "unic-langid",
+]
+
+[[package]]
+name = "es-fluent-manager-embedded"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7d516cff043a8bdea943ae80d908cbb57c031d386b0e18afc23f4fda9fecc52"
+dependencies = [
+ "arc-swap",
+ "es-fluent",
+ "es-fluent-manager-core",
+ "es-fluent-manager-macros",
+ "tracing",
+ "unic-langid",
+]
+
+[[package]]
+name = "es-fluent-manager-macros"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96a460a4a9bb2c1ce267f39571cfc5aeb27c83990d2351affd1620317426b732"
+dependencies = [
+ "es-fluent-toml",
+ "heck 0.5.0",
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -2622,6 +2697,9 @@ name = "gpui-starter"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "es-fluent",
+ "es-fluent-lang",
+ "es-fluent-manager-embedded",
  "gpui",
  "gpui-component",
  "gpui-component-assets",
@@ -2633,6 +2711,7 @@ dependencies = [
  "rust-i18n",
  "serde",
  "serde_json",
+ "strum 0.28.0",
  "tracing",
  "tracing-subscriber",
 ]
@@ -3587,7 +3666,9 @@ checksum = "c4982dd61c58976df29dafe175356fe6e56600f1eb6e0d7e414c2e8c83685877"
 dependencies = [
  "email_address",
  "es-fluent",
+ "es-fluent-manager-embedded",
  "koruma",
+ "rust-embed",
  "url",
 ]
 

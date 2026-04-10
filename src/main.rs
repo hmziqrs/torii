@@ -1,4 +1,5 @@
 mod app;
+mod i18n;
 mod menus;
 mod root;
 mod sidebar;
