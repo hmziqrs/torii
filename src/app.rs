@@ -1,24 +1,13 @@
-use es_fluent::EsFluent;
-use es_fluent_lang::es_fluent_language;
 use gpui::{
     Action, App, AppContext as _, Bounds, Focusable as _, KeyBinding, SharedString, WindowBounds,
     WindowKind, WindowOptions, actions, px, size,
 };
 use gpui_component::{ActiveTheme, Root, TitleBar, WindowExt, text::markdown};
-use strum::EnumIter;
 
 use crate::services::{
     app_services::AppServicesGlobal, startup::bootstrap_app_services,
     ui_preferences::UiPreferencesSnapshot,
 };
-
-// ---------------------------------------------------------------------------
-// Languages (es-fluent)
-// ---------------------------------------------------------------------------
-
-#[es_fluent_language]
-#[derive(Clone, Copy, Debug, EnumIter, EsFluent, PartialEq)]
-pub enum Languages {}
 
 // ---------------------------------------------------------------------------
 // Actions
@@ -52,14 +41,15 @@ pub fn init(cx: &mut App) {
         )
         .try_init();
 
-    // Must be called before using any gpui-component features
+    // Must be called before using any gpui-component features.
     gpui_component::init(cx);
 
     // Initialize es-fluent i18n for app and form text
     es_fluent_manager_embedded::init();
-    es_fluent_manager_embedded::select_language(<_ as Into<
-        es_fluent::unic_langid::LanguageIdentifier,
-    >>::into(Languages::default()));
+    let startup_locale = rust_i18n::locale()
+        .parse()
+        .unwrap_or_else(|_| es_fluent::unic_langid::langid!("en"));
+    es_fluent_manager_embedded::select_language(startup_locale);
 
     let services = bootstrap_app_services();
     cx.set_global(AppServicesGlobal(services.clone()));
