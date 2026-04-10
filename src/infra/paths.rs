@@ -63,10 +63,6 @@ impl AppPaths {
         Ok(())
     }
 
-    pub fn ui_preferences_path(&self) -> PathBuf {
-        self.config_dir.join("ui_preferences.json")
-    }
-
     pub fn sqlite_path(&self) -> PathBuf {
         self.data_dir.join("torii.sqlite3")
     }

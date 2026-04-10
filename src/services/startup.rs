@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::path::Path;
 
 use anyhow::{Context, Result};
 
@@ -15,7 +14,7 @@ use crate::{
         environment_repo::{EnvironmentRepoRef, SqliteEnvironmentRepository},
         folder_repo::{FolderRepoRef, SqliteFolderRepository},
         history_repo::{HistoryRepoRef, SqliteHistoryRepository},
-        preferences_repo::{PreferencesRepoRef, PreferencesRepository, SqlitePreferencesRepository},
+        preferences_repo::{PreferencesRepoRef, SqlitePreferencesRepository},
         request_repo::{RequestRepoRef, SqliteRequestRepository},
         secret_ref_repo::{SecretRefRepoRef, SqliteSecretRefRepository},
         workspace_repo::{SqliteWorkspaceRepository, WorkspaceRepoRef},
@@ -27,7 +26,7 @@ use super::{
     recovery::RecoveryCoordinator,
     ui_preferences::{
         InMemoryUiPreferencesStore, SqliteUiPreferencesStore, UiPreferencesSnapshot,
-        UiPreferencesStoreRef, load_legacy_ui_preferences_file,
+        UiPreferencesStoreRef,
     },
 };
 
@@ -64,9 +63,6 @@ fn build_app_services() -> Result<AppServices> {
     let ui_preferences: UiPreferencesStoreRef =
         Arc::new(SqliteUiPreferencesStore::new(preferences_repo.clone()));
 
-    migrate_legacy_state_json_if_needed(&preferences_repo)
-        .context("failed to run legacy settings migration")?;
-
     let recovery = RecoveryCoordinator::new(db.clone(), history_repo.clone(), blob_store.clone());
     recovery
         .run_startup_recovery()
@@ -90,33 +86,6 @@ fn build_app_services() -> Result<AppServices> {
         ui_preferences,
         recovery,
     })
-}
-
-fn migrate_legacy_state_json_if_needed(preferences_repo: &PreferencesRepoRef) -> Result<()> {
-    let cwd = std::env::current_dir().context("failed to resolve current working directory")?;
-    let legacy_path = cwd.join("target").join("state.json");
-    let _ = migrate_legacy_state_json_if_needed_at_path(preferences_repo, &legacy_path)?;
-    Ok(())
-}
-
-pub fn migrate_legacy_state_json_if_needed_at_path(
-    preferences_repo: &PreferencesRepoRef,
-    legacy_path: &Path,
-) -> Result<bool> {
-    if preferences_repo.load_ui_preferences()?.is_some() {
-        return Ok(false);
-    }
-
-    let Some(legacy) = load_legacy_ui_preferences_file(legacy_path)? else {
-        return Ok(false);
-    };
-
-    preferences_repo.save_ui_preferences(&legacy.into())?;
-    tracing::info!(
-        legacy_file = %legacy_path.display(),
-        "migrated legacy ui preferences into sqlite"
-    );
-    Ok(true)
 }
 
 fn fallback_app_services() -> AppServices {

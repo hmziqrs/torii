@@ -1,7 +1,7 @@
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme as _, Icon, IconName, Root, Sizable as _,
-    input::{Input, InputEvent, InputState},
+    input::{InputEvent, InputState},
     resizable::{h_resizable, resizable_panel},
     sidebar::{Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem},
     v_flex,
@@ -16,7 +16,7 @@ pub struct AppRoot {
     title_bar: Entity<AppTitleBar>,
     active_page: Page,
     collapsed: bool,
-    search_input: Entity<InputState>,
+    _search_input: Entity<InputState>,
     home_page: Entity<HomePage>,
     form_page: Entity<FormPage>,
     settings_page: Entity<SettingsPage>,
@@ -49,7 +49,7 @@ impl AppRoot {
             title_bar,
             active_page: Page::Home,
             collapsed: false,
-            search_input,
+            _search_input: search_input,
             home_page,
             form_page,
             settings_page,

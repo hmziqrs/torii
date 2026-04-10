@@ -1,9 +1,6 @@
-use std::{
-    path::Path,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use gpui::SharedString;
 use gpui_component::scroll::ScrollbarShow;
 use serde::{Deserialize, Serialize};
@@ -108,15 +105,4 @@ impl UiPreferencesStore for InMemoryUiPreferencesStore {
         *state = Some(snapshot.clone());
         Ok(())
     }
-}
-
-pub fn load_legacy_ui_preferences_file(path: &Path) -> Result<Option<UiPreferencesSnapshot>> {
-    if !path.exists() {
-        return Ok(None);
-    }
-    let contents = std::fs::read_to_string(path)
-        .with_context(|| format!("failed to read {}", path.display()))?;
-    let parsed = serde_json::from_str::<UiPreferencesSnapshot>(&contents)
-        .with_context(|| format!("failed to parse {}", path.display()))?;
-    Ok(Some(parsed))
 }
