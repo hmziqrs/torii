@@ -1,9 +1,14 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    path::Path,
+    sync::{Arc, Mutex},
+};
 
 use anyhow::{Context, Result};
 use gpui::SharedString;
 use gpui_component::scroll::ScrollbarShow;
 use serde::{Deserialize, Serialize};
+
+use crate::{domain::preferences::UiPreferences, repos::preferences_repo::PreferencesRepoRef};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiPreferencesSnapshot {
@@ -24,6 +29,28 @@ impl Default for UiPreferencesSnapshot {
     }
 }
 
+impl From<UiPreferences> for UiPreferencesSnapshot {
+    fn from(value: UiPreferences) -> Self {
+        Self {
+            theme: value.theme,
+            scrollbar_show: value.scrollbar_show,
+            theme_mode: value.theme_mode,
+            locale: value.locale,
+        }
+    }
+}
+
+impl From<UiPreferencesSnapshot> for UiPreferences {
+    fn from(value: UiPreferencesSnapshot) -> Self {
+        Self {
+            theme: value.theme,
+            scrollbar_show: value.scrollbar_show,
+            theme_mode: value.theme_mode,
+            locale: value.locale,
+        }
+    }
+}
+
 pub trait UiPreferencesStore: Send + Sync {
     fn load(&self) -> Result<Option<UiPreferencesSnapshot>>;
     fn save(&self, snapshot: &UiPreferencesSnapshot) -> Result<()>;
@@ -31,42 +58,24 @@ pub trait UiPreferencesStore: Send + Sync {
 
 pub type UiPreferencesStoreRef = Arc<dyn UiPreferencesStore>;
 
-pub struct JsonUiPreferencesStore {
-    path: std::path::PathBuf,
+#[derive(Clone)]
+pub struct SqliteUiPreferencesStore {
+    repo: PreferencesRepoRef,
 }
 
-impl JsonUiPreferencesStore {
-    pub fn new(path: std::path::PathBuf) -> Self {
-        Self { path }
+impl SqliteUiPreferencesStore {
+    pub fn new(repo: PreferencesRepoRef) -> Self {
+        Self { repo }
     }
 }
 
-impl UiPreferencesStore for JsonUiPreferencesStore {
+impl UiPreferencesStore for SqliteUiPreferencesStore {
     fn load(&self) -> Result<Option<UiPreferencesSnapshot>> {
-        if !self.path.exists() {
-            return Ok(None);
-        }
-
-        let contents = std::fs::read_to_string(&self.path)
-            .with_context(|| format!("failed to read {}", self.path.display()))?;
-        let snapshot = serde_json::from_str::<UiPreferencesSnapshot>(&contents)
-            .with_context(|| format!("failed to parse {}", self.path.display()))?;
-
-        Ok(Some(snapshot))
+        Ok(self.repo.load_ui_preferences()?.map(Into::into))
     }
 
     fn save(&self, snapshot: &UiPreferencesSnapshot) -> Result<()> {
-        let json =
-            serde_json::to_string_pretty(snapshot).context("failed to encode preferences")?;
-
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create {}", parent.display()))?;
-        }
-
-        std::fs::write(&self.path, json)
-            .with_context(|| format!("failed to write {}", self.path.display()))?;
-        Ok(())
+        self.repo.save_ui_preferences(&snapshot.clone().into())
     }
 }
 
@@ -99,4 +108,15 @@ impl UiPreferencesStore for InMemoryUiPreferencesStore {
         *state = Some(snapshot.clone());
         Ok(())
     }
+}
+
+pub fn load_legacy_ui_preferences_file(path: &Path) -> Result<Option<UiPreferencesSnapshot>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let contents = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    let parsed = serde_json::from_str::<UiPreferencesSnapshot>(&contents)
+        .with_context(|| format!("failed to parse {}", path.display()))?;
+    Ok(Some(parsed))
 }

@@ -2,14 +2,39 @@ use std::sync::Arc;
 
 use gpui::Global;
 
-use crate::infra::paths::AppPaths;
+use crate::{
+    infra::{blobs::BlobStore, db::Database, paths::AppPaths, secrets::SecretStoreRef},
+    repos::{
+        collection_repo::CollectionRepoRef, environment_repo::EnvironmentRepoRef,
+        folder_repo::FolderRepoRef, history_repo::HistoryRepoRef,
+        preferences_repo::PreferencesRepoRef, request_repo::RequestRepoRef,
+        secret_ref_repo::SecretRefRepoRef, workspace_repo::WorkspaceRepoRef,
+    },
+};
 
-use super::ui_preferences::UiPreferencesStoreRef;
+use super::{recovery::RecoveryCoordinator, ui_preferences::UiPreferencesStoreRef};
+
+#[derive(Clone)]
+pub struct Repositories {
+    pub workspace: WorkspaceRepoRef,
+    pub collection: CollectionRepoRef,
+    pub folder: FolderRepoRef,
+    pub request: RequestRepoRef,
+    pub environment: EnvironmentRepoRef,
+    pub history: HistoryRepoRef,
+    pub preferences: PreferencesRepoRef,
+    pub secret_refs: SecretRefRepoRef,
+}
 
 #[derive(Clone)]
 pub struct AppServices {
     pub paths: AppPaths,
+    pub db: Arc<Database>,
+    pub blob_store: Arc<BlobStore>,
+    pub secret_store: SecretStoreRef,
+    pub repos: Repositories,
     pub ui_preferences: UiPreferencesStoreRef,
+    pub recovery: RecoveryCoordinator,
 }
 
 #[derive(Clone)]

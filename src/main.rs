@@ -1,15 +1,5 @@
-mod app;
-mod infra;
-mod menus;
-mod root;
-mod services;
-mod sidebar;
-mod title_bar;
-mod views;
-
-es_fluent_manager_embedded::define_i18n_module!();
-
 use gpui_component_assets::Assets;
+use gpui_starter::app;
 
 fn main() {
     let app = gpui_platform::application().with_assets(Assets);
