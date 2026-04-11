@@ -17,7 +17,7 @@ use crate::{
     },
     repos::request_repo::RequestRepoError,
     services::{
-        app_services::AppServicesGlobal,
+        app_services::{AppServices, AppServicesGlobal},
         request_execution::{ExecOutcome, RequestExecutionService},
     },
     session::request_editor_state::{EditorIdentity, ExecStatus, RequestEditorState, SaveStatus},
@@ -33,6 +33,8 @@ pub struct RequestTabView {
     tests_input: Entity<InputState>,
     timeout_input: Entity<InputState>,
     follow_redirects_input: Entity<InputState>,
+    loaded_full_body_blob_id: Option<String>,
+    loaded_full_body_text: Option<String>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -264,6 +266,8 @@ impl RequestTabView {
             tests_input,
             timeout_input,
             follow_redirects_input,
+            loaded_full_body_blob_id: None,
+            loaded_full_body_text: None,
             _subscriptions: subscriptions,
         }
     }
@@ -276,14 +280,24 @@ impl RequestTabView {
         &mut self.editor
     }
 
+    pub fn has_unsaved_changes(&self) -> bool {
+        matches!(
+            self.editor.save_status(),
+            SaveStatus::Dirty | SaveStatus::SaveFailed { .. } | SaveStatus::Saving
+        ) || self.editor.detect_dirty()
+    }
+
     // -----------------------------------------------------------------------
     // Save
     // -----------------------------------------------------------------------
 
     pub fn save(&mut self, cx: &mut Context<Self>) -> Result<(), String> {
         let services = cx.global::<AppServicesGlobal>().0.clone();
-        let request = self.editor.draft().clone();
+        let mut request = self.editor.draft().clone();
         let expected_revision = self.editor.baseline().map(|b| b.meta.revision).unwrap_or(0);
+
+        self.persist_request_body_blob(&mut request, &services)?;
+        self.normalize_auth_secret_ownership_for_save(&mut request, &services)?;
 
         self.editor.begin_save();
         cx.notify();
@@ -344,8 +358,21 @@ impl RequestTabView {
             }
         };
 
-        let new_name = format!("{} (Copy)", self.editor.draft().name);
-        services
+        // Duplicate from persisted baseline (not dirty in-memory draft).
+        let source = services
+            .repos
+            .request
+            .get(source_id)
+            .map_err(|e| {
+                format!(
+                    "{}: {e}",
+                    es_fluent::localize("request_tab_duplicate_failed", None)
+                )
+            })?
+            .ok_or_else(|| es_fluent::localize("request_tab_save_not_found", None).to_string())?;
+
+        let new_name = format!("{} (Copy)", source.name);
+        let mut duplicate = services
             .repos
             .request
             .duplicate(source_id, &new_name)
@@ -354,7 +381,40 @@ impl RequestTabView {
                     "{}: {e}",
                     es_fluent::localize("request_tab_duplicate_failed", None)
                 )
+            })?;
+
+        if let Err(err) = self.clone_auth_secrets_for_duplicate(&source, &mut duplicate, &services)
+        {
+            let _ = services.repos.request.delete(duplicate.id);
+            return Err(err);
+        }
+
+        if let Err(err) = services
+            .repos
+            .request
+            .save(&duplicate, duplicate.meta.revision)
+            .map_err(|e| {
+                format!(
+                    "{}: {e}",
+                    es_fluent::localize("request_tab_duplicate_failed", None)
+                )
             })
+        {
+            let _ = services.repos.request.delete(duplicate.id);
+            return Err(err);
+        }
+
+        services
+            .repos
+            .request
+            .get(duplicate.id)
+            .map_err(|e| {
+                format!(
+                    "{}: {e}",
+                    es_fluent::localize("request_tab_duplicate_failed", None)
+                )
+            })?
+            .ok_or_else(|| es_fluent::localize("request_tab_duplicate_failed", None).to_string())
     }
 
     // -----------------------------------------------------------------------
@@ -364,6 +424,8 @@ impl RequestTabView {
     /// Send the current draft request. Auto-cancels any in-flight operation.
     pub fn send(&mut self, cx: &mut Context<Self>) {
         let services = cx.global::<AppServicesGlobal>().0.clone();
+        self.loaded_full_body_blob_id = None;
+        self.loaded_full_body_text = None;
 
         // Determine workspace ID
         let workspace_id = match self.resolve_workspace_id(&services) {
@@ -405,7 +467,6 @@ impl RequestTabView {
         }
         cx.notify();
 
-        // Spawn execution via cx.spawn for async + entity bridge
         let exec_service = build_execution_service(&services);
         let cancel_token = self.editor.cancellation_token().unwrap().clone();
         let history_repo = services.repos.history.clone();
@@ -414,7 +475,6 @@ impl RequestTabView {
 
         let _ = cx.spawn(async move |this, cx| {
             let request = draft.clone();
-            // Spawn the network request on the dedicated I/O runtime (not the GPUI thread)
             let handle = io_runtime.spawn(async move {
                 exec_service
                     .execute(&request, workspace_id, cancel_token.clone())
@@ -424,7 +484,6 @@ impl RequestTabView {
                 .await
                 .unwrap_or_else(|e| Err(anyhow::anyhow!("task join error: {e}")));
 
-            // Finalize history
             match &result {
                 Ok(ExecOutcome::Completed(summary)) => {
                     let headers_json = summary.headers_json.as_deref();
@@ -468,8 +527,9 @@ impl RequestTabView {
                 }
             }
 
-            // Bridge result back to entity
             let _ = this.update(cx, |this, cx| {
+                this.loaded_full_body_blob_id = None;
+                this.loaded_full_body_text = None;
                 match result {
                     Ok(ExecOutcome::Completed(summary)) => {
                         this.editor.complete_exec(summary, operation_id);
@@ -519,6 +579,38 @@ impl RequestTabView {
         cx.notify();
     }
 
+    pub fn load_full_response_body(&mut self, cx: &mut Context<Self>) -> Result<(), String> {
+        let services = cx.global::<AppServicesGlobal>().0.clone();
+
+        let (blob_id, media_type) = match self.editor.exec_status() {
+            ExecStatus::Completed { response } => match &response.body_ref {
+                BodyRef::DiskBlob { blob_id, .. } => (blob_id.clone(), response.media_type.clone()),
+                _ => {
+                    return Err(
+                        es_fluent::localize("request_tab_full_body_unavailable", None).to_string(),
+                    );
+                }
+            },
+            _ => {
+                return Err(
+                    es_fluent::localize("request_tab_full_body_unavailable", None).to_string(),
+                );
+            }
+        };
+
+        let bytes = services.blob_store.read_all(&blob_id).map_err(|e| {
+            format!(
+                "{}: {e}",
+                es_fluent::localize("request_tab_full_body_load_failed", None)
+            )
+        })?;
+
+        self.loaded_full_body_text = Some(render_preview_text(&bytes, media_type.as_deref()));
+        self.loaded_full_body_blob_id = Some(blob_id);
+        cx.notify();
+        Ok(())
+    }
+
     // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
@@ -528,7 +620,6 @@ impl RequestTabView {
         services: &std::sync::Arc<crate::services::app_services::AppServices>,
     ) -> Option<WorkspaceId> {
         let collection_id = self.editor.draft().collection_id;
-        // Walk from collection -> workspace
         services
             .repos
             .collection
@@ -536,6 +627,229 @@ impl RequestTabView {
             .ok()
             .flatten()
             .map(|c| c.workspace_id)
+    }
+
+    fn persist_request_body_blob(
+        &self,
+        request: &mut RequestItem,
+        services: &Arc<AppServices>,
+    ) -> Result<(), String> {
+        match &request.body {
+            BodyType::RawText { content } | BodyType::RawJson { content } => {
+                let media = match &request.body {
+                    BodyType::RawJson { .. } => Some("application/json"),
+                    _ => Some("text/plain"),
+                };
+                let blob = services
+                    .blob_store
+                    .write_bytes(content.as_bytes(), media)
+                    .map_err(|e| {
+                        format!(
+                            "{}: {e}",
+                            es_fluent::localize("request_tab_save_failed", None)
+                        )
+                    })?;
+                request.body_blob_hash = Some(blob.hash);
+            }
+            _ => {
+                request.body_blob_hash = None;
+            }
+        }
+        Ok(())
+    }
+
+    fn normalize_auth_secret_ownership_for_save(
+        &self,
+        request: &mut RequestItem,
+        services: &Arc<AppServices>,
+    ) -> Result<(), String> {
+        let target_owner_kind = "request";
+        let target_owner_id = request.id.to_string();
+
+        let source_owner = match self.editor.identity() {
+            EditorIdentity::Draft(draft_id) => Some(("request_draft", draft_id.to_string())),
+            EditorIdentity::Persisted(id) => Some(("request", id.to_string())),
+        };
+
+        match &mut request.auth {
+            AuthType::None => Ok(()),
+            AuthType::Basic {
+                password_secret_ref,
+                ..
+            } => self.rebind_secret_ref(
+                password_secret_ref,
+                "basic_password",
+                source_owner.as_ref().map(|(k, v)| (*k, v.as_str())),
+                target_owner_kind,
+                &target_owner_id,
+                services,
+            ),
+            AuthType::Bearer { token_secret_ref } => self.rebind_secret_ref(
+                token_secret_ref,
+                "bearer_token",
+                source_owner.as_ref().map(|(k, v)| (*k, v.as_str())),
+                target_owner_kind,
+                &target_owner_id,
+                services,
+            ),
+            AuthType::ApiKey {
+                value_secret_ref, ..
+            } => self.rebind_secret_ref(
+                value_secret_ref,
+                "api_key_value",
+                source_owner.as_ref().map(|(k, v)| (*k, v.as_str())),
+                target_owner_kind,
+                &target_owner_id,
+                services,
+            ),
+        }
+    }
+
+    fn rebind_secret_ref(
+        &self,
+        slot: &mut Option<String>,
+        secret_kind: &str,
+        source_owner: Option<(&str, &str)>,
+        target_owner_kind: &str,
+        target_owner_id: &str,
+        services: &Arc<AppServices>,
+    ) -> Result<(), String> {
+        let Some(current_ref) = slot.clone() else {
+            return Ok(());
+        };
+
+        let value = services
+            .secret_store
+            .get_secret(&current_ref)
+            .map_err(|e| {
+                format!(
+                    "{}: {e}",
+                    es_fluent::localize("request_tab_save_failed", None)
+                )
+            })?
+            .ok_or_else(|| es_fluent::localize("request_tab_secret_missing", None).to_string())?;
+
+        let new_ref = services
+            .secret_manager
+            .upsert_secret(target_owner_kind, target_owner_id, secret_kind, &value)
+            .map_err(|e| {
+                format!(
+                    "{}: {e}",
+                    es_fluent::localize("request_tab_save_failed", None)
+                )
+            })?;
+
+        *slot = Some(new_ref.key_name.clone());
+
+        if let Some((owner_kind, owner_id)) = source_owner {
+            if owner_kind == "request_draft" {
+                let _ = services
+                    .secret_manager
+                    .delete_secret(owner_kind, owner_id, secret_kind);
+                if current_ref != new_ref.key_name {
+                    let _ = services.secret_store.delete_secret(&current_ref);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn clone_auth_secrets_for_duplicate(
+        &self,
+        source: &RequestItem,
+        duplicate: &mut RequestItem,
+        services: &Arc<AppServices>,
+    ) -> Result<(), String> {
+        let target_owner_id = duplicate.id.to_string();
+
+        match (&source.auth, &mut duplicate.auth) {
+            (
+                AuthType::Basic {
+                    password_secret_ref: src,
+                    ..
+                },
+                AuthType::Basic {
+                    password_secret_ref: dst,
+                    ..
+                },
+            ) => self.clone_one_secret(
+                src.as_ref(),
+                dst,
+                "basic_password",
+                &target_owner_id,
+                services,
+            ),
+            (
+                AuthType::Bearer {
+                    token_secret_ref: src,
+                },
+                AuthType::Bearer {
+                    token_secret_ref: dst,
+                },
+            ) => self.clone_one_secret(
+                src.as_ref(),
+                dst,
+                "bearer_token",
+                &target_owner_id,
+                services,
+            ),
+            (
+                AuthType::ApiKey {
+                    value_secret_ref: src,
+                    ..
+                },
+                AuthType::ApiKey {
+                    value_secret_ref: dst,
+                    ..
+                },
+            ) => self.clone_one_secret(
+                src.as_ref(),
+                dst,
+                "api_key_value",
+                &target_owner_id,
+                services,
+            ),
+            _ => Ok(()),
+        }
+    }
+
+    fn clone_one_secret(
+        &self,
+        source_ref: Option<&String>,
+        destination_ref: &mut Option<String>,
+        secret_kind: &str,
+        target_owner_id: &str,
+        services: &Arc<AppServices>,
+    ) -> Result<(), String> {
+        let Some(source_ref) = source_ref else {
+            *destination_ref = None;
+            return Ok(());
+        };
+
+        let value = services
+            .secret_store
+            .get_secret(source_ref)
+            .map_err(|e| {
+                format!(
+                    "{}: {e}",
+                    es_fluent::localize("request_tab_duplicate_failed", None)
+                )
+            })?
+            .ok_or_else(|| es_fluent::localize("request_tab_secret_missing", None).to_string())?;
+
+        let new_ref = services
+            .secret_manager
+            .upsert_secret("request", target_owner_id, secret_kind, &value)
+            .map_err(|e| {
+                format!(
+                    "{}: {e}",
+                    es_fluent::localize("request_tab_duplicate_failed", None)
+                )
+            })?;
+
+        *destination_ref = Some(new_ref.key_name);
+        Ok(())
     }
 }
 
@@ -559,7 +873,7 @@ impl Render for RequestTabView {
         let save_status = self.editor.save_status().clone();
         let is_dirty = matches!(
             save_status,
-            SaveStatus::Dirty | SaveStatus::SaveFailed { .. }
+            SaveStatus::Dirty | SaveStatus::SaveFailed { .. } | SaveStatus::Saving
         );
         let exec_status = self.editor.exec_status();
 
@@ -572,7 +886,6 @@ impl Render for RequestTabView {
             div()
         };
 
-        // Build response panel
         let response_panel = match exec_status {
             ExecStatus::Idle => div().child(
                 div()
@@ -600,7 +913,7 @@ impl Render for RequestTabView {
                     gpui::red()
                 };
 
-                let body_preview = match &resp.body_ref {
+                let mut body_preview = match &resp.body_ref {
                     BodyRef::Empty => String::new(),
                     BodyRef::InMemoryPreview { bytes, .. } => {
                         render_preview_text(bytes.as_ref(), resp.media_type.as_deref())
@@ -625,6 +938,32 @@ impl Render for RequestTabView {
                             preview_text
                         }
                     }
+                };
+
+                let load_full_button = match &resp.body_ref {
+                    BodyRef::DiskBlob { blob_id, .. } => {
+                        if self.loaded_full_body_blob_id.as_deref() == Some(blob_id.as_str()) {
+                            if let Some(full) = &self.loaded_full_body_text {
+                                body_preview = full.clone();
+                            }
+                            div()
+                        } else {
+                            div().child(
+                                Button::new("request-load-full-body")
+                                    .outline()
+                                    .label(es_fluent::localize(
+                                        "request_tab_action_load_full_body",
+                                        None,
+                                    ))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        if let Err(err) = this.load_full_response_body(cx) {
+                                            window.push_notification(err, cx);
+                                        }
+                                    })),
+                            )
+                        }
+                    }
+                    _ => div(),
                 };
 
                 div()
@@ -674,6 +1013,7 @@ impl Render for RequestTabView {
                                 .child(body_preview),
                         )
                     })
+                    .child(load_full_button)
             }
             ExecStatus::Failed { error } => {
                 div().child(div().text_sm().text_color(gpui::red()).child(format!(
@@ -698,7 +1038,6 @@ impl Render for RequestTabView {
             }
         };
 
-        // Preflight error
         let preflight_panel = match self.editor.preflight_error() {
             Some(err) => div().text_sm().text_color(gpui::red()).child(format!(
                 "{}: {}",

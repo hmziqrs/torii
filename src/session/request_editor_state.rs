@@ -323,6 +323,29 @@ impl RequestEditorState {
         true
     }
 
+    /// Restore a completed response snapshot (e.g. from history on reopen).
+    pub fn restore_completed_response(&mut self, response: ResponseSummary) {
+        self.exec_status = ExecStatus::Completed {
+            response: Arc::new(response),
+        };
+        self.active_operation_id = None;
+        self.cancellation_token = None;
+    }
+
+    /// Restore a failed execution snapshot (e.g. from history on reopen).
+    pub fn restore_failed_response(&mut self, error: String) {
+        self.exec_status = ExecStatus::Failed { error };
+        self.active_operation_id = None;
+        self.cancellation_token = None;
+    }
+
+    /// Restore a cancelled execution snapshot (e.g. from history on reopen).
+    pub fn restore_cancelled_response(&mut self, partial_size: Option<u64>) {
+        self.exec_status = ExecStatus::Cancelled { partial_size };
+        self.active_operation_id = None;
+        self.cancellation_token = None;
+    }
+
     // -----------------------------------------------------------------------
     // Operation identity and late-response guards
     // -----------------------------------------------------------------------

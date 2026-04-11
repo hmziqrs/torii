@@ -1,6 +1,8 @@
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme as _, Icon, IconName, Root, Sizable as _, WindowExt as _,
+    button::{Button, ButtonVariants as _},
+    h_flex,
     menu::PopupMenuItem,
     resizable::{h_resizable, resizable_panel},
     scroll::ScrollableElement as _,
@@ -11,8 +13,10 @@ use gpui_component::{
 use crate::{
     app::About,
     domain::{
+        history::HistoryState,
         ids::{RequestDraftId, RequestId},
         item_id::ItemId,
+        response::{BodyRef, ResponseBudgets, ResponseSummary},
     },
     repos::tab_session_repo::TabSessionMetadata,
     services::{
@@ -195,11 +199,113 @@ impl AppRoot {
         self.persist_session_state(cx);
     }
 
-    fn close_tab(&mut self, tab_key: TabKey, cx: &mut Context<Self>) {
+    fn perform_close_tab(&mut self, tab_key: TabKey, cx: &mut Context<Self>) {
         self.session.update(cx, |session, cx| {
             session.close_tab(tab_key, cx);
         });
         self.persist_session_state(cx);
+    }
+
+    fn close_tab(&mut self, tab_key: TabKey, window: &mut Window, cx: &mut Context<Self>) {
+        let request_id = match (tab_key.item().kind, tab_key.item().id) {
+            (ItemKind::Request, Some(ItemId::Request(id))) => Some(id),
+            _ => None,
+        };
+
+        let should_confirm_dirty = request_id
+            .and_then(|id| self.request_pages.get(&id))
+            .map(|page| page.read(cx).has_unsaved_changes())
+            .unwrap_or(false);
+
+        if !should_confirm_dirty {
+            self.perform_close_tab(tab_key, cx);
+            return;
+        }
+
+        let weak_root = cx.entity().downgrade();
+        let weak_root_save = weak_root.clone();
+        let weak_root_discard = weak_root.clone();
+        window.open_dialog(cx, move |dialog, _, _| {
+            dialog
+                .title(es_fluent::localize("request_tab_dirty_close_title", None))
+                .overlay_closable(false)
+                .keyboard(false)
+                .child(es_fluent::localize("request_tab_dirty_close_body", None))
+                .footer(
+                    h_flex()
+                        .justify_end()
+                        .gap_2()
+                        .child(
+                            Button::new("dirty-close-save")
+                                .primary()
+                                .label(es_fluent::localize("request_tab_dirty_close_save", None))
+                                .on_click({
+                                    let weak_root_save = weak_root_save.clone();
+                                    move |_, window, cx| {
+                                        let mut close_ok = false;
+                                        let mut err_msg = None;
+                                        let _ = weak_root_save.update(cx, |this, cx| {
+                                            match this.save_request_tab_by_key(tab_key, cx) {
+                                                Ok(()) => {
+                                                    this.perform_close_tab(tab_key, cx);
+                                                    close_ok = true;
+                                                }
+                                                Err(err) => err_msg = Some(err),
+                                            }
+                                        });
+
+                                        if let Some(err) = err_msg {
+                                            window.push_notification(err, cx);
+                                        }
+                                        if close_ok {
+                                            window.close_dialog(cx);
+                                        }
+                                    }
+                                }),
+                        )
+                        .child(
+                            Button::new("dirty-close-discard")
+                                .outline()
+                                .label(es_fluent::localize("request_tab_dirty_close_discard", None))
+                                .on_click({
+                                    let weak_root_discard = weak_root_discard.clone();
+                                    move |_, window, cx| {
+                                        let _ = weak_root_discard.update(cx, |this, cx| {
+                                            this.perform_close_tab(tab_key, cx);
+                                        });
+                                        window.close_dialog(cx);
+                                    }
+                                }),
+                        )
+                        .child(
+                            Button::new("dirty-close-cancel")
+                                .ghost()
+                                .label(es_fluent::localize("request_tab_dirty_close_cancel", None))
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                }),
+                        ),
+                )
+        });
+    }
+
+    fn save_request_tab_by_key(
+        &mut self,
+        tab_key: TabKey,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let request_id = match (tab_key.item().kind, tab_key.item().id) {
+            (ItemKind::Request, Some(ItemId::Request(id))) => id,
+            _ => return Ok(()),
+        };
+        let Some(page) = self.request_pages.get(&request_id).cloned() else {
+            return Ok(());
+        };
+
+        page.update(cx, |tab, cx| tab.save(cx))
+            .map_err(|err| format!("failed to update request tab while saving: {err}"))?;
+        self.refresh_catalog(cx);
+        Ok(())
     }
 
     fn reorder_tabs(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
@@ -223,6 +329,23 @@ impl AppRoot {
         self.persist_session_state(cx);
     }
 
+    fn refresh_catalog(&mut self, cx: &mut Context<Self>) {
+        let services = services(cx);
+        let selected_workspace_id = self.session.read(cx).selected_workspace_id;
+        match load_workspace_catalog(
+            &services.repos.workspace,
+            &services.repos.collection,
+            &services.repos.folder,
+            &services.repos.request,
+            &services.repos.environment,
+            selected_workspace_id,
+        ) {
+            Ok(catalog) => self.catalog = catalog,
+            Err(err) => tracing::error!("failed to refresh workspace catalog: {err}"),
+        }
+        cx.notify();
+    }
+
     fn delete_item(&mut self, item_key: ItemKey, window: &mut Window, cx: &mut Context<Self>) {
         let services = services(cx);
         let close_keys = self.catalog.delete_closure(item_key);
@@ -244,6 +367,11 @@ impl AppRoot {
                 services.repos.environment.delete(id)
             }
             (ItemKind::Request, Some(ItemId::Request(id))) => {
+                if let Some(page) = self.request_pages.get(&id).cloned() {
+                    let _ = page.update(cx, |tab, cx| {
+                        tab.cancel_send(cx);
+                    });
+                }
                 self.request_pages.remove(&id);
                 services.repos.request.delete(id)
             }
@@ -416,8 +544,98 @@ impl AppRoot {
             page.update(cx, |tab, _cx| {
                 tab.editor_mut()
                     .set_latest_history_id(Some(history_entry.id));
+
+                match history_entry.state {
+                    HistoryState::Completed => {
+                        let body_ref = match (
+                            history_entry.blob_hash.as_ref(),
+                            history_entry.blob_size.map(|v| v as u64),
+                        ) {
+                            (Some(hash), Some(size_bytes)) => {
+                                let preview = services
+                                    .blob_store
+                                    .read_preview(hash, ResponseBudgets::PREVIEW_CAP_BYTES)
+                                    .ok()
+                                    .map(bytes::Bytes::from);
+                                BodyRef::DiskBlob {
+                                    blob_id: hash.clone(),
+                                    preview,
+                                    size_bytes,
+                                }
+                            }
+                            _ => BodyRef::Empty,
+                        };
+                        let status_code = history_entry
+                            .status_code
+                            .unwrap_or(0)
+                            .clamp(0, u16::MAX as i64)
+                            as u16;
+                        let status_text = http::StatusCode::from_u16(status_code)
+                            .ok()
+                            .and_then(|status| status.canonical_reason().map(ToOwned::to_owned))
+                            .unwrap_or_default();
+                        let total_ms =
+                            match (history_entry.dispatched_at, history_entry.completed_at) {
+                                (Some(dispatched), Some(completed)) if completed >= dispatched => {
+                                    Some((completed - dispatched) as u64)
+                                }
+                                _ => None,
+                            };
+                        let ttfb_ms =
+                            match (history_entry.dispatched_at, history_entry.first_byte_at) {
+                                (Some(dispatched), Some(first_byte))
+                                    if first_byte >= dispatched =>
+                                {
+                                    Some((first_byte - dispatched) as u64)
+                                }
+                                _ => None,
+                            };
+
+                        tab.editor_mut()
+                            .restore_completed_response(ResponseSummary {
+                                status_code,
+                                status_text,
+                                headers_json: history_entry.response_headers_json.clone(),
+                                media_type: history_entry.response_media_type.clone(),
+                                body_ref,
+                                total_ms,
+                                ttfb_ms,
+                            });
+                    }
+                    HistoryState::Failed => {
+                        tab.editor_mut().restore_failed_response(
+                            history_entry
+                                .error_message
+                                .clone()
+                                .unwrap_or_else(|| "request failed".to_string()),
+                        );
+                    }
+                    HistoryState::Cancelled => {
+                        tab.editor_mut().restore_cancelled_response(
+                            history_entry.partial_size.map(|s| s as u64),
+                        );
+                    }
+                    HistoryState::Pending => {}
+                }
             });
         }
+
+        let services_for_refresh = services.clone();
+        let subscription = cx.observe(&page, move |this, _, cx| {
+            let selected_workspace_id = this.session.read(cx).selected_workspace_id;
+            if let Ok(catalog) = load_workspace_catalog(
+                &services_for_refresh.repos.workspace,
+                &services_for_refresh.repos.collection,
+                &services_for_refresh.repos.folder,
+                &services_for_refresh.repos.request,
+                &services_for_refresh.repos.environment,
+                selected_workspace_id,
+            ) {
+                this.catalog = catalog;
+                cx.notify();
+            }
+        });
+        self._subscriptions.push(subscription);
 
         self.request_pages.insert(request.id, page.clone());
         page
@@ -615,9 +833,9 @@ impl Render for AppRoot {
                                             },
                                             {
                                                 let weak_root = weak_root.clone();
-                                                move |key, _, cx| {
+                                                move |key, window, cx| {
                                                     let _ = weak_root.update(cx, |this, cx| {
-                                                        this.close_tab(key, cx);
+                                                        this.close_tab(key, window, cx);
                                                     });
                                                 }
                                             },

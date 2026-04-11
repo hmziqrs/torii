@@ -6,6 +6,7 @@
 mod common;
 
 use std::{
+    future::Future,
     pin::Pin,
     sync::{Arc, Mutex},
     time::Duration,
@@ -109,7 +110,7 @@ impl MockTransport {
     }
 
     /// Program the next response the mock will return.
-    pub fn respond_with(&self, response: MockResponse) {
+    fn respond_with(&self, response: MockResponse) {
         let mut inner = self.inner.lock().unwrap();
         inner.next_response = response;
     }
@@ -133,7 +134,7 @@ impl MockTransport {
     }
 
     /// Return a copy of all captured requests.
-    pub fn captured(&self) -> Vec<CapturedRequest> {
+    fn captured(&self) -> Vec<CapturedRequest> {
         self.inner.lock().unwrap().captured.clone()
     }
 
@@ -280,12 +281,17 @@ fn simple_request(
     RequestItem::new(collection_id, None, "Test", method, url, 0)
 }
 
+fn run_async<T>(fut: impl Future<Output = T>) -> T {
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    runtime.block_on(fut)
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
-#[tokio::test]
-async fn mock_transport_simple_get() {
+#[test]
+fn mock_transport_simple_get() {
     let mock = MockTransport::new();
     mock.respond_ok(b"hello world");
 
@@ -297,7 +303,7 @@ async fn mock_transport_simple_get() {
     let request = simple_request("GET", "https://api.test/echo", col.id);
 
     let cancel = CancellationToken::new();
-    let outcome = exec.execute(&request, ws.id, cancel).await.unwrap();
+    let outcome = run_async(exec.execute(&request, ws.id, cancel)).unwrap();
 
     match outcome {
         ExecOutcome::Completed(summary) => {
@@ -318,8 +324,8 @@ async fn mock_transport_simple_get() {
     assert_eq!(mock.captured()[0].method, "GET");
 }
 
-#[tokio::test]
-async fn mock_transport_captures_headers_and_body() {
+#[test]
+fn mock_transport_captures_headers_and_body() {
     let mock = MockTransport::new();
     mock.respond_ok(b"ok");
 
@@ -337,7 +343,7 @@ async fn mock_transport_captures_headers_and_body() {
     };
 
     let cancel = CancellationToken::new();
-    let _ = exec.execute(&request, ws.id, cancel).await.unwrap();
+    let _ = run_async(exec.execute(&request, ws.id, cancel)).unwrap();
 
     let captured = mock.captured();
     assert_eq!(captured[0].method, "POST");
@@ -353,8 +359,8 @@ async fn mock_transport_captures_headers_and_body() {
     );
 }
 
-#[tokio::test]
-async fn mock_transport_cancel_during_stream() {
+#[test]
+fn mock_transport_cancel_during_stream() {
     let mock = MockTransport::new();
     // Drip-feed 10 chunks with 50ms delay each
     let chunks: Vec<Vec<u8>> = (0..10)
@@ -379,13 +385,16 @@ async fn mock_transport_cancel_during_stream() {
     let cancel_clone = cancel.clone();
 
     // Cancel after 200ms (should interrupt mid-stream)
-    let handle = tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        cancel_clone.cancel();
-    });
+    let outcome = run_async(async move {
+        let handle = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            cancel_clone.cancel();
+        });
 
-    let outcome = exec.execute(&request, ws.id, cancel).await.unwrap();
-    handle.await.unwrap();
+        let outcome = exec.execute(&request, ws.id, cancel).await.unwrap();
+        handle.await.unwrap();
+        outcome
+    });
 
     // Should be cancelled or completed (if it finished before cancel)
     match outcome {
@@ -394,8 +403,8 @@ async fn mock_transport_cancel_during_stream() {
     }
 }
 
-#[tokio::test]
-async fn mock_transport_preflight_invalid_url() {
+#[test]
+fn mock_transport_preflight_invalid_url() {
     let mock = MockTransport::new();
     mock.respond_ok(b"");
 
@@ -407,7 +416,7 @@ async fn mock_transport_preflight_invalid_url() {
     let request = simple_request("GET", "not a valid url :::///", col.id);
 
     let cancel = CancellationToken::new();
-    let outcome = exec.execute(&request, ws.id, cancel).await.unwrap();
+    let outcome = run_async(exec.execute(&request, ws.id, cancel)).unwrap();
 
     match outcome {
         ExecOutcome::PreflightFailed(msg) => {
@@ -419,8 +428,8 @@ async fn mock_transport_preflight_invalid_url() {
     assert_eq!(mock.request_count(), 0);
 }
 
-#[tokio::test]
-async fn mock_transport_error_response() {
+#[test]
+fn mock_transport_error_response() {
     let mock = MockTransport::new();
     mock.respond_error(Duration::from_millis(10));
 
@@ -432,7 +441,7 @@ async fn mock_transport_error_response() {
     let request = simple_request("GET", "https://api.test/fail", col.id);
 
     let cancel = CancellationToken::new();
-    let outcome = exec.execute(&request, ws.id, cancel).await.unwrap();
+    let outcome = run_async(exec.execute(&request, ws.id, cancel)).unwrap();
 
     match outcome {
         ExecOutcome::Failed(msg) => {
@@ -442,8 +451,8 @@ async fn mock_transport_error_response() {
     }
 }
 
-#[tokio::test]
-async fn mock_transport_bearer_auth_injection() {
+#[test]
+fn mock_transport_bearer_auth_injection() {
     let mock = MockTransport::new();
     mock.respond_ok(b"authenticated");
 
@@ -463,7 +472,7 @@ async fn mock_transport_bearer_auth_injection() {
     };
 
     let cancel = CancellationToken::new();
-    let outcome = exec.execute(&request, ws.id, cancel).await.unwrap();
+    let outcome = run_async(exec.execute(&request, ws.id, cancel)).unwrap();
 
     match outcome {
         ExecOutcome::Completed(summary) => {
@@ -481,8 +490,8 @@ async fn mock_transport_bearer_auth_injection() {
     assert_eq!(auth_header.unwrap().1, "Bearer secret-token-value");
 }
 
-#[tokio::test]
-async fn mock_transport_preview_cap_large_response() {
+#[test]
+fn mock_transport_preview_cap_large_response() {
     let mock = MockTransport::new();
     // Response larger than preview cap (2 MiB)
     let large_body = vec![b'X'; 3 * 1024 * 1024]; // 3 MiB
@@ -505,7 +514,7 @@ async fn mock_transport_preview_cap_large_response() {
     let request = simple_request("GET", "https://api.test/large", col.id);
 
     let cancel = CancellationToken::new();
-    let outcome = exec.execute(&request, ws.id, cancel).await.unwrap();
+    let outcome = run_async(exec.execute(&request, ws.id, cancel)).unwrap();
 
     match outcome {
         ExecOutcome::Completed(summary) => {
@@ -531,8 +540,8 @@ async fn mock_transport_preview_cap_large_response() {
     }
 }
 
-#[tokio::test]
-async fn mock_transport_status_codes() {
+#[test]
+fn mock_transport_status_codes() {
     for (code, text) in [
         (200, "OK"),
         (404, "Not Found"),
@@ -554,7 +563,7 @@ async fn mock_transport_status_codes() {
         let request = simple_request("GET", "https://api.test/", col.id);
 
         let cancel = CancellationToken::new();
-        let outcome = exec.execute(&request, ws.id, cancel).await.unwrap();
+        let outcome = run_async(exec.execute(&request, ws.id, cancel)).unwrap();
 
         match outcome {
             ExecOutcome::Completed(summary) => {
@@ -566,8 +575,8 @@ async fn mock_transport_status_codes() {
     }
 }
 
-#[tokio::test]
-async fn mock_transport_empty_body() {
+#[test]
+fn mock_transport_empty_body() {
     let mock = MockTransport::new();
     mock.respond_with(MockResponse {
         status_code: 204,
@@ -584,7 +593,7 @@ async fn mock_transport_empty_body() {
     let request = simple_request("DELETE", "https://api.test/resource", col.id);
 
     let cancel = CancellationToken::new();
-    let outcome = exec.execute(&request, ws.id, cancel).await.unwrap();
+    let outcome = run_async(exec.execute(&request, ws.id, cancel)).unwrap();
 
     match outcome {
         ExecOutcome::Completed(summary) => {
