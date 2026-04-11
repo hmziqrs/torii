@@ -79,6 +79,55 @@ app_about_description = GPUI Starter
 root_search_placeholder = Search...
 root_navigation = Navigation
 
+## Sidebar
+
+sidebar_workspaces = Workspaces
+sidebar_collections = Collections
+sidebar_environments = Environments
+sidebar_utilities = Utilities
+
+## Tabs
+
+tab_kind_settings = Settings
+tab_kind_about = About
+tab_missing_title = Item unavailable
+tab_missing_body = This tab references an item that is no longer available.
+tab_missing_short = Missing
+
+## Empty State
+
+empty_state_no_workspace_title = No workspaces yet
+empty_state_no_workspace_body = Create or import a workspace to start using the tab shell.
+empty_state_no_tab_title = No tab selected
+empty_state_no_tab_body = Choose an item from the sidebar to open it in a tab.
+
+## Workspace Tab
+
+workspace_tab_subtitle = Workspace overview
+workspace_tab_collections = Collections
+workspace_tab_requests = Requests
+workspace_tab_environments = Environments
+workspace_tab_collections_heading = Available collections
+
+## Collection Tab
+
+collection_tab_folders = Folders
+collection_tab_requests = Requests
+collection_tab_hint = Collection tabs are the entry point for request organization in this workspace.
+
+## Folder Tab
+
+folder_tab_subfolders = Subfolders
+folder_tab_requests = Requests
+
+## Environment Tab
+
+environment_tab_variables = Variables
+
+## Request Tab
+
+request_tab_hint = Request execution state is deferred to Phase 3. This tab currently shows the persisted request shell.
+
 ## Menu
 
 menu_about = About

@@ -100,6 +100,36 @@ impl TabManager {
         false
     }
 
+    pub fn close_all(&mut self, keys: &[TabKey]) -> usize {
+        let mut closed = 0;
+        for key in keys {
+            if self.close(*key).is_some() {
+                closed += 1;
+            }
+        }
+        closed
+    }
+
+    pub fn move_active_by(&mut self, delta: isize) -> bool {
+        let Some(active) = self.active else {
+            return false;
+        };
+        let Some(from) = self.index_of(active) else {
+            return false;
+        };
+        let len = self.tabs.len();
+        let target = from as isize + delta;
+        if target < 0 || target >= len as isize {
+            return false;
+        }
+        self.reorder(from, target as usize)
+    }
+
+    pub fn set_tabs(&mut self, tabs: Vec<TabState>, active: Option<TabKey>) {
+        self.tabs = tabs;
+        self.active = active.filter(|key| self.index_of(*key).is_some());
+    }
+
     pub fn reorder(&mut self, from: usize, to: usize) -> bool {
         if from >= self.tabs.len() || to >= self.tabs.len() || from == to {
             return false;

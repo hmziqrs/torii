@@ -4,9 +4,12 @@ use uuid::Uuid;
 use crate::{
     domain::ids::WorkspaceId,
     session::{
-        item_key::ItemKey, tab_manager::TabManager, window_layout::WindowLayoutState,
+        item_key::{ItemKey, TabKey},
+        tab_manager::{CloseTabOutcome, OpenTabOutcome, TabManager, TabState},
+        window_layout::WindowLayoutState,
     },
 };
+use gpui::Context;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SessionId(pub Uuid);
@@ -41,6 +44,82 @@ impl WorkspaceSession {
             tab_manager: TabManager::default(),
             window_layout: WindowLayoutState::default(),
         }
+    }
+
+    pub fn open_or_focus(
+        &mut self,
+        item_key: ItemKey,
+        cx: &mut Context<Self>,
+    ) -> OpenTabOutcome {
+        self.sidebar_selection = Some(item_key);
+        let outcome = self.tab_manager.open_or_focus(item_key);
+        cx.notify();
+        outcome
+    }
+
+    pub fn focus_tab(&mut self, tab_key: TabKey, cx: &mut Context<Self>) -> bool {
+        let changed = self.tab_manager.set_active(tab_key);
+        if changed {
+            self.sidebar_selection = Some(tab_key.item());
+            cx.notify();
+        }
+        changed
+    }
+
+    pub fn close_tab(&mut self, tab_key: TabKey, cx: &mut Context<Self>) -> Option<CloseTabOutcome> {
+        let outcome = self.tab_manager.close(tab_key)?;
+        self.sidebar_selection = self.tab_manager.active().map(|active| active.item());
+        cx.notify();
+        Some(outcome)
+    }
+
+    pub fn move_active_tab_by(&mut self, delta: isize, cx: &mut Context<Self>) -> bool {
+        let changed = self.tab_manager.move_active_by(delta);
+        if changed {
+            cx.notify();
+        }
+        changed
+    }
+
+    pub fn set_selected_workspace(
+        &mut self,
+        workspace_id: Option<WorkspaceId>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selected_workspace_id != workspace_id {
+            self.selected_workspace_id = workspace_id;
+            cx.notify();
+        }
+    }
+
+    pub fn set_sidebar_selection(&mut self, selection: Option<ItemKey>, cx: &mut Context<Self>) {
+        if self.sidebar_selection != selection {
+            self.sidebar_selection = selection;
+            cx.notify();
+        }
+    }
+
+    pub fn restore_tabs(
+        &mut self,
+        tabs: Vec<TabState>,
+        active: Option<TabKey>,
+        selected_workspace_id: Option<WorkspaceId>,
+        cx: &mut Context<Self>,
+    ) {
+        self.tab_manager.set_tabs(tabs, active);
+        self.sidebar_selection = self.tab_manager.active().map(|tab| tab.item());
+        self.selected_workspace_id = selected_workspace_id;
+        cx.notify();
+    }
+
+    pub fn close_tabs(&mut self, item_keys: &[ItemKey], cx: &mut Context<Self>) -> usize {
+        let keys = item_keys.iter().copied().map(TabKey::from).collect::<Vec<_>>();
+        let closed = self.tab_manager.close_all(&keys);
+        if closed > 0 {
+            self.sidebar_selection = self.tab_manager.active().map(|tab| tab.item());
+            cx.notify();
+        }
+        closed
     }
 }
 

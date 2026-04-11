@@ -6,7 +6,6 @@ pub mod repos;
 pub mod root;
 pub mod session;
 pub mod services;
-pub mod sidebar;
 pub mod title_bar;
 pub mod views;
 

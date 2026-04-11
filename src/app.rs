@@ -2,7 +2,7 @@ use gpui::{
     Action, App, AppContext as _, Bounds, Focusable as _, Global, KeyBinding, SharedString,
     WindowBounds, WindowKind, WindowOptions, actions, px, size,
 };
-use gpui_component::{ActiveTheme, Root, Theme, ThemeMode, TitleBar, WindowExt, text::markdown};
+use gpui_component::{ActiveTheme, Root, Theme, ThemeMode, TitleBar};
 
 use crate::services::{
     app_services::AppServicesGlobal, startup::bootstrap_app_services,
@@ -159,27 +159,6 @@ pub fn init(cx: &mut App) {
         cx.quit();
     });
 
-    cx.on_action(|_: &About, cx| {
-        if let Some(window) = cx.active_window().and_then(|w| w.downcast::<Root>()) {
-            cx.defer(move |cx| {
-                if let Err(err) = window.update(cx, |_, window, cx| {
-                    window.defer(cx, |window, cx| {
-                        window.open_alert_dialog(cx, |alert, _, _| {
-                            alert
-                                .title(es_fluent::localize("app_about_title", None))
-                                .description(markdown(&es_fluent::localize(
-                                    "app_about_description",
-                                    None,
-                                )))
-                        });
-                    });
-                }) {
-                    tracing::error!("failed to open about dialog: {err}");
-                }
-            });
-        }
-    });
-
     cx.activate(true);
 }
 
@@ -215,6 +194,13 @@ pub fn create_new_window(title: &str, cx: &mut App) {
 
         let window = cx.open_window(options, |window, cx| {
             let root_view = cx.new(|cx| crate::root::AppRoot::new(title.clone(), window, cx));
+            let root_for_close = root_view.clone();
+            window.on_window_should_close(cx, move |_, cx| {
+                let _ = root_for_close.update(cx, |root, cx| {
+                    root.persist_session_state(cx);
+                });
+                true
+            });
 
             let focus_handle = root_view.focus_handle(cx);
             window.defer(cx, move |window, cx| {

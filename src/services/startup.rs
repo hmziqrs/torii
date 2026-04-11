@@ -17,6 +17,7 @@ use crate::{
         preferences_repo::{PreferencesRepoRef, SqlitePreferencesRepository},
         request_repo::{RequestRepoRef, SqliteRequestRepository},
         secret_ref_repo::{SecretRefRepoRef, SqliteSecretRefRepository},
+        tab_session_repo::{SqliteTabSessionRepository, TabSessionRepoRef},
         workspace_repo::{SqliteWorkspaceRepository, WorkspaceRepoRef},
     },
 };
@@ -24,6 +25,7 @@ use crate::{
 use super::{
     app_services::{AppServices, Repositories},
     recovery::RecoveryCoordinator,
+    session_restore::SessionRestoreService,
     secret_manager::SecretManager,
     ui_preferences::{
         InMemoryUiPreferencesStore, SqliteUiPreferencesStore, UiPreferencesSnapshot,
@@ -56,6 +58,7 @@ fn build_app_services() -> Result<AppServices> {
     let preferences_repo: PreferencesRepoRef =
         Arc::new(SqlitePreferencesRepository::new(db.clone()));
     let secret_ref_repo: SecretRefRepoRef = Arc::new(SqliteSecretRefRepository::new(db.clone()));
+    let tab_session_repo: TabSessionRepoRef = Arc::new(SqliteTabSessionRepository::new(db.clone()));
 
     let secret_store: SecretStoreRef = Arc::new(KeyringSecretStore::new(format!(
         "{}.{}.{}",
@@ -81,6 +84,14 @@ fn build_app_services() -> Result<AppServices> {
     recovery
         .run_startup_recovery()
         .context("startup recovery failed")?;
+    let session_restore = SessionRestoreService::new(
+        tab_session_repo.clone(),
+        workspace_repo.clone(),
+        collection_repo.clone(),
+        folder_repo.clone(),
+        request_repo.clone(),
+        environment_repo.clone(),
+    );
 
     Ok(AppServices {
         paths,
@@ -97,9 +108,11 @@ fn build_app_services() -> Result<AppServices> {
             history: history_repo,
             preferences: preferences_repo,
             secret_refs: secret_ref_repo,
+            tab_session: tab_session_repo,
         },
         ui_preferences,
         recovery,
+        session_restore,
     })
 }
 
@@ -152,6 +165,7 @@ fn fallback_app_services() -> AppServices {
     let preferences_repo: PreferencesRepoRef =
         Arc::new(SqlitePreferencesRepository::new(db.clone()));
     let secret_ref_repo: SecretRefRepoRef = Arc::new(SqliteSecretRefRepository::new(db.clone()));
+    let tab_session_repo: TabSessionRepoRef = Arc::new(SqliteTabSessionRepository::new(db.clone()));
 
     let secret_store: SecretStoreRef = Arc::new(InMemorySecretStore::new());
     let secret_manager = SecretManager::new(
@@ -171,6 +185,14 @@ fn fallback_app_services() -> AppServices {
 
     let recovery = RecoveryCoordinator::new(db.clone(), history_repo.clone(), blob_store.clone());
     let _ = recovery.run_startup_recovery();
+    let session_restore = SessionRestoreService::new(
+        tab_session_repo.clone(),
+        workspace_repo.clone(),
+        collection_repo.clone(),
+        folder_repo.clone(),
+        request_repo.clone(),
+        environment_repo.clone(),
+    );
 
     AppServices {
         paths: fallback_paths,
@@ -187,8 +209,10 @@ fn fallback_app_services() -> AppServices {
             history: history_repo,
             preferences: preferences_repo,
             secret_refs: secret_ref_repo,
+            tab_session: tab_session_repo,
         },
         ui_preferences,
         recovery,
+        session_restore,
     }
 }

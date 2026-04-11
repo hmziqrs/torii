@@ -5,6 +5,7 @@ pub mod history_repo;
 pub mod preferences_repo;
 pub mod request_repo;
 pub mod secret_ref_repo;
+pub mod tab_session_repo;
 pub mod workspace_repo;
 
 use std::sync::Arc;

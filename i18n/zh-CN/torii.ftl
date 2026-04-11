@@ -79,6 +79,55 @@ app_about_description = GPUI Starter
 root_search_placeholder = 搜索...
 root_navigation = 导航
 
+## Sidebar
+
+sidebar_workspaces = 工作区
+sidebar_collections = 集合
+sidebar_environments = 环境
+sidebar_utilities = 工具
+
+## Tabs
+
+tab_kind_settings = 设置
+tab_kind_about = 关于
+tab_missing_title = 项目不可用
+tab_missing_body = 此标签引用的项目已不存在。
+tab_missing_short = 缺失
+
+## Empty State
+
+empty_state_no_workspace_title = 还没有工作区
+empty_state_no_workspace_body = 创建或导入一个工作区以开始使用标签页界面。
+empty_state_no_tab_title = 尚未选择标签页
+empty_state_no_tab_body = 从侧边栏选择一个项目以在标签页中打开。
+
+## Workspace Tab
+
+workspace_tab_subtitle = 工作区概览
+workspace_tab_collections = 集合
+workspace_tab_requests = 请求
+workspace_tab_environments = 环境
+workspace_tab_collections_heading = 可用集合
+
+## Collection Tab
+
+collection_tab_folders = 文件夹
+collection_tab_requests = 请求
+collection_tab_hint = 集合标签页是该工作区内组织请求的入口。
+
+## Folder Tab
+
+folder_tab_subfolders = 子文件夹
+folder_tab_requests = 请求
+
+## Environment Tab
+
+environment_tab_variables = 变量
+
+## Request Tab
+
+request_tab_hint = 请求执行状态将在第 3 阶段实现。当前标签页仅显示已持久化的请求外壳。
+
 ## Menu
 
 menu_about = 关于
