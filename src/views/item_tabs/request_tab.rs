@@ -3,7 +3,7 @@ use std::sync::Arc;
 use gpui::{prelude::*, *};
 use gpui_component::{
     h_flex,
-    input::{Input, InputState},
+    input::{Input, InputEvent, InputState},
     Sizable as _,
     v_flex,
 };
@@ -14,7 +14,6 @@ use crate::{
         request::RequestItem,
         response::BodyRef,
     },
-    infra::secrets::SecretStoreRef,
     repos::request_repo::RequestRepoError,
     services::{
         app_services::AppServicesGlobal,
@@ -26,6 +25,7 @@ use crate::{
 pub struct RequestTabView {
     editor: RequestEditorState,
     url_input: Entity<InputState>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl RequestTabView {
@@ -36,8 +36,25 @@ impl RequestTabView {
             state.set_value(request.url.clone(), window, cx);
             state
         });
+        let _subscriptions = vec![cx.subscribe(
+            &url_input,
+            |this: &mut RequestTabView, state: Entity<InputState>, event: &InputEvent, cx| {
+                if let InputEvent::Change = event {
+                    let url = state.read(cx).value().to_string();
+                    if this.editor.draft().url != url {
+                        this.editor.draft_mut().url = url;
+                        this.editor.refresh_save_status();
+                        cx.notify();
+                    }
+                }
+            },
+        )];
 
-        Self { editor, url_input }
+        Self {
+            editor,
+            url_input,
+            _subscriptions,
+        }
     }
 
     /// Create a draft request tab for a new unsaved request.
@@ -52,8 +69,25 @@ impl RequestTabView {
             state.set_value(String::new(), window, cx);
             state
         });
+        let _subscriptions = vec![cx.subscribe(
+            &url_input,
+            |this: &mut RequestTabView, state: Entity<InputState>, event: &InputEvent, cx| {
+                if let InputEvent::Change = event {
+                    let url = state.read(cx).value().to_string();
+                    if this.editor.draft().url != url {
+                        this.editor.draft_mut().url = url;
+                        this.editor.refresh_save_status();
+                        cx.notify();
+                    }
+                }
+            },
+        )];
 
-        Self { editor, url_input }
+        Self {
+            editor,
+            url_input,
+            _subscriptions,
+        }
     }
 
     pub fn editor(&self) -> &RequestEditorState {
@@ -337,17 +371,11 @@ fn build_execution_service(
 }
 
 impl Render for RequestTabView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let request = self.editor.draft();
         let save_status = self.editor.save_status().clone();
         let is_dirty = matches!(save_status, SaveStatus::Dirty | SaveStatus::SaveFailed { .. });
         let exec_status = self.editor.exec_status();
-
-        // Sync URL input with editor state
-        let url = request.url.clone();
-        self.url_input.update(cx, |state, cx| {
-            state.set_value(url, window, cx);
-        });
 
         let dirty_indicator = if is_dirty {
             div().text_xs().text_color(gpui::red()).child(" *")
