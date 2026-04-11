@@ -84,6 +84,13 @@ fn build_app_services() -> Result<AppServices> {
     recovery
         .run_startup_recovery()
         .context("startup recovery failed")?;
+    ensure_sample_workspace(
+        &workspace_repo,
+        &collection_repo,
+        &folder_repo,
+        &request_repo,
+        &environment_repo,
+    )?;
     let session_restore = SessionRestoreService::new(
         tab_session_repo.clone(),
         workspace_repo.clone(),
@@ -185,6 +192,13 @@ fn fallback_app_services() -> AppServices {
 
     let recovery = RecoveryCoordinator::new(db.clone(), history_repo.clone(), blob_store.clone());
     let _ = recovery.run_startup_recovery();
+    let _ = ensure_sample_workspace(
+        &workspace_repo,
+        &collection_repo,
+        &folder_repo,
+        &request_repo,
+        &environment_repo,
+    );
     let session_restore = SessionRestoreService::new(
         tab_session_repo.clone(),
         workspace_repo.clone(),
@@ -215,4 +229,68 @@ fn fallback_app_services() -> AppServices {
         recovery,
         session_restore,
     }
+}
+
+fn ensure_sample_workspace(
+    workspace_repo: &WorkspaceRepoRef,
+    collection_repo: &CollectionRepoRef,
+    folder_repo: &FolderRepoRef,
+    request_repo: &RequestRepoRef,
+    environment_repo: &EnvironmentRepoRef,
+) -> Result<()> {
+    if !workspace_repo.list()?.is_empty() {
+        return Ok(());
+    }
+
+    let workspace = workspace_repo.create("Postman Demo Workspace")?;
+
+    let api_collection = collection_repo.create(workspace.id, "Core API")?;
+    let auth_folder = folder_repo.create(api_collection.id, None, "Auth")?;
+    let users_folder = folder_repo.create(api_collection.id, None, "Users")?;
+
+    request_repo.create(
+        api_collection.id,
+        Some(auth_folder.id),
+        "Sign In",
+        "POST",
+        "https://api.example.test/auth/sign-in",
+    )?;
+    request_repo.create(
+        api_collection.id,
+        Some(auth_folder.id),
+        "Refresh Token",
+        "POST",
+        "https://api.example.test/auth/refresh",
+    )?;
+    request_repo.create(
+        api_collection.id,
+        Some(users_folder.id),
+        "List Users",
+        "GET",
+        "https://api.example.test/users",
+    )?;
+    request_repo.create(
+        api_collection.id,
+        Some(users_folder.id),
+        "Get User",
+        "GET",
+        "https://api.example.test/users/:id",
+    )?;
+
+    let admin_collection = collection_repo.create(workspace.id, "Admin API")?;
+    request_repo.create(
+        admin_collection.id,
+        None,
+        "Health Check",
+        "GET",
+        "https://admin.example.test/health",
+    )?;
+
+    let environment = environment_repo.create(workspace.id, "Local")?;
+    environment_repo.update_variables(
+        environment.id,
+        r#"{"baseUrl":"https://api.example.test","token":"demo-token"}"#,
+    )?;
+
+    Ok(())
 }
