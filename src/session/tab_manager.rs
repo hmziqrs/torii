@@ -144,3 +144,59 @@ impl TabManager {
         self.tabs.iter().position(|tab| tab.key == tab_key)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::ids::{CollectionId, EnvironmentId, WorkspaceId};
+
+    #[test]
+    fn open_or_focus_dedupes_same_item() {
+        let item = ItemKey::workspace(WorkspaceId::new());
+        let mut manager = TabManager::default();
+
+        let first = manager.open_or_focus(item);
+        let second = manager.open_or_focus(item);
+
+        assert!(!first.already_open);
+        assert!(second.already_open);
+        assert_eq!(manager.tabs.len(), 1);
+        assert_eq!(manager.active, Some(TabKey::from(item)));
+    }
+
+    #[test]
+    fn close_active_prefers_left_neighbor_then_none() {
+        let first = ItemKey::workspace(WorkspaceId::new());
+        let second = ItemKey::collection(CollectionId::new());
+
+        let mut manager = TabManager::default();
+        manager.open_or_focus(first);
+        manager.open_or_focus(second);
+
+        let outcome = manager.close(TabKey::from(second)).unwrap();
+        assert_eq!(outcome.next_active, Some(TabKey::from(first)));
+
+        let last = manager.close(TabKey::from(first)).unwrap();
+        assert_eq!(last.next_active, None);
+        assert!(manager.tabs.is_empty());
+    }
+
+    #[test]
+    fn reorder_keeps_active_identity_stable() {
+        let first = ItemKey::workspace(WorkspaceId::new());
+        let second = ItemKey::collection(CollectionId::new());
+        let third = ItemKey::environment(EnvironmentId::new());
+
+        let mut manager = TabManager::default();
+        manager.open_or_focus(first);
+        manager.open_or_focus(second);
+        manager.open_or_focus(third);
+
+        assert!(manager.reorder(2, 0));
+        assert_eq!(
+            manager.tabs.iter().map(|tab| tab.key).collect::<Vec<_>>(),
+            vec![TabKey::from(third), TabKey::from(first), TabKey::from(second)]
+        );
+        assert_eq!(manager.active, Some(TabKey::from(third)));
+    }
+}

@@ -354,3 +354,143 @@ impl TreeItem {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::{
+        environment::Environment,
+        ids::{CollectionId, EnvironmentId, FolderId, RequestId, WorkspaceId},
+        request::RequestItem,
+        revision::RevisionMetadata,
+        workspace::Workspace,
+    };
+    use std::mem::discriminant;
+
+    #[test]
+    fn utility_item_titles_and_icons_resolve_by_kind() {
+        let catalog = WorkspaceCatalog {
+            workspaces: Vec::new(),
+            selected_workspace: None,
+        };
+
+        assert_eq!(
+            catalog.find_title(ItemKey::settings()),
+            Some(es_fluent::localize("tab_kind_settings", None))
+        );
+        assert_eq!(
+            catalog.find_title(ItemKey::about()),
+            Some(es_fluent::localize("tab_kind_about", None))
+        );
+        assert_eq!(
+            discriminant(&catalog.find_icon(ItemKey::settings())),
+            discriminant(&IconName::Settings2)
+        );
+        assert_eq!(
+            discriminant(&catalog.find_icon(ItemKey::about())),
+            discriminant(&IconName::Info)
+        );
+    }
+
+    #[test]
+    fn persisted_item_titles_and_icons_resolve_by_kind() {
+        let workspace_id = WorkspaceId::new();
+        let collection_id = CollectionId::new();
+        let folder_id = FolderId::new();
+        let request_id = RequestId::new();
+        let environment_id = EnvironmentId::new();
+
+        let catalog = WorkspaceCatalog {
+            workspaces: vec![Workspace {
+                id: workspace_id,
+                name: "Workspace A".into(),
+                meta: RevisionMetadata::new_now(),
+            }],
+            selected_workspace: Some(WorkspaceTree {
+                workspace: Workspace {
+                    id: workspace_id,
+                    name: "Workspace A".into(),
+                    meta: RevisionMetadata::new_now(),
+                },
+                collections: vec![CollectionTree {
+                    collection: Collection {
+                        id: collection_id,
+                        workspace_id,
+                        name: "Collection A".into(),
+                        sort_order: 0,
+                        meta: RevisionMetadata::new_now(),
+                    },
+                    children: vec![TreeItem::Folder(FolderTree {
+                        folder: Folder {
+                            id: folder_id,
+                            collection_id,
+                            parent_folder_id: None,
+                            name: "Folder A".into(),
+                            sort_order: 0,
+                            meta: RevisionMetadata::new_now(),
+                        },
+                        children: vec![TreeItem::Request(RequestItem {
+                            id: request_id,
+                            collection_id,
+                            parent_folder_id: Some(folder_id),
+                            name: "Request A".into(),
+                            method: "GET".into(),
+                            url: "https://example.test".into(),
+                            body_blob_hash: None,
+                            sort_order: 0,
+                            meta: RevisionMetadata::new_now(),
+                        })],
+                    })],
+                }],
+                environments: vec![Environment {
+                    id: environment_id,
+                    workspace_id,
+                    name: "Env A".into(),
+                    variables_json: "{}".into(),
+                    meta: RevisionMetadata::new_now(),
+                }],
+            }),
+        };
+
+        assert_eq!(
+            catalog.find_title(ItemKey::workspace(workspace_id)),
+            Some("Workspace A".into())
+        );
+        assert_eq!(
+            catalog.find_title(ItemKey::collection(collection_id)),
+            Some("Collection A".into())
+        );
+        assert_eq!(
+            catalog.find_title(ItemKey::folder(folder_id)),
+            Some("Folder A".into())
+        );
+        assert_eq!(
+            catalog.find_title(ItemKey::request(request_id)),
+            Some("Request A".into())
+        );
+        assert_eq!(
+            catalog.find_title(ItemKey::environment(environment_id)),
+            Some("Env A".into())
+        );
+        assert_eq!(
+            discriminant(&catalog.find_icon(ItemKey::workspace(workspace_id))),
+            discriminant(&IconName::Inbox)
+        );
+        assert_eq!(
+            discriminant(&catalog.find_icon(ItemKey::collection(collection_id))),
+            discriminant(&IconName::BookOpen)
+        );
+        assert_eq!(
+            discriminant(&catalog.find_icon(ItemKey::folder(folder_id))),
+            discriminant(&IconName::Folder)
+        );
+        assert_eq!(
+            discriminant(&catalog.find_icon(ItemKey::request(request_id))),
+            discriminant(&IconName::File)
+        );
+        assert_eq!(
+            discriminant(&catalog.find_icon(ItemKey::environment(environment_id))),
+            discriminant(&IconName::Globe)
+        );
+    }
+}

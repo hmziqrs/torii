@@ -165,3 +165,37 @@ impl From<ItemKey> for TabKey {
         Self::new(value)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::ids::{CollectionId, WorkspaceId};
+
+    #[test]
+    fn tab_key_equality_tracks_item_identity() {
+        let left = TabKey::from(ItemKey::workspace(WorkspaceId::new()));
+        let same = TabKey::from(left.item());
+        let different = TabKey::from(ItemKey::collection(CollectionId::new()));
+
+        assert_eq!(left, same);
+        assert_ne!(left, different);
+    }
+
+    #[test]
+    fn item_key_roundtrips_storage_for_persisted_and_utility_items() {
+        let persisted = ItemKey::workspace(WorkspaceId::new());
+        let utility = ItemKey::settings();
+
+        let (persisted_kind, persisted_id) = persisted.to_storage_parts();
+        let (utility_kind, utility_id) = utility.to_storage_parts();
+
+        assert_eq!(
+            ItemKey::from_storage_parts(&persisted_kind, persisted_id.as_deref()).unwrap(),
+            persisted
+        );
+        assert_eq!(
+            ItemKey::from_storage_parts(&utility_kind, utility_id.as_deref()).unwrap(),
+            utility
+        );
+    }
+}
