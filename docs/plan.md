@@ -229,6 +229,22 @@ Blob/file storage should cover:
 
 ## 5. Phase Plan
 
+## Status
+
+- `Phase 0`: completed
+- `Phase 1`: completed
+- `Phase 2`: completed on 2026-04-11
+
+Phase 2 completion summary:
+
+- page-driven routing was replaced with item-driven tab routing
+- per-window `WorkspaceSession` and `TabManager` now own tab/session/sidebar/layout state
+- unified tab host supports open, focus-existing, close, and drag-reorder behavior
+- workspace, collection, folder, environment, request, settings, and about tabs render through the same shell
+- tab session persistence and restore are backed by SQLite and scoped by session ID
+- sidebar selection, tab focus, delete cascade cleanup, and layout persistence are wired together
+- validation coverage for Phase 2 behavior is present and passing
+
 ## Phase 0 (P0): Foundation and State Contract
 
 Goal: replace temporary prototype assumptions with the scale-ready GPUI state model from V2.
@@ -258,6 +274,10 @@ Exit criteria:
 - No new feature work uses raw ad hoc global state or unbounded in-memory lists as the long-lived source of truth
 - Theme/font/radius/spacing are modeled as global value state with durable storage
 - Task ownership rules are documented in code: retain or detach, never accidental drop
+
+Status:
+
+- Completed
 - Basic metrics hooks exist for memory, queue depth, and cancellation outcomes
 
 ## Phase 1 (P0): SQLite, Blob Store, and Repositories [x]
@@ -289,11 +309,11 @@ Exit criteria:
 - Schema migration path is test-covered
 - Secret material is absent from SQLite and blob files
 
-## Phase 2 (P0): Unified Tab System and Item Views
+## Phase 2 (P0): Unified Tab System and Item Views [x]
 
 Goal: establish the Postman-style item editing model before protocol execution complexity expands.
 
-Detailed execution document: [docs/phase-2.md](docs/phase-2.md)
+Detailed execution document: [docs/completed/phase-2.md](docs/completed/phase-2.md)
 
 Scope:
 
@@ -316,6 +336,12 @@ Exit criteria:
 - Deleting items closes affected tabs deterministically
 - Window restore can reconstruct the last tab session
 - UI settings are driven by state standards, not local view-specific persistence hacks
+
+Status:
+
+- Completed on 2026-04-11
+- Item-driven tab routing replaced page-driven routing
+- Tab session persistence, restore, drag reorder, sidebar sync, and delete cascade cleanup are implemented and test-covered
 
 ## Phase 3 (P0): REST Request Editor and Execution Core
 

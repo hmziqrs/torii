@@ -54,7 +54,7 @@ impl Render for RequestTabView {
                         div()
                             .text_sm()
                             .font_weight(gpui::FontWeight::MEDIUM)
-                            .child("Request URL"),
+                            .child(es_fluent::localize("request_tab_url_label", None)),
                     )
                     .child(Input::new(&self.input).large()),
             )
