@@ -22,8 +22,9 @@ These are mandatory for Phase 3:
 
 - Keep active request draft state in hot per-tab entities; do not promote all persisted requests into entities
 - Keep long-lived request catalogs repo/value-backed; no `Vec<Entity<_>>` or `HashMap<Id, Entity<_>>` as the primary source of truth
-- Every send owns an explicit `OperationId`, task handle, cancellation primitive, and terminal lifecycle state
-- Terminal request states are mutually exclusive: `Completed | Failed | Cancelled`
+- Every send owns an explicit `OperationId`, task handle, cancellation primitive, and terminal execution state
+- Terminal execution states are mutually exclusive: `Completed | Failed | Cancelled`
+- Save status and execution status are tracked on **orthogonal axes** (see §6.2); a request can legally be `Dirty × Completed` (edited after a successful response) or `Dirty × Sending` (resending while still dirty)
 - Late responses are ignored unless their operation ID still matches the active request operation
 - Treat post-`await` app/window/entity updates as fallible; no `unwrap()` or `expect()` on those paths
 - Persist structured request metadata in SQLite and large request/response bodies in the blob store
@@ -146,6 +147,45 @@ Migration 0006 backfill rule:
 - `scripts_json` defaults to `'{"pre_request":"","tests":""}'`
 - existing request rows produced by Phase 2 load through `map_request_row` without a separate backfill step
 
+Body type variants supported in Phase 3:
+
+- `none` — no body
+- `raw_text` — `text/plain` payload, edited as a string
+- `raw_json` — `application/json` payload, edited as a string and pretty-printed by the response panel
+- `urlencoded` — `application/x-www-form-urlencoded` key-value list
+- `form_data` — `multipart/form-data` with text fields and file fields (file fields hold blob refs)
+- `binary_file` — single binary payload backed by a blob ref
+
+GraphQL body, raw XML/HTML body, and other variants are deferred to Phase 5 alongside the GraphQL editor.
+
+Auth type variants supported in Phase 3:
+
+- `none` — no auth applied
+- `basic` — username + password secret ref pair
+- `bearer` — token secret ref
+- `api_key` — key name + value secret ref + location (`header` or `query`)
+
+OAuth 2.0, AWS Signature, and other auth flows are deferred to a later phase. All Phase 3 auth variants persist only `secret_refs` in `auth_json`; the actual secret values live in the platform credential store via `SecretManager`.
+
+Settings column shape (`settings_json`):
+
+- `timeout_ms` — optional per-request timeout override; `None` falls back to the §5 default of 30,000 ms
+- `follow_redirects` — optional per-request override; `None` falls back to the §5 default of `true`
+- additional fields (proxy override, custom CA, etc.) are explicitly out of scope for Phase 3 and must be added in a later request-settings phase
+- per-request `ssl_verify` is **not** introduced in Phase 3; native TLS verification stays on globally
+
+HTTP type crate boundary:
+
+- `RequestItem` and the repo layer stay serde-friendly: method is a `String`, headers/params are JSON values
+- `http::Method`, `http::HeaderMap`, and `http::HeaderName` only appear inside `RequestExecutionService` at the wire boundary
+- no `http` types leak into the domain or repo modules
+
+Variable placeholder behavior in Phase 3:
+
+- `{{name}}` placeholders in URL, headers, params, body, or auth fields are sent **literally** to the network
+- the execution service emits a structured warning log when it detects unresolved placeholders before sending
+- environment-variable resolution lands in Phase 4 and replaces the warning with substitution; Phase 3 must not introduce any ad hoc placeholder replacement
+
 Rules:
 
 - auth JSON must only contain references and non-secret config; actual secrets stay in `secret_refs` + keychain
@@ -162,10 +202,36 @@ Recommended responsibilities:
 
 - current draft request value
 - persisted baseline for dirty diff checks
-- save status
+- save status (axis A — see below)
+- execution status (axis B — see below)
 - active operation metadata
 - latest response metadata and preview
 - latest history entry ID for reopen/refresh
+
+State model — two orthogonal axes:
+
+`SaveStatus` (axis A — about persistence):
+
+- `Pristine` — draft equals baseline
+- `Dirty` — draft diverges from baseline
+- `Saving` — save in flight
+- `SaveFailed { recoverable_error }` — save attempt failed; draft still in memory; transitions back to `Dirty` after the user retries or reloads baseline
+
+`ExecStatus` (axis B — about the network operation):
+
+- `Idle` — no operation has run yet, or the previous operation was cleared
+- `Sending` — request handed to `RequestExecutionService`, awaiting connection/headers
+- `Streaming` — response headers received, body streaming into preview + blob writer
+- `Completed { response_summary }` — terminal
+- `Failed { error }` — terminal
+- `Cancelled { partial_size }` — terminal
+
+Combined-state rules:
+
+- the editor entity holds **both** axes; UI renders them independently
+- valid combinations include `Dirty × Completed` (edit after a response), `Dirty × Sending` (resend while dirty), `Pristine × Cancelled` (saved request whose run was aborted)
+- terminal `ExecStatus` values are mutually exclusive on the exec axis only — they say nothing about the save axis
+- a save in flight (`Saving`) does not block sending; a send in flight does not block saving
 
 Recommended rules:
 
@@ -179,7 +245,8 @@ Operation identity:
 - `OperationId` is a type alias for `HistoryEntryId`
 - The send flow creates the pending history row first, then launches the network task; the history row's ID identifies the operation end-to-end
 - Late-response ignore checks compare the active operation ID stored on the editor entity against the completing task's operation ID
-- An editor entity has at most one active operation; starting a new send while one is in flight requires cancel-then-send
+- An editor entity has at most one active operation; clicking send while a previous operation is in flight **auto-cancels** the in-flight operation, then immediately starts the new one (no confirm dialog, no queueing)
+- The auto-cancel path still emits the late-response ignore guard so a delayed in-flight response cannot stomp the new operation's state
 
 Cross-window conflict propagation:
 
@@ -196,10 +263,10 @@ Use a bounded response body reference shape along these lines:
 ```rust
 pub enum BodyRef {
     Empty,
-    InMemoryPreview { bytes: Vec<u8>, truncated: bool },
+    InMemoryPreview { bytes: bytes::Bytes, truncated: bool },
     DiskBlob {
         blob_id: String,
-        preview: Option<Vec<u8>>,
+        preview: Option<bytes::Bytes>,
         size_bytes: u64,
     },
 }
@@ -210,6 +277,7 @@ Rules:
 - keep only the preview in hot entity state
 - persist the full response body in the existing blob store
 - latest-run reopen should use blob preview/full-body load paths instead of loading the whole body eagerly
+- use `bytes::Bytes` (not `Vec<u8>`) for preview buffers so slicing the in-memory preview from a larger streamed buffer is zero-copy; the `bytes` crate is already a Phase 3 dependency per `docs/plan.md` §3.1
 
 Concrete caps for Phase 3:
 
@@ -272,6 +340,7 @@ Tasks:
 - migration 0006 must use additive `ALTER TABLE ... ADD COLUMN` only with the JSON column defaults defined in §6.1; no data backfill step
 - migration 0007 must add the columns required for `finalize_cancelled` (e.g. `cancelled_at`, `partial_size`) so Slice 4 and Slice 5 share a single schema landing
 - keep migrations additive and roundtrip-testable
+- migration rollback is dev-only via `DROP COLUMN` (SQLite ≥ 3.35); production migrations are forward-only and crash-safe
 
 Definition of done:
 
@@ -307,25 +376,20 @@ Purpose: establish the hot-state contract before UI or networking complexity gro
 Tasks:
 
 - introduce `RequestEditorState` as the hot per-tab entity for active request editing
-- define explicit lifecycle states:
-  - `Idle`
-  - `Dirty`
-  - `Sending`
-  - `Waiting`
-  - `Receiving`
-  - `Completed`
-  - `Failed`
-  - `Cancelled`
+- model save status and execution status as **two orthogonal axes** (see §6.2):
+  - `SaveStatus { Pristine, Dirty, Saving, SaveFailed }`
+  - `ExecStatus { Idle, Sending, Streaming, Completed, Failed, Cancelled }`
 - adopt `OperationId` (alias for `HistoryEntryId`, see §6.2) and track at most one active operation per editor entity
+- send-while-sending auto-cancels the in-flight operation and starts the new one (see §6.2); no queueing, no confirm dialog
 - add helpers for dirty detection, baseline reset, save-success baseline replacement, and cancel eligibility
 - make late-response ignore behavior part of the state API rather than a view-layer convention
-- define a preflight error channel that is **distinct** from the `Failed` terminal state: secret-resolution failures, URL parse errors, and other pre-send validation problems do not transition the FSM to `Failed` because nothing was sent; the editor stays in its current state and surfaces a recoverable error
+- define a preflight error channel that is **distinct** from the `Failed` exec terminal state: secret-resolution failures, URL parse errors, and other pre-send validation problems do not transition `ExecStatus` to `Failed` because nothing was sent; the editor stays in its current state and surfaces a recoverable error
 
 Definition of done:
 
-- lifecycle transitions are unit-tested
-- terminal states are mutually exclusive
-- stale operation completions are ignored deterministically
+- both save-status and exec-status transitions are unit-tested independently
+- terminal `ExecStatus` values are mutually exclusive on the exec axis
+- stale operation completions are ignored deterministically, including across an auto-cancel-then-resend
 - no request networking is launched directly from the view layer
 
 ## Slice 2: Request Tab UI Shell
@@ -343,16 +407,19 @@ Tasks:
   - scripts/tests placeholder
   - request settings
 - add save, duplicate, send, and cancel actions
+- bind keyboard shortcuts in the request tab: `Cmd/Ctrl+S` saves, `Cmd/Ctrl+Enter` sends, `Esc` cancels the active send (no-op when `ExecStatus::Idle`)
 - add latest-run summary panel region
+- treat the URL bar as the canonical store for query params; the params tab is a derived view that re-serializes its edits into the URL bar on change, so there is no separate params source of truth to keep in sync
+- response panel rendering in Phase 3: raw text view plus pretty-printed JSON when the response media type is `application/json`; XML, HTML, and image preview are deferred
 - show a dirty indicator on the tab title when the editor draft diverges from the persisted baseline
-- close-while-dirty opens a confirm dialog with Save / Discard / Cancel actions; Cancel keeps the tab open
+- close-while-dirty opens a confirm dialog with Save / Discard / Cancel actions; Cancel keeps the tab open, Discard drops the editor entity intentionally
 - add Fluent keys for every new label, empty state, error, and dialog button
 - prefer `gpui-component` controls and layout primitives before building custom widgets
 
 Definition of done:
 
 - request edits mutate hot editor state instead of mutating catalog values directly
-- UI can represent idle, dirty, sending, completed, failed, and cancelled states
+- UI renders `SaveStatus { Pristine, Dirty, Saving, SaveFailed }` live; placeholder regions exist for `ExecStatus` states wired up by Slice 4
 - no raw user-facing strings are introduced
 
 ## Slice 3: Save, Duplicate, and Draft Ownership
@@ -381,13 +448,18 @@ Purpose: implement send/cancel safely through shared services instead of ad hoc 
 Tasks:
 
 - introduce `RequestExecutionService` backed by the Tokio runtime and `reqwest`
+- introduce a `TokioRuntime` app-level service that owns a multi-threaded `tokio::runtime::Runtime`; spawn the request future via `runtime.handle().spawn(...)` and bridge the resulting `JoinHandle` back to the editor entity through `cx.background_spawn(async move { handle.await })` followed by `entity.update(...)`
+- never call `tokio::spawn` from a GPUI thread directly; the Tokio reactor is only available through the runtime handle held by `TokioRuntime`
+- introduce an `HttpTransport` trait so the execution service can be tested with a `MockTransport` that controls timing (delays, drip-feeds bytes, fails on cue); production builds wire `ReqwestTransport`
 - build the shared `reqwest::Client` once with the Phase 3 locked defaults from §5 (timeout, redirects, TLS, no cookie jar, no proxy)
-- convert the current draft request value into a sendable HTTP request without depending on UI types
+- convert the draft `RequestItem` into `http::Method` + `http::HeaderMap` + URL inside `RequestExecutionService`; `http` types must not appear in `domain/`, `repos/`, or `views/` (see §6.1 HTTP type crate boundary)
 - preflight: resolve auth secrets via `SecretManager` before touching the network; preflight failures stay off the FSM terminal states and surface as recoverable errors (see Slice 1)
+- emit a structured warning log when the outgoing request still contains `{{ }}` placeholders (see §6.1 variable placeholder rule)
 - create a pending history row before the network operation starts; its `HistoryEntryId` becomes the `OperationId`
-- store the active task handle and cancellation primitive on the editor entity
+- use `tokio_util::sync::CancellationToken` as the concrete cancellation primitive; the editor entity holds a clone, the execution task holds a clone, and dropping the request future on cancel propagates the abort to `reqwest`
+- store the active task handle and cancellation token on the editor entity
 - stream response bodies via `reqwest::Response::bytes_stream()` into a `BlobStore` writer while populating the in-memory preview up to `RESPONSE_PREVIEW_CAP_BYTES`; never buffer the full body in RAM first
-- propagate cancel by signalling the active operation and dropping/aborting the in-flight request future
+- propagate cancel by signalling the cancellation token and dropping/aborting the in-flight request future
 - on cancel mid-stream, abort the writer, best-effort delete the partial blob, and call `HistoryRepository::finalize_cancelled` (added in Slice 5) with any partial metadata
 - map completion into `Completed | Failed | Cancelled` only
 - handle dropped window/entity/app targets after async boundaries as no-op outcomes with logs
@@ -410,7 +482,7 @@ Tasks:
   - headers
   - media type
   - size
-  - timings
+  - timings: `dispatched_at`, `first_byte_at` (TTFB), `completed_at`, derived `total_ms` and `ttfb_ms` — DNS / connect / TLS phase breakdown is deferred (reqwest does not expose it without middleware)
 - keep only a bounded preview in hot state, capped per §6.3
 - persist the full response body through the existing blob store
 - extend `HistoryRepository` with `finalize_cancelled(id, cancelled_at, partial_size)` and update `finalize_completed` to carry the new response metadata columns
@@ -459,11 +531,13 @@ Unit tests:
 Integration tests:
 
 - send/cancel race with delayed completion
+- send-while-sending auto-cancel: a second send during an in-flight operation cancels the first and the late response of the first is ignored
 - request save followed by reopen from persisted state
 - duplicate request then reopen both source and duplicate tabs
 - latest-run summary restore from history/blob store
 - window close during in-flight request with no panic
 - cancel mid-stream leaves no `blob_hash` reference and best-effort deletes the partial blob file
+- `MockTransport` drip-feed and stall scenarios deterministically reproduce the cancel race and preview-cap behaviors without hitting the network
 
 Performance tests:
 
