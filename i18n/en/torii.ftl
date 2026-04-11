@@ -126,6 +126,7 @@ environment_tab_variables = Variables
 
 ## Request Tab
 
+request_tab_url_label = Request URL
 request_tab_hint = Request execution state is deferred to Phase 3. This tab currently shows the persisted request shell.
 
 ## Menu

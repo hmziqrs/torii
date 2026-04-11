@@ -1,4 +1,4 @@
-use gpui::{AnyElement, App, AppContext as _, Context, Entity, IntoElement, ParentElement, Render, Styled as _, Window, div, px};
+use gpui::{AppContext as _, Context, Entity, IntoElement, ParentElement, Render, Styled as _, Window, div, px};
 use gpui_component::{
     h_flex,
     input::{Input, InputState},
@@ -8,18 +8,13 @@ use gpui_component::{
 
 use crate::domain::request::RequestItem;
 
-pub fn render(request: &RequestItem, window: &mut Window, cx: &mut App) -> AnyElement {
-    cx.new(|cx| RequestTabView::new(request, window, cx))
-        .into_any_element()
-}
-
-struct RequestTabView {
+pub struct RequestTabView {
     request: RequestItem,
     input: Entity<InputState>,
 }
 
 impl RequestTabView {
-    fn new(request: &RequestItem, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(request: &RequestItem, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let initial_url = request.url.clone();
         let input = cx.new(|cx| {
             let mut state = InputState::new(window, cx);
@@ -55,7 +50,12 @@ impl Render for RequestTabView {
             .child(
                 v_flex()
                     .gap_2()
-                    .child(div().text_sm().font_weight(gpui::FontWeight::MEDIUM).child("Request URL"))
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .child("Request URL"),
+                    )
                     .child(Input::new(&self.input).large()),
             )
             .child(div().child(es_fluent::localize("request_tab_hint", None)))

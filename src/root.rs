@@ -10,7 +10,7 @@ use gpui_component::{
 
 use crate::{
     app::About,
-    domain::item_id::ItemId,
+    domain::{ids::RequestId, item_id::ItemId},
     repos::tab_session_repo::TabSessionMetadata,
     services::{
         app_services::{AppServices, AppServicesGlobal},
@@ -35,6 +35,7 @@ pub struct AppRoot {
     catalog: WorkspaceCatalog,
     settings_page: Entity<SettingsPage>,
     about_page: Entity<AboutPage>,
+    request_pages: std::collections::HashMap<RequestId, Entity<request_tab::RequestTabView>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -123,6 +124,7 @@ impl AppRoot {
             catalog,
             settings_page,
             about_page,
+            request_pages: std::collections::HashMap::new(),
             _subscriptions: subscriptions,
         }
     }
@@ -362,8 +364,23 @@ impl AppRoot {
             )
     }
 
+    fn request_page(
+        &mut self,
+        request: &crate::domain::request::RequestItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<request_tab::RequestTabView> {
+        if let Some(page) = self.request_pages.get(&request.id) {
+            return page.clone();
+        }
+
+        let page = cx.new(|cx| request_tab::RequestTabView::new(request, window, cx));
+        self.request_pages.insert(request.id, page.clone());
+        page
+    }
+
     fn render_active_tab_content(
-        &self,
+        &mut self,
         active: TabKey,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -423,9 +440,9 @@ impl AppRoot {
                     workspace
                         .collections
                         .iter()
-                        .find_map(|collection| collection.find_request(id))
+                        .find_map(|collection| collection.find_request(id).cloned())
                 })
-                .map(|request| request_tab::render(request, window, cx))
+                .map(|request| self.request_page(&request, window, cx).into_any_element())
                 .unwrap_or_else(|| {
                     render_empty_state(
                         es_fluent::localize("tab_missing_title", None).into(),

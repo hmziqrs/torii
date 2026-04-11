@@ -126,6 +126,7 @@ environment_tab_variables = 变量
 
 ## Request Tab
 
+request_tab_url_label = 请求 URL
 request_tab_hint = 请求执行状态将在第 3 阶段实现。当前标签页仅显示已持久化的请求外壳。
 
 ## Menu
