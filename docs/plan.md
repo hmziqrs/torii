@@ -347,6 +347,8 @@ Status:
 
 Goal: make the primary request workflow production-safe before adding other protocols.
 
+Detailed execution document: [docs/phase-3.md](docs/phase-3.md)
+
 Scope:
 
 - Build REST request editor with Postman-like sections:
