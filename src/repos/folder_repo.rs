@@ -18,6 +18,7 @@ pub trait FolderRepository: Send + Sync {
         parent_folder_id: Option<FolderId>,
         name: &str,
     ) -> RepoResult<Folder>;
+    fn get(&self, id: FolderId) -> RepoResult<Option<Folder>>;
     fn list_by_collection(&self, collection_id: CollectionId) -> RepoResult<Vec<Folder>>;
     fn rename(&self, id: FolderId, name: &str) -> RepoResult<()>;
     fn move_to(
@@ -97,6 +98,20 @@ impl FolderRepository for SqliteFolderRepository {
 
             tx.commit().await?;
             Ok::<Folder, anyhow::Error>(folder)
+        })
+    }
+
+    fn get(&self, id: FolderId) -> RepoResult<Option<Folder>> {
+        self.db.block_on(async {
+            let row = sqlx::query(
+                "SELECT id, collection_id, parent_folder_id, name, sort_order, created_at, updated_at, revision
+                 FROM folders WHERE id = ?",
+            )
+            .bind(id.to_string())
+            .fetch_optional(self.db.pool())
+            .await
+            .context("failed to fetch folder")?;
+            row.map(map_folder_row).transpose()
         })
     }
 

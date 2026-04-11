@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use sqlx::Row as _;
 
-use crate::domain::{ids::WorkspaceId, revision::RevisionMetadata, workspace::Workspace};
+use crate::domain::{ids::WorkspaceId, revision::{RevisionMetadata, now_unix_ts}, workspace::Workspace};
 
 use super::{DbRef, RepoResult};
 
@@ -11,6 +11,7 @@ pub trait WorkspaceRepository: Send + Sync {
     fn create(&self, name: &str) -> RepoResult<Workspace>;
     fn get(&self, id: WorkspaceId) -> RepoResult<Option<Workspace>>;
     fn list(&self) -> RepoResult<Vec<Workspace>>;
+    fn rename(&self, id: WorkspaceId, name: &str) -> RepoResult<()>;
     fn delete(&self, id: WorkspaceId) -> RepoResult<()>;
 }
 
@@ -74,6 +75,23 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
             .context("failed to list workspaces")?;
 
             rows.into_iter().map(map_workspace_row).collect()
+        })
+    }
+
+    fn rename(&self, id: WorkspaceId, name: &str) -> RepoResult<()> {
+        self.db.block_on(async {
+            sqlx::query(
+                "UPDATE workspaces
+                 SET name = ?, updated_at = ?, revision = revision + 1
+                 WHERE id = ?",
+            )
+            .bind(name)
+            .bind(now_unix_ts())
+            .bind(id.to_string())
+            .execute(self.db.pool())
+            .await
+            .context("failed to rename workspace")?;
+            Ok::<(), anyhow::Error>(())
         })
     }
 

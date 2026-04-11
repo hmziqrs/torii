@@ -5,10 +5,64 @@ use std::sync::Arc;
 use anyhow::Result;
 use torii::repos::{
     collection_repo::{CollectionRepository, SqliteCollectionRepository},
+    environment_repo::{EnvironmentRepository, SqliteEnvironmentRepository},
     folder_repo::{FolderRepository, SqliteFolderRepository},
     request_repo::{RequestRepository, SqliteRequestRepository},
     workspace_repo::{SqliteWorkspaceRepository, WorkspaceRepository},
 };
+
+#[test]
+fn get_by_id_returns_correct_item_or_none() -> Result<()> {
+    let (_paths, db) = common::test_database("get-by-id")?;
+    let db = Arc::new(db);
+
+    let workspace_repo = SqliteWorkspaceRepository::new(db.clone());
+    let collection_repo = SqliteCollectionRepository::new(db.clone());
+    let folder_repo = SqliteFolderRepository::new(db.clone());
+    let request_repo = SqliteRequestRepository::new(db.clone());
+    let environment_repo = SqliteEnvironmentRepository::new(db.clone());
+
+    let workspace = workspace_repo.create("W")?;
+    let collection = collection_repo.create(workspace.id, "C")?;
+    let folder = folder_repo.create(collection.id, None, "F")?;
+    let request = request_repo.create(collection.id, None, "R", "GET", "https://r.test")?;
+    let environment = environment_repo.create(workspace.id, "Env")?;
+
+    assert_eq!(collection_repo.get(collection.id)?.map(|c| c.id), Some(collection.id));
+    assert_eq!(folder_repo.get(folder.id)?.map(|f| f.id), Some(folder.id));
+    assert_eq!(request_repo.get(request.id)?.map(|r| r.id), Some(request.id));
+    assert_eq!(environment_repo.get(environment.id)?.map(|e| e.id), Some(environment.id));
+
+    let missing_collection = torii::domain::ids::CollectionId::new();
+    let missing_folder = torii::domain::ids::FolderId::new();
+    let missing_request = torii::domain::ids::RequestId::new();
+    let missing_environment = torii::domain::ids::EnvironmentId::new();
+    assert!(collection_repo.get(missing_collection)?.is_none());
+    assert!(folder_repo.get(missing_folder)?.is_none());
+    assert!(request_repo.get(missing_request)?.is_none());
+    assert!(environment_repo.get(missing_environment)?.is_none());
+
+    Ok(())
+}
+
+#[test]
+fn workspace_rename_persists_and_bumps_revision() -> Result<()> {
+    let (_paths, db) = common::test_database("workspace-rename")?;
+    let db = Arc::new(db);
+    let workspace_repo = SqliteWorkspaceRepository::new(db.clone());
+
+    let workspace = workspace_repo.create("Original")?;
+    assert_eq!(workspace.meta.revision, 1);
+
+    workspace_repo.rename(workspace.id, "Renamed")?;
+
+    let updated = workspace_repo.get(workspace.id)?.expect("workspace must still exist");
+    assert_eq!(updated.name, "Renamed");
+    assert_eq!(updated.meta.revision, 2);
+    assert_eq!(updated.meta.created_at, workspace.meta.created_at);
+
+    Ok(())
+}
 
 #[test]
 fn folder_move_and_reorder_remains_consistent() -> Result<()> {

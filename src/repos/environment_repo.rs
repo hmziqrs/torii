@@ -13,6 +13,7 @@ use super::{DbRef, RepoResult};
 
 pub trait EnvironmentRepository: Send + Sync {
     fn create(&self, workspace_id: WorkspaceId, name: &str) -> RepoResult<Environment>;
+    fn get(&self, id: EnvironmentId) -> RepoResult<Option<Environment>>;
     fn list_by_workspace(&self, workspace_id: WorkspaceId) -> RepoResult<Vec<Environment>>;
     fn update_variables(&self, id: EnvironmentId, variables_json: &str) -> RepoResult<()>;
     fn rename(&self, id: EnvironmentId, name: &str) -> RepoResult<()>;
@@ -52,6 +53,20 @@ impl EnvironmentRepository for SqliteEnvironmentRepository {
             Ok::<(), anyhow::Error>(())
         })?;
         Ok(environment)
+    }
+
+    fn get(&self, id: EnvironmentId) -> RepoResult<Option<Environment>> {
+        self.db.block_on(async {
+            let row = sqlx::query(
+                "SELECT id, workspace_id, name, variables_json, created_at, updated_at, revision
+                 FROM environments WHERE id = ?",
+            )
+            .bind(id.to_string())
+            .fetch_optional(self.db.pool())
+            .await
+            .context("failed to fetch environment")?;
+            row.map(map_environment_row).transpose()
+        })
     }
 
     fn list_by_workspace(&self, workspace_id: WorkspaceId) -> RepoResult<Vec<Environment>> {

@@ -452,7 +452,35 @@ Greenfield note:
 - Legacy backward-compat migration from `target/state.json` into SQLite was intentionally removed per project direction.
 - `target/state.json` is not used as an active durable store.
 
-## 10. First Concrete Implementation Order in This Repo
+## 10. Post-Phase 1 Audit Notes
+
+The following gaps and decisions were identified during a post-implementation audit and are recorded here for Phase 2 awareness.
+
+### Fixed in this phase
+
+- **No `get` by ID on collection, folder, request, environment repos** — Only `workspace_repo` and `secret_ref_repo` had single-item lookup. All four repos now expose `get(id)`. Phase 2 tab renderers need these to load item data for tab titles and content without fetching full parent lists.
+
+- **No `rename` on `WorkspaceRepository`** — The domain struct had `rename()` but the repo trait lacked it. Added `rename(id, name)` to the workspace repo.
+
+- **Sort-order gaps after delete** — `delete()` on collections, folders, and requests left gaps in sibling `sort_order` sequences (e.g. deleting sort_order=1 from [0,1,2] left [0,2]). All three delete implementations now fetch parent context before deleting, then recompact remaining sibling `sort_order` values to a dense 0..n sequence within the same transaction.
+
+### Known gaps — deferred to Phase 2+
+
+- **`sea-query` declared but not yet used** — All repo queries are hand-written SQL strings. `sea-query` is the right tool for dynamic query construction (history filtering, tree operations) and will be introduced when Phase 4/5 requires it. Not a Phase 1 issue because queries are static here.
+
+- **`block_on` in repo calls will block the GPUI main thread** — Every repo method uses `self.db.block_on(async { ... })`. Acceptable for Phase 1 (repos are only called during bootstrap). Phase 2 will call repos from UI event handlers; those callsites must either spawn background tasks or use GPUI's `cx.background_executor().spawn()` to avoid freezing the window.
+
+- **`bytes` and `tokio-util` are declared but unused** — Intentional pre-staging. `bytes` is needed for Phase 3 response body buffers; `tokio-util` for `CancellationToken` in request cancellation. Remove them from `Cargo.toml` if you prefer minimal deps, or leave them as a signal of planned use.
+
+- **No tracing log redaction for secret material** — Slice 5 required "redaction rules for logs." No tracing subscriber filter exists. Currently safe because no code logs secret values, but there is no structural guard. A custom `tracing::Layer` that scrubs known key patterns is needed before Phase 3 adds request/auth logging.
+
+- **`environment_variables` stored as JSON blob, not a separate table** — `plan.md` Section 4.4 lists `environment_variables` as a table. The implementation stores them as `variables_json TEXT` in `environments`. Variables are not individually queryable in SQL. Phase 4 variable resolution will need to parse and re-serialize the JSON in the application layer. Acceptable for Phase 2; revisit when variable-level filtering or override inheritance is needed.
+
+- **Recovery coordinator queries request blobs via raw SQL, bypassing repo layer** — `recovery.rs:60-79` runs `SELECT DISTINCT body_blob_hash FROM requests` directly on `self.db` instead of through `RequestRepository`. Functionally correct (the orphan cleanup works), but violates the "all persistence reads go through repositories" rule from Slice 3. Left as-is since recovery has a direct `Database` handle by design; document it here and fix in a future repo cleanup.
+
+- **No regression test for dropped GPUI entity during async startup** — Slice 8 required a test for this path. The synchronous `bootstrap_app_services()` already handles failures via `fallback_app_services()`, but there is no test that exercises entity/window loss during a GPUI async task. This requires the GPUI test harness and is deferred to Phase 2 when async UI tasks are first introduced.
+
+## 11. First Concrete Implementation Order in This Repo
 
 When work starts, use this exact sequence:
 

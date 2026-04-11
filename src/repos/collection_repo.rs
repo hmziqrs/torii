@@ -13,6 +13,7 @@ use super::{DbRef, RepoResult};
 
 pub trait CollectionRepository: Send + Sync {
     fn create(&self, workspace_id: WorkspaceId, name: &str) -> RepoResult<Collection>;
+    fn get(&self, id: CollectionId) -> RepoResult<Option<Collection>>;
     fn list_by_workspace(&self, workspace_id: WorkspaceId) -> RepoResult<Vec<Collection>>;
     fn rename(&self, id: CollectionId, name: &str) -> RepoResult<()>;
     fn move_to_workspace(&self, id: CollectionId, workspace_id: WorkspaceId) -> RepoResult<()>;
@@ -78,6 +79,20 @@ impl CollectionRepository for SqliteCollectionRepository {
         })?;
 
         Ok(collection)
+    }
+
+    fn get(&self, id: CollectionId) -> RepoResult<Option<Collection>> {
+        self.db.block_on(async {
+            let row = sqlx::query(
+                "SELECT id, workspace_id, name, sort_order, created_at, updated_at, revision
+                 FROM collections WHERE id = ?",
+            )
+            .bind(id.to_string())
+            .fetch_optional(self.db.pool())
+            .await
+            .context("failed to fetch collection")?;
+            row.map(map_collection_row).transpose()
+        })
     }
 
     fn list_by_workspace(&self, workspace_id: WorkspaceId) -> RepoResult<Vec<Collection>> {

@@ -20,6 +20,7 @@ pub trait RequestRepository: Send + Sync {
         method: &str,
         url: &str,
     ) -> RepoResult<RequestItem>;
+    fn get(&self, id: RequestId) -> RepoResult<Option<RequestItem>>;
     fn list_by_collection(&self, collection_id: CollectionId) -> RepoResult<Vec<RequestItem>>;
     fn rename(&self, id: RequestId, name: &str) -> RepoResult<()>;
     fn move_to(
@@ -105,6 +106,20 @@ impl RequestRepository for SqliteRequestRepository {
 
             tx.commit().await?;
             Ok::<RequestItem, anyhow::Error>(request)
+        })
+    }
+
+    fn get(&self, id: RequestId) -> RepoResult<Option<RequestItem>> {
+        self.db.block_on(async {
+            let row = sqlx::query(
+                "SELECT id, collection_id, parent_folder_id, name, method, url, body_blob_hash, sort_order, created_at, updated_at, revision
+                 FROM requests WHERE id = ?",
+            )
+            .bind(id.to_string())
+            .fetch_optional(self.db.pool())
+            .await
+            .context("failed to fetch request")?;
+            row.map(map_request_row).transpose()
         })
     }
 
