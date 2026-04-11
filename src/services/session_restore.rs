@@ -1,3 +1,8 @@
+use std::{
+    collections::HashSet,
+    sync::{Arc, Mutex},
+};
+
 use anyhow::Result;
 
 use crate::{
@@ -25,13 +30,16 @@ pub struct SessionRestoreService {
     folders: FolderRepoRef,
     requests: RequestRepoRef,
     environments: EnvironmentRepoRef,
+    claimed_sessions: Arc<Mutex<HashSet<crate::session::workspace_session::SessionId>>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RestoredSessionState {
     pub tabs: Vec<TabState>,
     pub active: Option<TabKey>,
     pub selected_workspace_id: Option<WorkspaceId>,
+    pub sidebar_selection: Option<ItemKey>,
+    pub window_layout: crate::session::window_layout::WindowLayoutState,
 }
 
 impl SessionRestoreService {
@@ -50,14 +58,26 @@ impl SessionRestoreService {
             folders,
             requests,
             environments,
+            claimed_sessions: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
-    pub fn restore_most_recent(&self) -> Result<Option<RestoredSessionState>> {
-        let Some(snapshot) = self.tab_sessions.load_most_recent()? else {
-            return Ok(None);
-        };
-        self.restore_snapshot(snapshot)
+    pub fn take_next_restore(&self) -> Result<Option<RestoredSessionState>> {
+        let snapshots = self.tab_sessions.list_sessions()?;
+        let mut claimed = self
+            .claimed_sessions
+            .lock()
+            .expect("session restore claims poisoned");
+        for snapshot in snapshots {
+            if claimed.contains(&snapshot.session_id) {
+                continue;
+            }
+            claimed.insert(snapshot.session_id);
+            if let Some(restored) = self.restore_snapshot(snapshot)? {
+                return Ok(Some(restored));
+            }
+        }
+        Ok(None)
     }
 
     pub fn restore_snapshot(
@@ -93,6 +113,8 @@ impl SessionRestoreService {
             tabs,
             active,
             selected_workspace_id,
+            sidebar_selection: snapshot.metadata.sidebar_selection,
+            window_layout: snapshot.metadata.window_layout,
         }))
     }
 

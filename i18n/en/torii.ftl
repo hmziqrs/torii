@@ -148,6 +148,10 @@ menu_language = Language
 menu_language_english = English
 menu_language_simplified_chinese = Simplified Chinese
 menu_theme = Theme
+menu_delete = Delete
+
+delete_success = Item deleted.
+delete_failed = Delete failed.
 
 ## TitleBar
 

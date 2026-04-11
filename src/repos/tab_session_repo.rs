@@ -8,17 +8,28 @@ use crate::{
     session::{
         item_key::{ItemKey, TabKey},
         tab_manager::TabState,
+        window_layout::WindowLayoutState,
         workspace_session::SessionId,
     },
 };
 
 use super::{DbRef, RepoResult};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TabSessionSnapshot {
     pub session_id: SessionId,
     pub tabs: Vec<TabState>,
     pub active: Option<TabKey>,
+    pub updated_at: i64,
+    pub metadata: TabSessionMetadata,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TabSessionMetadata {
+    pub selected_workspace_id: Option<String>,
+    pub sidebar_selection: Option<ItemKey>,
+    pub window_layout: WindowLayoutState,
+    pub created_at: i64,
     pub updated_at: i64,
 }
 
@@ -28,9 +39,11 @@ pub trait TabSessionRepository: Send + Sync {
         session_id: SessionId,
         tabs: &[TabState],
         active: Option<TabKey>,
+        metadata: &TabSessionMetadata,
     ) -> RepoResult<()>;
     fn load_session(&self, session_id: SessionId) -> RepoResult<Option<TabSessionSnapshot>>;
     fn load_most_recent(&self) -> RepoResult<Option<TabSessionSnapshot>>;
+    fn list_sessions(&self) -> RepoResult<Vec<TabSessionSnapshot>>;
     fn clear_session(&self, session_id: SessionId) -> RepoResult<()>;
     fn clear_all(&self) -> RepoResult<()>;
 }
@@ -52,6 +65,7 @@ impl TabSessionRepository for SqliteTabSessionRepository {
         session_id: SessionId,
         tabs: &[TabState],
         active: Option<TabKey>,
+        metadata: &TabSessionMetadata,
     ) -> RepoResult<()> {
         self.db.block_on(async {
             let mut tx = self.db.pool().begin().await?;
@@ -62,6 +76,35 @@ impl TabSessionRepository for SqliteTabSessionRepository {
                 .execute(&mut *tx)
                 .await
                 .context("failed to clear previous tab session rows")?;
+
+            let (sidebar_kind, sidebar_id) = metadata
+                .sidebar_selection
+                .map(|item| item.to_storage_parts())
+                .unwrap_or_else(|| (String::new(), None));
+            sqlx::query(
+                "INSERT INTO tab_session_metadata
+                 (session_id, selected_workspace_id, sidebar_item_kind, sidebar_item_id, sidebar_collapsed, sidebar_width_px, created_at, updated_at, revision)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+                 ON CONFLICT(session_id) DO UPDATE SET
+                    selected_workspace_id = excluded.selected_workspace_id,
+                    sidebar_item_kind = excluded.sidebar_item_kind,
+                    sidebar_item_id = excluded.sidebar_item_id,
+                    sidebar_collapsed = excluded.sidebar_collapsed,
+                    sidebar_width_px = excluded.sidebar_width_px,
+                    updated_at = excluded.updated_at,
+                    revision = tab_session_metadata.revision + 1",
+            )
+            .bind(session_id.0.to_string())
+            .bind(metadata.selected_workspace_id.clone())
+            .bind(if sidebar_kind.is_empty() { None::<String> } else { Some(sidebar_kind) })
+            .bind(sidebar_id)
+            .bind(metadata.window_layout.sidebar_collapsed)
+            .bind(metadata.window_layout.sidebar_width_px as f64)
+            .bind(metadata.created_at)
+            .bind(ts)
+            .execute(&mut *tx)
+            .await
+            .context("failed to upsert tab session metadata")?;
 
             for (index, tab) in tabs.iter().enumerate() {
                 let (item_kind, item_id) = tab.key.item().to_storage_parts();
@@ -97,6 +140,36 @@ impl TabSessionRepository for SqliteTabSessionRepository {
         load_snapshot(&self.db, None)
     }
 
+    fn list_sessions(&self) -> RepoResult<Vec<TabSessionSnapshot>> {
+        let session_ids = self.db.block_on(async {
+            let rows = sqlx::query(
+                "SELECT session_id
+                 FROM tab_session_metadata
+                 ORDER BY updated_at DESC, session_id DESC",
+            )
+            .fetch_all(self.db.pool())
+            .await
+            .context("failed to list tab session metadata")?;
+
+            Ok::<Vec<String>, anyhow::Error>(
+                rows.into_iter()
+                    .map(|row| row.get::<String, _>("session_id"))
+                    .collect(),
+            )
+        })?;
+
+        let mut snapshots = Vec::new();
+        for session_id in session_ids {
+            let session_id = SessionId(
+                uuid::Uuid::parse_str(&session_id).context("invalid stored tab session id")?,
+            );
+            if let Some(snapshot) = load_snapshot(&self.db, Some(session_id))? {
+                snapshots.push(snapshot);
+            }
+        }
+        Ok(snapshots)
+    }
+
     fn clear_session(&self, session_id: SessionId) -> RepoResult<()> {
         self.db.block_on(async {
             sqlx::query("DELETE FROM tab_session_state WHERE session_id = ?")
@@ -104,6 +177,11 @@ impl TabSessionRepository for SqliteTabSessionRepository {
                 .execute(self.db.pool())
                 .await
                 .context("failed to clear tab session")?;
+            sqlx::query("DELETE FROM tab_session_metadata WHERE session_id = ?")
+                .bind(session_id.0.to_string())
+                .execute(self.db.pool())
+                .await
+                .context("failed to clear tab session metadata")?;
             Ok::<(), anyhow::Error>(())
         })
     }
@@ -114,6 +192,10 @@ impl TabSessionRepository for SqliteTabSessionRepository {
                 .execute(self.db.pool())
                 .await
                 .context("failed to clear all tab sessions")?;
+            sqlx::query("DELETE FROM tab_session_metadata")
+                .execute(self.db.pool())
+                .await
+                .context("failed to clear all tab session metadata")?;
             Ok::<(), anyhow::Error>(())
         })
     }
@@ -161,6 +243,15 @@ fn load_snapshot(db: &DbRef, session_id: Option<SessionId>) -> RepoResult<Option
         let mut tabs = Vec::with_capacity(rows.len());
         let mut active = None;
         let mut updated_at = 0;
+        let metadata_row = sqlx::query(
+            "SELECT selected_workspace_id, sidebar_item_kind, sidebar_item_id, sidebar_collapsed, sidebar_width_px, created_at, updated_at
+             FROM tab_session_metadata
+             WHERE session_id = ?",
+        )
+        .bind(session_id.0.to_string())
+        .fetch_optional(db.pool())
+        .await
+        .context("failed to load tab session metadata")?;
 
         for row in rows {
             let item_kind = row.get::<&str, _>("item_kind");
@@ -177,11 +268,40 @@ fn load_snapshot(db: &DbRef, session_id: Option<SessionId>) -> RepoResult<Option
             tabs.push(tab);
         }
 
+        let metadata = if let Some(row) = metadata_row {
+            let sidebar_kind = row.get::<Option<String>, _>("sidebar_item_kind");
+            let sidebar_id = row.get::<Option<String>, _>("sidebar_item_id");
+            let sidebar_selection = match sidebar_kind {
+                Some(kind) => Some(ItemKey::from_storage_parts(&kind, sidebar_id.as_deref())?),
+                None => None,
+            };
+
+            TabSessionMetadata {
+                selected_workspace_id: row.get("selected_workspace_id"),
+                sidebar_selection,
+                window_layout: WindowLayoutState {
+                    sidebar_collapsed: row.get("sidebar_collapsed"),
+                    sidebar_width_px: row.get::<f64, _>("sidebar_width_px") as f32,
+                },
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
+            }
+        } else {
+            TabSessionMetadata {
+                selected_workspace_id: None,
+                sidebar_selection: None,
+                window_layout: WindowLayoutState::default(),
+                created_at: updated_at,
+                updated_at,
+            }
+        };
+
         Ok(Some(TabSessionSnapshot {
             session_id,
             tabs,
             active,
             updated_at,
+            metadata,
         }))
     })
 }

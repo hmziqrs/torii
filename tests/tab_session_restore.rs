@@ -9,13 +9,14 @@ use torii::{
         environment_repo::{EnvironmentRepository, SqliteEnvironmentRepository},
         folder_repo::SqliteFolderRepository,
         request_repo::{RequestRepository, SqliteRequestRepository},
-        tab_session_repo::{SqliteTabSessionRepository, TabSessionRepository},
+        tab_session_repo::{SqliteTabSessionRepository, TabSessionMetadata, TabSessionRepository},
         workspace_repo::{SqliteWorkspaceRepository, WorkspaceRepository},
     },
     services::session_restore::SessionRestoreService,
     session::{
         item_key::{ItemKey, TabKey},
         tab_manager::TabState,
+        window_layout::WindowLayoutState,
         workspace_session::SessionId,
     },
 };
@@ -45,13 +46,30 @@ fn tab_session_repo_roundtrip_and_restore_skip_missing_items() -> Result<()> {
         TabState::new(ItemKey::environment(environment.id)),
         TabState::new(ItemKey::settings()),
     ];
-    tab_session_repo.save_session(session_id, &tabs, Some(TabKey::from(ItemKey::environment(environment.id))))?;
+    let metadata = TabSessionMetadata {
+        selected_workspace_id: Some(workspace.id.to_string()),
+        sidebar_selection: Some(ItemKey::request(request.id)),
+        window_layout: WindowLayoutState {
+            sidebar_collapsed: true,
+            sidebar_width_px: 312.0,
+        },
+        created_at: 1,
+        updated_at: 1,
+    };
+    tab_session_repo.save_session(
+        session_id,
+        &tabs,
+        Some(TabKey::from(ItemKey::environment(environment.id))),
+        &metadata,
+    )?;
 
     let roundtrip = tab_session_repo
         .load_session(session_id)?
         .expect("session should be stored");
     assert_eq!(roundtrip.tabs, tabs);
     assert_eq!(roundtrip.active, Some(TabKey::from(ItemKey::environment(environment.id))));
+    assert_eq!(roundtrip.metadata.sidebar_selection, metadata.sidebar_selection);
+    assert_eq!(roundtrip.metadata.window_layout, metadata.window_layout);
 
     let restore = SessionRestoreService::new(
         tab_session_repo.clone(),
@@ -78,6 +96,8 @@ fn tab_session_repo_roundtrip_and_restore_skip_missing_items() -> Result<()> {
         Some(TabKey::from(ItemKey::environment(environment.id)))
     );
     assert_eq!(restore.selected_workspace_id, Some(workspace.id));
+    assert_eq!(restore.sidebar_selection, metadata.sidebar_selection);
+    assert_eq!(restore.window_layout, metadata.window_layout);
 
     Ok(())
 }

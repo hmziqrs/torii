@@ -1,6 +1,7 @@
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme as _, Icon, IconName, Root, Sizable as _,
+    ActiveTheme as _, Icon, IconName, Root, Sizable as _, WindowExt as _,
+    menu::PopupMenuItem,
     resizable::{h_resizable, resizable_panel},
     scroll::ScrollableElement as _,
     sidebar::{Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem},
@@ -10,6 +11,7 @@ use gpui_component::{
 use crate::{
     app::About,
     domain::item_id::ItemId,
+    repos::tab_session_repo::TabSessionMetadata,
     services::{
         app_services::{AppServices, AppServicesGlobal},
         workspace_tree::{CollectionTree, FolderTree, TreeItem, WorkspaceCatalog, load_workspace_catalog},
@@ -46,12 +48,10 @@ impl AppRoot {
         let title_bar = cx.new(|cx| AppTitleBar::new(title, window, cx));
         let session = cx.new(|_| WorkspaceSession::new());
         let settings_page = cx.new(|cx| SettingsPage::new(window, cx));
-        let about_page = cx.new(|_| AboutPage::new());
+        let about_page = cx.new(|cx| AboutPage::new(window, cx));
 
-        let restored = services.session_restore.restore_most_recent().ok().flatten();
-        let selected_workspace_id = restored
-            .as_ref()
-            .and_then(|restored| restored.selected_workspace_id);
+        let restored = services.session_restore.take_next_restore().ok().flatten();
+        let selected_workspace_id = restored.as_ref().and_then(|restored| restored.selected_workspace_id);
         let mut catalog = load_workspace_catalog(
             &services.repos.workspace,
             &services.repos.collection,
@@ -68,10 +68,20 @@ impl AppRoot {
             }
         });
 
-        let selected_workspace_id = catalog.selected_workspace_id().or_else(|| catalog.first_workspace_id());
+        let selected_workspace_id = catalog
+            .selected_workspace_id()
+            .or_else(|| catalog.first_workspace_id());
+
         session.update(cx, |session, cx| {
             if let Some(restored) = restored {
-                session.restore_tabs(restored.tabs, restored.active, selected_workspace_id, cx);
+                session.restore_tabs(
+                    restored.tabs,
+                    restored.active,
+                    selected_workspace_id,
+                    restored.sidebar_selection,
+                    restored.window_layout,
+                    cx,
+                );
             } else {
                 session.set_selected_workspace(selected_workspace_id, cx);
             }
@@ -87,26 +97,24 @@ impl AppRoot {
         )
         .unwrap_or(catalog);
 
-        let subscriptions = vec![
-            cx.observe(&session, {
-                let services = services.clone();
-                move |this, session, cx| {
-                    let selected_workspace_id = session.read(cx).selected_workspace_id;
-                    match load_workspace_catalog(
-                        &services.repos.workspace,
-                        &services.repos.collection,
-                        &services.repos.folder,
-                        &services.repos.request,
-                        &services.repos.environment,
-                        selected_workspace_id,
-                    ) {
-                        Ok(catalog) => this.catalog = catalog,
-                        Err(err) => tracing::error!("failed to refresh workspace catalog: {err}"),
-                    }
-                    cx.notify();
+        let subscriptions = vec![cx.observe(&session, {
+            let services = services.clone();
+            move |this, session, cx| {
+                let selected_workspace_id = session.read(cx).selected_workspace_id;
+                match load_workspace_catalog(
+                    &services.repos.workspace,
+                    &services.repos.collection,
+                    &services.repos.folder,
+                    &services.repos.request,
+                    &services.repos.environment,
+                    selected_workspace_id,
+                ) {
+                    Ok(catalog) => this.catalog = catalog,
+                    Err(err) => tracing::error!("failed to refresh workspace catalog: {err}"),
                 }
-            }),
-        ];
+                cx.notify();
+            }
+        })];
 
         Self {
             focus_handle: cx.focus_handle(),
@@ -122,10 +130,19 @@ impl AppRoot {
     pub fn persist_session_state(&self, cx: &App) {
         let services = services(cx);
         let snapshot = self.session.read(cx);
+        let now = crate::domain::revision::now_unix_ts();
+        let metadata = TabSessionMetadata {
+            selected_workspace_id: snapshot.selected_workspace_id.map(|id| id.to_string()),
+            sidebar_selection: snapshot.sidebar_selection,
+            window_layout: snapshot.window_layout.clone(),
+            created_at: now,
+            updated_at: now,
+        };
         if let Err(err) = services.repos.tab_session.save_session(
             snapshot.session_id,
             snapshot.tab_manager.tabs(),
             snapshot.tab_manager.active(),
+            &metadata,
         ) {
             tracing::error!("failed to persist tab session: {err}");
         }
@@ -151,10 +168,9 @@ impl AppRoot {
         if item_key.is_persisted() {
             self.set_selected_workspace_for_item(item_key, cx);
         }
-        self.session
-            .update(cx, |session, cx| {
-                session.open_or_focus(item_key, cx);
-            });
+        self.session.update(cx, |session, cx| {
+            session.open_or_focus(item_key, cx);
+        });
         self.persist_session_state(cx);
     }
 
@@ -173,15 +189,73 @@ impl AppRoot {
         self.persist_session_state(cx);
     }
 
-    fn move_active_tab_by(&mut self, delta: isize, cx: &mut Context<Self>) {
+    fn reorder_tabs(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
         self.session.update(cx, |session, cx| {
-            session.move_active_tab_by(delta, cx);
+            session.reorder_tabs(from, to, cx);
         });
         self.persist_session_state(cx);
     }
 
+    fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
+        self.session.update(cx, |session, cx| {
+            session.toggle_sidebar(cx);
+        });
+        self.persist_session_state(cx);
+    }
+
+    fn set_sidebar_width(&mut self, width_px: f32, cx: &mut Context<Self>) {
+        self.session.update(cx, |session, cx| {
+            session.set_sidebar_width(width_px, cx);
+        });
+        self.persist_session_state(cx);
+    }
+
+    fn delete_item(&mut self, item_key: ItemKey, window: &mut Window, cx: &mut Context<Self>) {
+        let services = services(cx);
+        let close_keys = self.catalog.delete_closure(item_key);
+        let selected_workspace = services
+            .session_restore
+            .workspace_for_item(item_key)
+            .ok()
+            .flatten();
+
+        let result = match (item_key.kind, item_key.id) {
+            (ItemKind::Workspace, Some(ItemId::Workspace(id))) => services.repos.workspace.delete(id),
+            (ItemKind::Collection, Some(ItemId::Collection(id))) => services.repos.collection.delete(id),
+            (ItemKind::Folder, Some(ItemId::Folder(id))) => services.repos.folder.delete(id),
+            (ItemKind::Environment, Some(ItemId::Environment(id))) => services.repos.environment.delete(id),
+            (ItemKind::Request, Some(ItemId::Request(id))) => services.repos.request.delete(id),
+            _ => Ok(()),
+        };
+
+        match result {
+            Ok(()) => {
+                let fallback_workspace = services
+                    .repos
+                    .workspace
+                    .list()
+                    .ok()
+                    .and_then(|workspaces| workspaces.first().map(|workspace| workspace.id));
+
+                self.session.update(cx, |session, cx| {
+                    session.close_tabs(&close_keys, cx);
+                    if session.selected_workspace_id == selected_workspace {
+                        session.set_selected_workspace(fallback_workspace, cx);
+                    }
+                });
+                self.persist_session_state(cx);
+                window.push_notification(es_fluent::localize("delete_success", None), cx);
+            }
+            Err(err) => {
+                tracing::error!("failed to delete item: {err}");
+                window.push_notification(es_fluent::localize("delete_failed", None), cx);
+            }
+        }
+    }
+
     fn render_sidebar(&self, active_key: Option<ItemKey>, cx: &mut Context<Self>) -> impl IntoElement {
         let selected_workspace_id = self.session.read(cx).selected_workspace_id;
+        let weak_root = cx.entity().downgrade();
 
         Sidebar::new("app-sidebar")
             .w(relative(1.))
@@ -207,12 +281,25 @@ impl AppRoot {
                 SidebarGroup::new(es_fluent::localize("sidebar_workspaces", None)).child(
                     SidebarMenu::new().children(self.catalog.workspaces.iter().map(|workspace| {
                         let item_key = ItemKey::workspace(workspace.id);
+                        let weak_root = weak_root.clone();
                         SidebarMenuItem::new(workspace.name.clone())
                             .icon(Icon::new(IconName::Inbox).small())
                             .active(active_key == Some(item_key) || selected_workspace_id == Some(workspace.id))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.open_item(item_key, cx);
                             }))
+                            .context_menu(move |menu, _, _| {
+                                let weak_root = weak_root.clone();
+                                menu.item(
+                                    PopupMenuItem::new(es_fluent::localize("menu_delete", None))
+                                        .icon(Icon::new(IconName::Close))
+                                        .on_click(move |_, window, cx| {
+                                            let _ = weak_root.update(cx, |this, cx| {
+                                                this.delete_item(item_key, window, cx);
+                                            });
+                                        }),
+                                )
+                            })
                     })),
                 ),
             )
@@ -229,12 +316,25 @@ impl AppRoot {
                         SidebarGroup::new(es_fluent::localize("sidebar_environments", None)).child(
                             SidebarMenu::new().children(workspace.environments.iter().map(|environment| {
                                 let item_key = ItemKey::environment(environment.id);
+                                let weak_root = weak_root.clone();
                                 SidebarMenuItem::new(environment.name.clone())
                                     .icon(Icon::new(IconName::Globe).small())
                                     .active(active_key == Some(item_key))
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.open_item(item_key, cx);
                                     }))
+                                    .context_menu(move |menu, _, _| {
+                                        let weak_root = weak_root.clone();
+                                        menu.item(
+                                            PopupMenuItem::new(es_fluent::localize("menu_delete", None))
+                                                .icon(Icon::new(IconName::Close))
+                                                .on_click(move |_, window, cx| {
+                                                    let _ = weak_root.update(cx, |this, cx| {
+                                                        this.delete_item(item_key, window, cx);
+                                                    });
+                                                }),
+                                        )
+                                    })
                             })),
                         ),
                     )
@@ -262,7 +362,12 @@ impl AppRoot {
             )
     }
 
-    fn render_active_tab_content(&self, active: TabKey) -> AnyElement {
+    fn render_active_tab_content(
+        &self,
+        active: TabKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         match (active.item().kind, active.item().id) {
             (ItemKind::Workspace, Some(ItemId::Workspace(id))) => self
                 .catalog
@@ -274,8 +379,7 @@ impl AppRoot {
                         es_fluent::localize("tab_missing_title", None).into(),
                         es_fluent::localize("tab_missing_body", None).into(),
                     )
-                })
-                ,
+                }),
             (ItemKind::Collection, Some(ItemId::Collection(id))) => self
                 .catalog
                 .find_collection(id)
@@ -285,8 +389,7 @@ impl AppRoot {
                         es_fluent::localize("tab_missing_title", None).into(),
                         es_fluent::localize("tab_missing_body", None).into(),
                     )
-                })
-                ,
+                }),
             (ItemKind::Folder, Some(ItemId::Folder(id))) => self
                 .catalog
                 .selected_workspace()
@@ -302,8 +405,7 @@ impl AppRoot {
                         es_fluent::localize("tab_missing_title", None).into(),
                         es_fluent::localize("tab_missing_body", None).into(),
                     )
-                })
-                ,
+                }),
             (ItemKind::Environment, Some(ItemId::Environment(id))) => self
                 .catalog
                 .find_environment(id)
@@ -313,8 +415,7 @@ impl AppRoot {
                         es_fluent::localize("tab_missing_title", None).into(),
                         es_fluent::localize("tab_missing_body", None).into(),
                     )
-                })
-                ,
+                }),
             (ItemKind::Request, Some(ItemId::Request(id))) => self
                 .catalog
                 .selected_workspace()
@@ -324,21 +425,19 @@ impl AppRoot {
                         .iter()
                         .find_map(|collection| collection.find_request(id))
                 })
-                .map(request_tab::render)
+                .map(|request| request_tab::render(request, window, cx))
                 .unwrap_or_else(|| {
                     render_empty_state(
                         es_fluent::localize("tab_missing_title", None).into(),
                         es_fluent::localize("tab_missing_body", None).into(),
                     )
-                })
-                ,
+                }),
             (ItemKind::Settings, None) => self.settings_page.clone().into_any_element(),
             (ItemKind::About, None) => self.about_page.clone().into_any_element(),
             _ => render_empty_state(
                 es_fluent::localize("tab_missing_title", None).into(),
                 es_fluent::localize("tab_missing_body", None).into(),
-            )
-            ,
+            ),
         }
     }
 }
@@ -354,24 +453,35 @@ impl Render for AppRoot {
         let sheet_layer = Root::render_sheet_layer(window, cx);
         let dialog_layer = Root::render_dialog_layer(window, cx);
         let notification_layer = Root::render_notification_layer(window, cx);
-        let session = self.session.read(cx);
-        let active_tab = session.tab_manager.active();
-        let tabs = session
-            .tab_manager
-            .tabs()
-            .iter()
-            .map(|tab| TabPresentation {
-                key: tab.key,
-                title: self
-                    .catalog
-                    .find_title(tab.key.item())
-                    .unwrap_or_else(|| es_fluent::localize("tab_missing_short", None))
-                    .into(),
-                icon: self.catalog.find_icon(tab.key.item()),
-                selected: active_tab == Some(tab.key),
-            })
-            .collect::<Vec<_>>();
-        let active_index = active_tab.and_then(|active| tabs.iter().position(|tab| tab.key == active));
+        let (active_tab, sidebar_selection, sidebar_collapsed, sidebar_width_px, tabs) = {
+            let session = self.session.read(cx);
+            let active_tab = session.tab_manager.active();
+            let tabs = session
+                .tab_manager
+                .tabs()
+                .iter()
+                .enumerate()
+                .map(|(index, tab)| TabPresentation {
+                    index,
+                    key: tab.key,
+                    title: self
+                        .catalog
+                        .find_title(tab.key.item())
+                        .unwrap_or_else(|| es_fluent::localize("tab_missing_short", None))
+                        .into(),
+                    icon: self.catalog.find_icon(tab.key.item()),
+                    selected: active_tab == Some(tab.key),
+                })
+                .collect::<Vec<_>>();
+
+            (
+                active_tab,
+                session.sidebar_selection,
+                session.window_layout.sidebar_collapsed,
+                session.window_layout.sidebar_width_px,
+                tabs,
+            )
+        };
         let weak_root = cx.entity().downgrade();
 
         v_flex()
@@ -385,11 +495,28 @@ impl Render for AppRoot {
                     .overflow_hidden()
                     .child(
                         h_resizable("app-layout")
+                            .on_resize({
+                                let weak_root = weak_root.clone();
+                                move |state, _, cx| {
+                                    let width = state
+                                        .read(cx)
+                                        .sizes()
+                                        .first()
+                                        .map(|size| size.as_f32())
+                                        .unwrap_or(255.0);
+                                    let _ = weak_root.update(cx, |this, cx| {
+                                        this.set_sidebar_width(width, cx);
+                                    });
+                                }
+                            })
                             .child(
                                 resizable_panel()
-                                    .size(px(session.window_layout.sidebar_width_px))
-                                    .size_range(px(180.)..px(420.))
-                                    .child(self.render_sidebar(session.sidebar_selection, cx)),
+                                    .size(px(if sidebar_collapsed { 48. } else { sidebar_width_px }))
+                                    .size_range(
+                                        px(if sidebar_collapsed { 48. } else { 180. })
+                                            ..px(if sidebar_collapsed { 48. } else { 420. }),
+                                    )
+                                    .child(self.render_sidebar(sidebar_selection, cx)),
                             )
                             .child(
                                 resizable_panel().child(
@@ -397,49 +524,46 @@ impl Render for AppRoot {
                                         .flex_1()
                                         .h_full()
                                         .overflow_x_hidden()
-                                        .child(
-                                            render_tab_bar(
-                                                &tabs,
-                                                active_index.is_some_and(|index| index > 0),
-                                                active_index.is_some_and(|index| index + 1 < tabs.len()),
-                                                {
-                                                    let weak_root = weak_root.clone();
-                                                    move |key, _, cx| {
-                                                        let _ = weak_root.update(cx, |this, cx| {
-                                                            this.focus_tab(key, cx);
-                                                        });
-                                                    }
-                                                },
-                                                {
-                                                    let weak_root = weak_root.clone();
-                                                    move |key, _, cx| {
-                                                        let _ = weak_root.update(cx, |this, cx| {
-                                                            this.close_tab(key, cx);
-                                                        });
-                                                    }
-                                                },
-                                                {
-                                                    let weak_root = weak_root.clone();
-                                                    move |_, _, cx| {
-                                                        let _ = weak_root.update(cx, |this, cx| {
-                                                            this.move_active_tab_by(-1, cx);
-                                                        });
-                                                    }
-                                                },
+                                        .child(render_tab_bar(
+                                            &tabs,
+                                            sidebar_collapsed,
+                                            {
+                                                let weak_root = weak_root.clone();
+                                                move |key, _, cx| {
+                                                    let _ = weak_root.update(cx, |this, cx| {
+                                                        this.focus_tab(key, cx);
+                                                    });
+                                                }
+                                            },
+                                            {
+                                                let weak_root = weak_root.clone();
+                                                move |key, _, cx| {
+                                                    let _ = weak_root.update(cx, |this, cx| {
+                                                        this.close_tab(key, cx);
+                                                    });
+                                                }
+                                            },
+                                            {
+                                                let weak_root = weak_root.clone();
                                                 move |_, _, cx| {
                                                     let _ = weak_root.update(cx, |this, cx| {
-                                                        this.move_active_tab_by(1, cx);
+                                                        this.toggle_sidebar(cx);
                                                     });
-                                                },
-                                            ),
-                                        )
+                                                }
+                                            },
+                                            move |from, to, _, cx| {
+                                                let _ = weak_root.update(cx, |this, cx| {
+                                                    this.reorder_tabs(from, to, cx);
+                                                });
+                                            },
+                                        ))
                                         .child(
                                             div()
                                                 .flex_1()
                                                 .overflow_y_scrollbar()
                                                 .child(
                                                     active_tab
-                                                        .map(|active| self.render_active_tab_content(active))
+                                                        .map(|active| self.render_active_tab_content(active, window, cx))
                                                         .unwrap_or_else(|| {
                                                             if self.catalog.workspaces.is_empty() {
                                                                 render_empty_state(
@@ -475,6 +599,7 @@ fn render_collection_menu_item(
     cx: &mut Context<AppRoot>,
 ) -> SidebarMenuItem {
     let collection_key = ItemKey::collection(collection.collection.id);
+    let weak_root = cx.entity().downgrade();
     SidebarMenuItem::new(collection.collection.name.clone())
         .icon(Icon::new(IconName::BookOpen).small())
         .active(active_key == Some(collection_key))
@@ -483,6 +608,18 @@ fn render_collection_menu_item(
         .on_click(cx.listener(move |this, _, _, cx| {
             this.open_item(collection_key, cx);
         }))
+        .context_menu(move |menu, _, _| {
+            let weak_root = weak_root.clone();
+            menu.item(
+                PopupMenuItem::new(es_fluent::localize("menu_delete", None))
+                    .icon(Icon::new(IconName::Close))
+                    .on_click(move |_, window, cx| {
+                        let _ = weak_root.update(cx, |this, cx| {
+                            this.delete_item(collection_key, window, cx);
+                        });
+                    }),
+            )
+        })
         .children(collection.children.iter().map(|item| render_tree_item(item, active_key, cx)))
 }
 
@@ -495,12 +632,25 @@ fn render_tree_item(
         TreeItem::Folder(folder) => render_folder_menu_item(folder, active_key, cx),
         TreeItem::Request(request) => {
             let request_key = ItemKey::request(request.id);
+            let weak_root = cx.entity().downgrade();
             SidebarMenuItem::new(request.name.clone())
                 .icon(Icon::new(IconName::File).small())
                 .active(active_key == Some(request_key))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.open_item(request_key, cx);
                 }))
+                .context_menu(move |menu, _, _| {
+                    let weak_root = weak_root.clone();
+                    menu.item(
+                        PopupMenuItem::new(es_fluent::localize("menu_delete", None))
+                            .icon(Icon::new(IconName::Close))
+                            .on_click(move |_, window, cx| {
+                                let _ = weak_root.update(cx, |this, cx| {
+                                    this.delete_item(request_key, window, cx);
+                                });
+                            }),
+                    )
+                })
         }
     }
 }
@@ -511,6 +661,7 @@ fn render_folder_menu_item(
     cx: &mut Context<AppRoot>,
 ) -> SidebarMenuItem {
     let folder_key = ItemKey::folder(folder.folder.id);
+    let weak_root = cx.entity().downgrade();
     SidebarMenuItem::new(folder.folder.name.clone())
         .icon(Icon::new(IconName::Folder).small())
         .active(active_key == Some(folder_key))
@@ -519,5 +670,17 @@ fn render_folder_menu_item(
         .on_click(cx.listener(move |this, _, _, cx| {
             this.open_item(folder_key, cx);
         }))
+        .context_menu(move |menu, _, _| {
+            let weak_root = weak_root.clone();
+            menu.item(
+                PopupMenuItem::new(es_fluent::localize("menu_delete", None))
+                    .icon(Icon::new(IconName::Close))
+                    .on_click(move |_, window, cx| {
+                        let _ = weak_root.update(cx, |this, cx| {
+                            this.delete_item(folder_key, window, cx);
+                        });
+                    }),
+            )
+        })
         .children(folder.children.iter().map(|item| render_tree_item(item, active_key, cx)))
 }

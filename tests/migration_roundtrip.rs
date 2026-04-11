@@ -30,6 +30,7 @@ fn migration_roundtrip_creates_and_reuses_schema() -> Result<()> {
         "history_index",
         "secret_refs",
         "tab_session_state",
+        "tab_session_metadata",
         "_sqlx_migrations",
     ] {
         assert!(
@@ -43,7 +44,7 @@ fn migration_roundtrip_creates_and_reuses_schema() -> Result<()> {
             .fetch_one(db.pool())
             .await
     })?;
-    assert_eq!(applied, 4);
+    assert_eq!(applied, 5);
 
     let journal_mode: String = db.block_on(async {
         sqlx::query_scalar("PRAGMA journal_mode;")
@@ -74,7 +75,7 @@ fn migration_roundtrip_creates_and_reuses_schema() -> Result<()> {
             .fetch_one(db2.pool())
             .await
     })?;
-    assert_eq!(applied2, 4);
+    assert_eq!(applied2, 5);
 
     Ok(())
 }
@@ -137,7 +138,7 @@ fn migration_upgrade_from_v1_applies_remaining_versions() -> Result<()> {
             .fetch_one(upgraded.pool())
             .await
     })?;
-    assert_eq!(applied_after_upgrade, 4);
+    assert_eq!(applied_after_upgrade, 5);
 
     Ok(())
 }

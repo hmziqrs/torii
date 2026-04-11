@@ -104,11 +104,42 @@ impl WorkspaceSession {
         tabs: Vec<TabState>,
         active: Option<TabKey>,
         selected_workspace_id: Option<WorkspaceId>,
+        sidebar_selection: Option<ItemKey>,
+        window_layout: WindowLayoutState,
         cx: &mut Context<Self>,
     ) {
         self.tab_manager.set_tabs(tabs, active);
-        self.sidebar_selection = self.tab_manager.active().map(|tab| tab.item());
+        self.sidebar_selection = sidebar_selection
+            .or_else(|| self.tab_manager.active().map(|tab| tab.item()));
         self.selected_workspace_id = selected_workspace_id;
+        self.window_layout = window_layout;
+        cx.notify();
+    }
+
+    pub fn set_sidebar_collapsed(&mut self, collapsed: bool, cx: &mut Context<Self>) {
+        if self.window_layout.sidebar_collapsed != collapsed {
+            self.window_layout.sidebar_collapsed = collapsed;
+            cx.notify();
+        }
+    }
+
+    pub fn set_sidebar_width(&mut self, width_px: f32, cx: &mut Context<Self>) {
+        if (self.window_layout.sidebar_width_px - width_px).abs() > f32::EPSILON {
+            self.window_layout.sidebar_width_px = width_px;
+            cx.notify();
+        }
+    }
+
+    pub fn reorder_tabs(&mut self, from: usize, to: usize, cx: &mut Context<Self>) -> bool {
+        let changed = self.tab_manager.reorder(from, to);
+        if changed {
+            cx.notify();
+        }
+        changed
+    }
+
+    pub fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
+        self.window_layout.sidebar_collapsed = !self.window_layout.sidebar_collapsed;
         cx.notify();
     }
 

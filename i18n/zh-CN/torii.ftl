@@ -148,6 +148,10 @@ menu_language = 语言
 menu_language_english = 英文
 menu_language_simplified_chinese = 简体中文
 menu_theme = 主题
+menu_delete = 删除
+
+delete_success = 项目已删除。
+delete_failed = 删除失败。
 
 ## TitleBar
 
