@@ -10,7 +10,7 @@ use gpui_component::{
 
 use crate::{
     app::About,
-    domain::{ids::RequestId, item_id::ItemId},
+    domain::{ids::{RequestId, RequestDraftId}, item_id::ItemId},
     repos::tab_session_repo::TabSessionMetadata,
     services::{
         app_services::{AppServices, AppServicesGlobal},
@@ -36,6 +36,7 @@ pub struct AppRoot {
     settings_page: Entity<SettingsPage>,
     about_page: Entity<AboutPage>,
     request_pages: std::collections::HashMap<RequestId, Entity<request_tab::RequestTabView>>,
+    request_draft_pages: std::collections::HashMap<RequestDraftId, Entity<request_tab::RequestTabView>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -125,6 +126,7 @@ impl AppRoot {
             settings_page,
             about_page,
             request_pages: std::collections::HashMap::new(),
+            request_draft_pages: std::collections::HashMap::new(),
             _subscriptions: subscriptions,
         }
     }
@@ -226,7 +228,10 @@ impl AppRoot {
             (ItemKind::Collection, Some(ItemId::Collection(id))) => services.repos.collection.delete(id),
             (ItemKind::Folder, Some(ItemId::Folder(id))) => services.repos.folder.delete(id),
             (ItemKind::Environment, Some(ItemId::Environment(id))) => services.repos.environment.delete(id),
-            (ItemKind::Request, Some(ItemId::Request(id))) => services.repos.request.delete(id),
+            (ItemKind::Request, Some(ItemId::Request(id))) => {
+                self.request_pages.remove(&id);
+                services.repos.request.delete(id)
+            }
             _ => Ok(()),
         };
 
@@ -375,8 +380,36 @@ impl AppRoot {
         }
 
         let page = cx.new(|cx| request_tab::RequestTabView::new(request, window, cx));
+
+        // Restore latest-run summary from history if available
+        let services = services(cx);
+        if let Ok(Some(history_entry)) = services.repos.history.get_latest_for_request(request.id) {
+            page.update(cx, |tab, _cx| {
+                tab.editor_mut().set_latest_history_id(Some(history_entry.id));
+            });
+        }
+
         self.request_pages.insert(request.id, page.clone());
         page
+    }
+
+    /// Open a new draft request tab under the given collection.
+    pub fn open_draft_request(
+        &mut self,
+        collection_id: crate::domain::ids::CollectionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let draft_id = RequestDraftId::new();
+        let page = cx.new(|cx| {
+            request_tab::RequestTabView::new_draft(collection_id, window, cx)
+        });
+        self.request_draft_pages.insert(draft_id, page);
+
+        // For now, we don't add draft tabs to the tab manager since they lack
+        // an ItemId. A full integration would extend TabManager to support
+        // draft keys. This is a Phase 3 placeholder that allows the draft
+        // creation path to work without a full tab-key refactor.
     }
 
     fn render_active_tab_content(

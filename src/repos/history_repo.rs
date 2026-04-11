@@ -285,7 +285,7 @@ impl HistoryRepository for SqliteHistoryRepository {
             let row = sqlx::query(
                 "SELECT * FROM history_index
                  WHERE request_id = ? AND state != 'pending'
-                 ORDER BY started_at DESC
+                 ORDER BY started_at DESC, id DESC
                  LIMIT 1",
             )
             .bind(request_id.to_string())
