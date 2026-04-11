@@ -72,8 +72,10 @@ Phase 3 is complete only when all of the following exist:
 - request duplicate flow that produces a new persisted request safely
 - request send and cancel flows on top of a shared execution service
 - history-backed latest-run summary panel in the request tab
+- secret-safe sent-request history snapshots persisted alongside response metadata for each run
 - bounded response preview behavior with full-body reload from blob storage
 - deterministic late-response ignore behavior enforced by operation ID checks
+- startup recovery coverage for interrupted sends, stale pending history rows, and orphan response blobs
 - test coverage for save, duplicate, send, cancel, truncation, reopen, and conflict paths
 
 ## 5. Scope Boundary
@@ -166,6 +168,16 @@ Auth type variants supported in Phase 3:
 - `api_key` — key name + value secret ref + location (`header` or `query`)
 
 OAuth 2.0, AWS Signature, and other auth flows are deferred to a later phase. All Phase 3 auth variants persist only `secret_refs` in `auth_json`; the actual secret values live in the platform credential store via `SecretManager`.
+
+Secret ownership and lifecycle rules:
+
+- before first save, an unsaved request draft may own **draft-scoped** secret refs keyed by `RequestDraftId`; these refs are session-local support for draft editing and send-before-save
+- on first successful save, any draft-scoped secret refs are migrated to new owner-scoped refs keyed by the persisted `RequestId`, and the draft-scoped refs are best-effort deleted
+- after first save, secret refs are always owned by the persisted request ID; a request never points at another request's secret refs
+- saving an existing request upserts the same owner-scoped secret refs in place for that request ID
+- duplicating a request clones the source request's secret values into **new** secret refs owned by the duplicate request ID; it must never reuse the source request's secret refs verbatim
+- if secret cloning fails during duplicate, the duplicate flow fails as a recoverable error and performs compensating cleanup for any newly created request row or secret refs
+- removing an auth scheme or deleting a request best-effort deletes the secret refs owned by that request; cleanup failure is logged and remains recoverable
 
 Settings column shape (`settings_json`):
 
@@ -292,6 +304,30 @@ Orphan blob handling on cancel or failure:
 - delete failures are logged but not fatal; Phase 7 orphan compaction will reclaim any residue
 - a successfully completed but unclaimed blob (e.g. entity dropped before finalize) is treated the same way
 
+## 6.4 History snapshot model
+
+Phase 3 history rows must carry a secret-safe immutable snapshot of what was sent, not just the response.
+
+Persisted sent-request snapshot shape:
+
+- `request_method`
+- `request_url_redacted`
+- `request_headers_redacted_json`
+- `request_auth_kind`
+- `request_body_summary_json`:
+  - body kind
+  - media type
+  - payload size
+  - existing request body blob ref when the payload already came from persisted request storage
+
+Rules:
+
+- the snapshot is created before the network request starts and never mutated afterward
+- secret-bearing query values, auth headers, and other secret-derived header values are redacted before persistence
+- Phase 3 does **not** persist a second full copy of the sent request body into history storage; it stores a summary plus any existing persisted request-body blob ref
+- this is intentionally a secret-safe execution snapshot, not a byte-for-byte wire capture
+- later history compare or reopen features in Phase 5 must build on this shape rather than redesigning the schema from scratch
+
 ## 7. Proposed Module Layout
 
 ```text
@@ -339,6 +375,7 @@ Tasks:
 - add migration `0007_history_response_metadata.sql` to expand latest-run/history metadata needed by the request tab
 - migration 0006 must use additive `ALTER TABLE ... ADD COLUMN` only with the JSON column defaults defined in §6.1; no data backfill step
 - migration 0007 must add the columns required for `finalize_cancelled` (e.g. `cancelled_at`, `partial_size`) so Slice 4 and Slice 5 share a single schema landing
+- migration 0007 must also add the secret-safe sent-request snapshot columns from §6.4 so history rows are useful beyond the Phase 3 latest-run panel
 - keep migrations additive and roundtrip-testable
 - migration rollback is dev-only via `DROP COLUMN` (SQLite ≥ 3.35); production migrations are forward-only and crash-safe
 
@@ -432,6 +469,9 @@ Tasks:
 - write request body payloads to the blob store on save when needed
 - resolve auth secrets through `SecretManager` and persist only secret refs
 - wire duplicate action to create a new persisted request from the **persisted baseline** (not the dirty draft); matches Postman behavior and avoids cross-tab dirty-state leakage
+- make secret ownership explicit per §6.1: duplicate clones secrets into new owner-scoped refs, save updates refs owned by the current request, and delete or auth removal best-effort cleans them up
+- on first save of an unsaved draft, migrate any draft-scoped secret refs from `RequestDraftId` ownership to the new persisted `RequestId`; a migration failure aborts the save and leaves the draft open with a recoverable error
+- treat duplicate as a compensating workflow rather than a single repo call: if request-row creation succeeds but secret cloning fails, rollback the new request row and any new secret refs before surfacing the recoverable error
 - implement request-draft tab identity for unsaved new requests (see §5); on first successful save, the draft tab transitions its identity to the persisted `RequestId` without closing/reopening
 - refresh sidebar/catalog state after successful save or duplicate
 
@@ -439,6 +479,8 @@ Definition of done:
 
 - save updates the persisted request and resets dirty state to the new baseline
 - duplicate opens a distinct request tab without corrupting the source request
+- duplicate never aliases the source request's secret ownership, even when the auth config is unchanged
+- first save of an auth-bearing unsaved draft rebinds its secrets from `RequestDraftId` ownership to the persisted `RequestId` without losing send capability
 - save conflicts are surfaced as recoverable errors, not silent last-write-wins overwrites
 
 ## Slice 4: REST Execution Service and Cancellation
@@ -454,8 +496,9 @@ Tasks:
 - build the shared `reqwest::Client` once with the Phase 3 locked defaults from §5 (timeout, redirects, TLS, no cookie jar, no proxy)
 - convert the draft `RequestItem` into `http::Method` + `http::HeaderMap` + URL inside `RequestExecutionService`; `http` types must not appear in `domain/`, `repos/`, or `views/` (see §6.1 HTTP type crate boundary)
 - preflight: resolve auth secrets via `SecretManager` before touching the network; preflight failures stay off the FSM terminal states and surface as recoverable errors (see Slice 1)
+- preflight secret resolution supports both persisted request ownership and unsaved-draft `RequestDraftId` ownership so send-before-save remains valid
 - emit a structured warning log when the outgoing request still contains `{{ }}` placeholders (see §6.1 variable placeholder rule)
-- create a pending history row before the network operation starts; its `HistoryEntryId` becomes the `OperationId`
+- create a pending history row before the network operation starts; its `HistoryEntryId` becomes the `OperationId`, and the row includes the secret-safe sent-request snapshot from §6.4
 - use `tokio_util::sync::CancellationToken` as the concrete cancellation primitive; the editor entity holds a clone, the execution task holds a clone, and dropping the request future on cancel propagates the abort to `reqwest`
 - store the active task handle and cancellation token on the editor entity
 - stream response bodies via `reqwest::Response::bytes_stream()` into a `BlobStore` writer while populating the in-memory preview up to `RESPONSE_PREVIEW_CAP_BYTES`; never buffer the full body in RAM first
@@ -483,6 +526,7 @@ Tasks:
   - media type
   - size
   - timings: `dispatched_at`, `first_byte_at` (TTFB), `completed_at`, derived `total_ms` and `ttfb_ms` — DNS / connect / TLS phase breakdown is deferred (reqwest does not expose it without middleware)
+- keep the secret-safe sent-request snapshot immutable: response finalization enriches the row with response data only and does not rewrite the request snapshot captured at dispatch time
 - keep only a bounded preview in hot state, capped per §6.3
 - persist the full response body through the existing blob store
 - extend `HistoryRepository` with `finalize_cancelled(id, cancelled_at, partial_size)` and update `finalize_completed` to carry the new response metadata columns
@@ -504,15 +548,20 @@ Purpose: keep request tabs coherent with the Phase 2 tab/session model.
 Tasks:
 
 - update `AppRoot.request_pages` ownership so it can manage request editor entities rather than static placeholder views
-- support whichever request-tab identity strategy Slice 3 chooses
-- ensure close/delete cleanup drops request editor entities intentionally
+- support the locked request-draft tab identity from §5 and Slice 3, including the transition from `RequestDraftId` to persisted `RequestId`
+- on delete of a request item with an active operation, issue cancel first, then close the tab after the operation is marked cancelled or detached safely; never rely on entity drop as the only cancellation mechanism
+- ensure close/delete cleanup drops request editor entities intentionally after cancel-first semantics have run
+- keep delete behavior consistent across windows: deleting a request closes every open tab for that request after cancel is propagated
 - on tab restore, rebuild request editor state from persisted request data plus latest-run summary
+- integrate with the existing startup recovery path so stale pending rows from interrupted sends become failed rows and orphan response blobs are reclaimed on the next launch
 - do not treat dirty request drafts as durable session state unless explicitly implemented and tested
 
 Definition of done:
 
 - saved requests reopen with persisted editor data and latest-run summary
 - restoring a missing/deleted request still degrades gracefully to the existing empty state
+- delete of an in-flight request cancels first and then closes every corresponding tab without panicking
+- startup recovery leaves no request tab pointing at a permanently pending run after restart
 - no entity reentrancy or accidental task-drop regressions are introduced
 
 ## 9. Validation Gates
@@ -535,7 +584,9 @@ Integration tests:
 - request save followed by reopen from persisted state
 - duplicate request then reopen both source and duplicate tabs
 - latest-run summary restore from history/blob store
+- restart recovery with a stale pending request run marks the history row failed and keeps latest-run restore usable
 - window close during in-flight request with no panic
+- deleting a request with an active operation cancels first and closes all open tabs for that request cleanly
 - cancel mid-stream leaves no `blob_hash` reference and best-effort deletes the partial blob file
 - `MockTransport` drip-feed and stall scenarios deterministically reproduce the cancel race and preview-cap behaviors without hitting the network
 
@@ -547,7 +598,10 @@ Performance tests:
 Security tests:
 
 - auth secrets never persist in request rows, history rows, or blob files
+- unsaved request drafts with auth can send via draft-scoped secret refs, and first save migrates those refs to the persisted request without plaintext leakage
+- duplicated requests receive new owner-scoped secret refs; deleting one request does not break the other's secrets
 - log/error paths do not emit raw auth values
+- history request snapshots redact secret-derived query/header values before persistence
 - secret-store lookup failure produces a recoverable error path
 
 Observability requirements:
@@ -562,8 +616,10 @@ The Phase 3 goals from the main plan are satisfied only when:
 
 - REST requests can be created or duplicated into a usable tab, edited, saved, sent, cancelled, and reopened safely
 - request-tab state obeys the explicit lifecycle FSM
+- deleting an in-flight request cancels it before tab teardown across windows
 - response previews respect configured memory caps
 - full response bodies are reopenable from disk
+- interrupted sends recover cleanly on the next startup without leaving pending history rows stuck forever
 - cancelled requests never re-enter completed UI state from late responses
 
 That is the minimum bar before moving on to Phase 4 tree CRUD and environment resolution work.
