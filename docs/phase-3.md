@@ -97,9 +97,20 @@ Explicitly deferred:
 
 Note on new request creation:
 
-- `docs/plan.md` Section 4.3 requires draft tab IDs for unsaved new items
-- if Phase 3 needs true unsaved request creation, add request-draft tab identity only for request tabs in this phase
-- if that proves too invasive for the first landing, the fallback is to create a persisted stub request immediately and open it in-place, but that is a fallback, not the preferred plan
+- Phase 3 lands request-draft tab identity for unsaved new requests, matching `docs/plan.md` Section 4.3
+- A draft tab carries a `RequestDraftId` that transitions to a persisted `RequestId` on first save; the tab stays focused across the transition without closing and reopening
+- The "create a persisted stub immediately" shortcut is rejected: it pollutes the sidebar with empty rows and diverges from the tab identity model other item kinds already use
+
+REST client configuration defaults (locked in Phase 3, configurable UI deferred to later phases):
+
+- 30-second total request timeout
+- follow redirects up to 10 hops
+- no persistent cookie jar
+- no proxy
+- native TLS verification enabled
+- no custom CA trust store
+
+Any change to these defaults is out of scope for Phase 3 and must go through a later request-settings phase.
 
 ## 6. Persistence and State Shape
 
@@ -122,6 +133,18 @@ Recommended persisted shape:
   - `body_json`
   - `scripts_json`
   - `settings_json`
+
+Scripts column shape:
+
+- `scripts_json` is a single JSON object with two string fields: `pre_request` and `tests`
+- both default to empty strings; Phase 3 persists and edits them but never executes them
+- this shape is stable enough for a later script-engine phase to consume without another migration
+
+Migration 0006 backfill rule:
+
+- new JSON columns are added with additive `ALTER TABLE ... ADD COLUMN ... DEFAULT '{}'`
+- `scripts_json` defaults to `'{"pre_request":"","tests":""}'`
+- existing request rows produced by Phase 2 load through `map_request_row` without a separate backfill step
 
 Rules:
 
@@ -151,6 +174,19 @@ Recommended rules:
 - persisted request rows remain the reopen source of truth after restart
 - if dirty-draft restore across restart is needed later, it should be added explicitly rather than leaking partial draft data into tab-session persistence by accident
 
+Operation identity:
+
+- `OperationId` is a type alias for `HistoryEntryId`
+- The send flow creates the pending history row first, then launches the network task; the history row's ID identifies the operation end-to-end
+- Late-response ignore checks compare the active operation ID stored on the editor entity against the completing task's operation ID
+- An editor entity has at most one active operation; starting a new send while one is in flight requires cancel-then-send
+
+Cross-window conflict propagation:
+
+- Phase 3 detects revision conflicts at save time only, via the request repo `save` API with an expected revision
+- Live broadcast of another window's save into an open editor is deferred to Phase 4 alongside the repo subscription layer
+- On save conflict, the editor surfaces a recoverable error with a "reload baseline" action that refetches the persisted row and replaces the baseline without discarding the in-memory draft
+
 ## 6.3 Response/body model
 
 Follow `docs/state_management.md` Section 5.1.
@@ -174,6 +210,19 @@ Rules:
 - keep only the preview in hot entity state
 - persist the full response body in the existing blob store
 - latest-run reopen should use blob preview/full-body load paths instead of loading the whole body eagerly
+
+Concrete caps for Phase 3:
+
+- per-response in-memory preview cap: 2 MiB (`RESPONSE_PREVIEW_CAP_BYTES`)
+- per-tab total volatile response footprint cap: 32 MiB across preview + metadata
+- these caps live in a `response_budgets` config struct so unit and performance tests can assert against them instead of magic numbers
+- bodies larger than the preview cap are still streamed to the blob store in full; the in-memory `InMemoryPreview` variant is never used for responses that exceeded the cap
+
+Orphan blob handling on cancel or failure:
+
+- if a send is cancelled or fails mid-stream, the partially written blob is best-effort deleted and the history row is finalized without a `blob_hash`
+- delete failures are logged but not fatal; Phase 7 orphan compaction will reclaim any residue
+- a successfully completed but unclaimed blob (e.g. entity dropped before finalize) is treated the same way
 
 ## 7. Proposed Module Layout
 
@@ -220,6 +269,8 @@ Tasks:
 - add `reqwest`, `http`, and `url` dependencies called for by the main plan
 - add migration `0006_request_editor_core.sql` to expand request persistence for editor sections
 - add migration `0007_history_response_metadata.sql` to expand latest-run/history metadata needed by the request tab
+- migration 0006 must use additive `ALTER TABLE ... ADD COLUMN` only with the JSON column defaults defined in §6.1; no data backfill step
+- migration 0007 must add the columns required for `finalize_cancelled` (e.g. `cancelled_at`, `partial_size`) so Slice 4 and Slice 5 share a single schema landing
 - keep migrations additive and roundtrip-testable
 
 Definition of done:
@@ -265,9 +316,10 @@ Tasks:
   - `Completed`
   - `Failed`
   - `Cancelled`
-- add `OperationId` and active-operation tracking
+- adopt `OperationId` (alias for `HistoryEntryId`, see §6.2) and track at most one active operation per editor entity
 - add helpers for dirty detection, baseline reset, save-success baseline replacement, and cancel eligibility
 - make late-response ignore behavior part of the state API rather than a view-layer convention
+- define a preflight error channel that is **distinct** from the `Failed` terminal state: secret-resolution failures, URL parse errors, and other pre-send validation problems do not transition the FSM to `Failed` because nothing was sent; the editor stays in its current state and surfaces a recoverable error
 
 Definition of done:
 
@@ -292,7 +344,9 @@ Tasks:
   - request settings
 - add save, duplicate, send, and cancel actions
 - add latest-run summary panel region
-- add Fluent keys for every new label, empty state, and error
+- show a dirty indicator on the tab title when the editor draft diverges from the persisted baseline
+- close-while-dirty opens a confirm dialog with Save / Discard / Cancel actions; Cancel keeps the tab open
+- add Fluent keys for every new label, empty state, error, and dialog button
 - prefer `gpui-component` controls and layout primitives before building custom widgets
 
 Definition of done:
@@ -310,10 +364,8 @@ Tasks:
 - wire save action to persist the draft request value through the repo layer
 - write request body payloads to the blob store on save when needed
 - resolve auth secrets through `SecretManager` and persist only secret refs
-- wire duplicate action to create a new request from the current draft/baseline safely
-- define how request-tab identity behaves for unsaved new requests:
-  - preferred: request-draft tab identity for unsaved new requests
-  - fallback: immediate persisted stub request creation
+- wire duplicate action to create a new persisted request from the **persisted baseline** (not the dirty draft); matches Postman behavior and avoids cross-tab dirty-state leakage
+- implement request-draft tab identity for unsaved new requests (see §5); on first successful save, the draft tab transitions its identity to the persisted `RequestId` without closing/reopening
 - refresh sidebar/catalog state after successful save or duplicate
 
 Definition of done:
@@ -329,10 +381,14 @@ Purpose: implement send/cancel safely through shared services instead of ad hoc 
 Tasks:
 
 - introduce `RequestExecutionService` backed by the Tokio runtime and `reqwest`
+- build the shared `reqwest::Client` once with the Phase 3 locked defaults from §5 (timeout, redirects, TLS, no cookie jar, no proxy)
 - convert the current draft request value into a sendable HTTP request without depending on UI types
-- create a pending history row before the network operation starts
+- preflight: resolve auth secrets via `SecretManager` before touching the network; preflight failures stay off the FSM terminal states and surface as recoverable errors (see Slice 1)
+- create a pending history row before the network operation starts; its `HistoryEntryId` becomes the `OperationId`
 - store the active task handle and cancellation primitive on the editor entity
+- stream response bodies via `reqwest::Response::bytes_stream()` into a `BlobStore` writer while populating the in-memory preview up to `RESPONSE_PREVIEW_CAP_BYTES`; never buffer the full body in RAM first
 - propagate cancel by signalling the active operation and dropping/aborting the in-flight request future
+- on cancel mid-stream, abort the writer, best-effort delete the partial blob, and call `HistoryRepository::finalize_cancelled` (added in Slice 5) with any partial metadata
 - map completion into `Completed | Failed | Cancelled` only
 - handle dropped window/entity/app targets after async boundaries as no-op outcomes with logs
 
@@ -355,9 +411,11 @@ Tasks:
   - media type
   - size
   - timings
-- keep only a bounded preview in hot state
+- keep only a bounded preview in hot state, capped per §6.3
 - persist the full response body through the existing blob store
-- finalize the history row with response metadata and blob refs
+- extend `HistoryRepository` with `finalize_cancelled(id, cancelled_at, partial_size)` and update `finalize_completed` to carry the new response metadata columns
+- finalize the history row with response metadata and blob refs through the appropriate API for each terminal state
+- enforce the caps from §6.3 when populating preview bytes; responses over the cap store `DiskBlob { preview, .. }` with `preview` truncated to the cap (or `None` for binary media)
 - add request-tab latest-run summary loading from history + blob preview on reopen
 - add "load full body from disk" behavior for the request tab response panel
 
@@ -395,6 +453,8 @@ Unit tests:
 - revision-conflict detection
 - lifecycle FSM transitions including cancel races
 - response truncation/body-ref behavior
+- editor entity reentrancy guard: follow-up updates triggered from inside an active update path defer instead of re-entering (see `state_management.md` §4.12)
+- preflight failure path: secret-resolution and URL-parse errors do not move the FSM to `Failed`
 
 Integration tests:
 
@@ -403,17 +463,24 @@ Integration tests:
 - duplicate request then reopen both source and duplicate tabs
 - latest-run summary restore from history/blob store
 - window close during in-flight request with no panic
+- cancel mid-stream leaves no `blob_hash` reference and best-effort deletes the partial blob file
 
 Performance tests:
 
-- 10 MB, 50 MB, and 200 MB response handling on the bounded preview path
-- multiple open request tabs without unbounded response-memory growth
+- 10 MB, 50 MB, and 200 MB response handling on the bounded preview path; assert against `RESPONSE_PREVIEW_CAP_BYTES` and the per-tab cap from §6.3
+- multiple open request tabs without unbounded response-memory growth, asserted against the per-tab volatile cap
 
 Security tests:
 
 - auth secrets never persist in request rows, history rows, or blob files
 - log/error paths do not emit raw auth values
 - secret-store lookup failure produces a recoverable error path
+
+Observability requirements:
+
+- `tracing` spans on every send: `request.send`, `request.cancel`, `response.persist`
+- counters: `requests_completed_total`, `requests_cancelled_total`, `requests_failed_total`, `responses_truncated_total`, `preview_bytes_histogram`, `async_update_failures_total` (tagged by category: `dropped_app` | `dropped_window` | `dropped_entity` | `real_error`)
+- structured warning logs on every preflight rejection, late-response ignore, and orphan-blob cleanup outcome
 
 ## 10. Exit Criteria Mapping Back to `docs/plan.md`
 
