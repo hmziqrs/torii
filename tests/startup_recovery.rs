@@ -33,6 +33,10 @@ fn startup_recovery_reconciles_pending_history_and_orphans() -> Result<()> {
         200,
         Some(&referenced_blob.hash),
         Some(referenced_blob.size_bytes as i64),
+        None,
+        None,
+        None,
+        None,
     )?;
 
     let orphan_blob = blob_store.write_bytes(b"orphan-blob", Some("text/plain"))?;

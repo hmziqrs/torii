@@ -11,6 +11,26 @@ use crate::domain::{
 
 use super::{DbRef, RepoResult};
 
+// ---------------------------------------------------------------------------
+// Explicit repo errors
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, thiserror::Error)]
+pub enum RequestRepoError {
+    #[error("request not found: {0}")]
+    NotFound(RequestId),
+    #[error("revision conflict: expected {expected}, actual {actual}")]
+    RevisionConflict { expected: i64, actual: i64 },
+    #[error("storage failure: {0}")]
+    Storage(#[source] anyhow::Error),
+}
+
+impl From<anyhow::Error> for RequestRepoError {
+    fn from(err: anyhow::Error) -> Self {
+        Self::Storage(err)
+    }
+}
+
 pub trait RequestRepository: Send + Sync {
     fn create(
         &self,
@@ -36,6 +56,14 @@ pub trait RequestRepository: Send + Sync {
         ordered_ids: &[RequestId],
     ) -> RepoResult<()>;
     fn delete(&self, id: RequestId) -> RepoResult<()>;
+
+    // Phase 3 additions
+    fn save(&self, request: &RequestItem, expected_revision: i64) -> Result<(), RequestRepoError>;
+    fn duplicate(
+        &self,
+        source_id: RequestId,
+        new_name: &str,
+    ) -> RepoResult<RequestItem>;
 }
 
 #[derive(Clone)]
@@ -85,25 +113,7 @@ impl RequestRepository for SqliteRequestRepository {
 
             let request =
                 RequestItem::new(collection_id, parent_folder_id, name, method, url, next_sort);
-            sqlx::query(
-                "INSERT INTO requests
-                 (id, collection_id, parent_folder_id, name, method, url, body_blob_hash, sort_order, created_at, updated_at, revision)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            )
-            .bind(request.id.to_string())
-            .bind(request.collection_id.to_string())
-            .bind(request.parent_folder_id.map(|it| it.to_string()))
-            .bind(&request.name)
-            .bind(&request.method)
-            .bind(&request.url)
-            .bind(request.body_blob_hash.clone())
-            .bind(request.sort_order)
-            .bind(request.meta.created_at)
-            .bind(request.meta.updated_at)
-            .bind(request.meta.revision)
-            .execute(&mut *tx)
-            .await?;
-
+            insert_request(&mut tx, &request).await?;
             tx.commit().await?;
             Ok::<RequestItem, anyhow::Error>(request)
         })
@@ -112,7 +122,9 @@ impl RequestRepository for SqliteRequestRepository {
     fn get(&self, id: RequestId) -> RepoResult<Option<RequestItem>> {
         self.db.block_on(async {
             let row = sqlx::query(
-                "SELECT id, collection_id, parent_folder_id, name, method, url, body_blob_hash, sort_order, created_at, updated_at, revision
+                "SELECT id, collection_id, parent_folder_id, name, method, url, body_blob_hash,
+                        sort_order, created_at, updated_at, revision,
+                        params_json, headers_json, auth_json, body_json, scripts_json, settings_json
                  FROM requests WHERE id = ?",
             )
             .bind(id.to_string())
@@ -126,7 +138,9 @@ impl RequestRepository for SqliteRequestRepository {
     fn list_by_collection(&self, collection_id: CollectionId) -> RepoResult<Vec<RequestItem>> {
         self.db.block_on(async {
             let rows = sqlx::query(
-                "SELECT id, collection_id, parent_folder_id, name, method, url, body_blob_hash, sort_order, created_at, updated_at, revision
+                "SELECT id, collection_id, parent_folder_id, name, method, url, body_blob_hash,
+                        sort_order, created_at, updated_at, revision,
+                        params_json, headers_json, auth_json, body_json, scripts_json, settings_json
                  FROM requests
                  WHERE collection_id = ?
                  ORDER BY parent_folder_id ASC, sort_order ASC, id ASC",
@@ -302,6 +316,166 @@ impl RequestRepository for SqliteRequestRepository {
             Ok::<(), anyhow::Error>(())
         })
     }
+
+    fn save(&self, request: &RequestItem, expected_revision: i64) -> Result<(), RequestRepoError> {
+        self.db.block_on(async {
+            let storage = |e: sqlx::Error| RequestRepoError::Storage(anyhow::Error::new(e));
+            let mut tx = self.db.pool().begin().await.map_err(storage)?;
+
+            let current_revision: Option<i64> = sqlx::query_scalar(
+                "SELECT revision FROM requests WHERE id = ?",
+            )
+            .bind(request.id.to_string())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(storage)?;
+
+            let Some(current_revision) = current_revision else {
+                return Err(RequestRepoError::NotFound(request.id));
+            };
+
+            if current_revision != expected_revision {
+                return Err(RequestRepoError::RevisionConflict {
+                    expected: expected_revision,
+                    actual: current_revision,
+                });
+            }
+
+            let ts = now_unix_ts();
+            let params_json = serde_json::to_string(&request.params).map_err(|e| RequestRepoError::Storage(e.into()))?;
+            let headers_json = serde_json::to_string(&request.headers).map_err(|e| RequestRepoError::Storage(e.into()))?;
+            let auth_json = serde_json::to_string(&request.auth).map_err(|e| RequestRepoError::Storage(e.into()))?;
+            let body_json = serde_json::to_string(&request.body).map_err(|e| RequestRepoError::Storage(e.into()))?;
+            let scripts_json = serde_json::to_string(&request.scripts).map_err(|e| RequestRepoError::Storage(e.into()))?;
+            let settings_json = serde_json::to_string(&request.settings).map_err(|e| RequestRepoError::Storage(e.into()))?;
+
+            sqlx::query(
+                "UPDATE requests
+                 SET name = ?, method = ?, url = ?, body_blob_hash = ?,
+                     params_json = ?, headers_json = ?, auth_json = ?,
+                     body_json = ?, scripts_json = ?, settings_json = ?,
+                     updated_at = ?, revision = revision + 1
+                 WHERE id = ? AND revision = ?",
+            )
+            .bind(&request.name)
+            .bind(&request.method)
+            .bind(&request.url)
+            .bind(request.body_blob_hash.clone())
+            .bind(params_json)
+            .bind(headers_json)
+            .bind(auth_json)
+            .bind(body_json)
+            .bind(scripts_json)
+            .bind(settings_json)
+            .bind(ts)
+            .bind(request.id.to_string())
+            .bind(expected_revision)
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
+
+            tx.commit().await.map_err(storage)?;
+            Ok(())
+        })
+    }
+
+    fn duplicate(
+        &self,
+        source_id: RequestId,
+        new_name: &str,
+    ) -> RepoResult<RequestItem> {
+        self.db.block_on(async {
+            let mut tx = self.db.pool().begin().await?;
+
+            let row = sqlx::query(
+                "SELECT id, collection_id, parent_folder_id, name, method, url, body_blob_hash,
+                        sort_order, created_at, updated_at, revision,
+                        params_json, headers_json, auth_json, body_json, scripts_json, settings_json
+                 FROM requests WHERE id = ?",
+            )
+            .bind(source_id.to_string())
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| anyhow!("source request not found for duplicate"))?;
+
+            let source = map_request_row(row)?;
+
+            let next_sort: i64 = sqlx::query_scalar(
+                "SELECT COALESCE(MAX(sort_order), -1) + 1
+                 FROM requests
+                 WHERE collection_id = ? AND parent_folder_id IS ?",
+            )
+            .bind(source.collection_id.to_string())
+            .bind(source.parent_folder_id.map(|it| it.to_string()))
+            .fetch_one(&mut *tx)
+            .await?;
+
+            let mut dup = RequestItem::new(
+                source.collection_id,
+                source.parent_folder_id,
+                new_name,
+                &source.method,
+                &source.url,
+                next_sort,
+            );
+            dup.params = source.params;
+            dup.headers = source.headers;
+            dup.auth = source.auth;
+            dup.body = source.body;
+            dup.scripts = source.scripts;
+            dup.settings = source.settings;
+            dup.body_blob_hash = source.body_blob_hash;
+
+            insert_request(&mut tx, &dup).await?;
+            tx.commit().await?;
+            Ok::<RequestItem, anyhow::Error>(dup)
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+async fn insert_request(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    request: &RequestItem,
+) -> RepoResult<()> {
+    let params_json = serde_json::to_string(&request.params)?;
+    let headers_json = serde_json::to_string(&request.headers)?;
+    let auth_json = serde_json::to_string(&request.auth)?;
+    let body_json = serde_json::to_string(&request.body)?;
+    let scripts_json = serde_json::to_string(&request.scripts)?;
+    let settings_json = serde_json::to_string(&request.settings)?;
+
+    sqlx::query(
+        "INSERT INTO requests
+         (id, collection_id, parent_folder_id, name, method, url, body_blob_hash,
+          sort_order, created_at, updated_at, revision,
+          params_json, headers_json, auth_json, body_json, scripts_json, settings_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(request.id.to_string())
+    .bind(request.collection_id.to_string())
+    .bind(request.parent_folder_id.map(|it| it.to_string()))
+    .bind(&request.name)
+    .bind(&request.method)
+    .bind(&request.url)
+    .bind(request.body_blob_hash.clone())
+    .bind(request.sort_order)
+    .bind(request.meta.created_at)
+    .bind(request.meta.updated_at)
+    .bind(request.meta.revision)
+    .bind(params_json)
+    .bind(headers_json)
+    .bind(auth_json)
+    .bind(body_json)
+    .bind(scripts_json)
+    .bind(settings_json)
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(())
 }
 
 async fn normalize_request_sort_orders(
@@ -343,6 +517,15 @@ fn map_request_row(row: sqlx::sqlite::SqliteRow) -> RepoResult<RequestItem> {
         .map(|value| FolderId::parse(&value))
         .transpose()?;
 
+    let params_json: String = row.try_get("params_json").unwrap_or_else(|_| "{}".to_string());
+    let headers_json: String = row.try_get("headers_json").unwrap_or_else(|_| "[]".to_string());
+    let auth_json: String = row.try_get("auth_json").unwrap_or_else(|_| r#"{"type":"none"}"#.to_string());
+    let body_json: String = row.try_get("body_json").unwrap_or_else(|_| r#"{"type":"none"}"#.to_string());
+    let scripts_json: String = row.try_get("scripts_json").unwrap_or_else(|_| {
+        r#"{"pre_request":"","tests":""}"#.to_string()
+    });
+    let settings_json: String = row.try_get("settings_json").unwrap_or_else(|_| "{}".to_string());
+
     Ok(RequestItem {
         id: RequestId::parse(row.get::<&str, _>("id"))?,
         collection_id: CollectionId::parse(row.get::<&str, _>("collection_id"))?,
@@ -357,6 +540,12 @@ fn map_request_row(row: sqlx::sqlite::SqliteRow) -> RepoResult<RequestItem> {
             updated_at: row.get("updated_at"),
             revision: row.get("revision"),
         },
+        params: serde_json::from_str(&params_json).unwrap_or_default(),
+        headers: serde_json::from_str(&headers_json).unwrap_or_default(),
+        auth: serde_json::from_str(&auth_json).unwrap_or_default(),
+        body: serde_json::from_str(&body_json).unwrap_or_default(),
+        scripts: serde_json::from_str(&scripts_json).unwrap_or_default(),
+        settings: serde_json::from_str(&settings_json).unwrap_or_default(),
     })
 }
 

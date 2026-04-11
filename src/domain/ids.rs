@@ -66,6 +66,7 @@ typed_uuid_id!(RequestId);
 typed_uuid_id!(EnvironmentId);
 typed_uuid_id!(HistoryEntryId);
 typed_uuid_id!(SecretRefId);
+typed_uuid_id!(RequestDraftId);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct BlobId(pub String);

@@ -429,16 +429,17 @@ mod tests {
                             sort_order: 0,
                             meta: RevisionMetadata::new_now(),
                         },
-                        children: vec![TreeItem::Request(RequestItem {
-                            id: request_id,
-                            collection_id,
-                            parent_folder_id: Some(folder_id),
-                            name: "Request A".into(),
-                            method: "GET".into(),
-                            url: "https://example.test".into(),
-                            body_blob_hash: None,
-                            sort_order: 0,
-                            meta: RevisionMetadata::new_now(),
+                        children: vec![TreeItem::Request({
+                            let mut r = RequestItem::new(
+                                collection_id,
+                                Some(folder_id),
+                                "Request A",
+                                "GET",
+                                "https://example.test",
+                                0,
+                            );
+                            r.id = request_id;
+                            r
                         })],
                     })],
                 }],

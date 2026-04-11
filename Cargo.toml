@@ -12,6 +12,7 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", features = [
 gpui-component = { git = "https://github.com/longbridge/gpui-component" }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component" }
 anyhow = "1"
+thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
@@ -30,7 +31,14 @@ es-fluent-lang = "0.14"
 es-fluent-manager-embedded = "0.14"
 strum = "0.28"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
-tokio-util = "0.7"
+tokio-util = { version = "0.7", features = ["io"] }
+reqwest = { version = "0.12", features = ["stream", "gzip", "brotli", "deflate"] }
+http = "1"
+url = "2"
+futures = "0.3"
+async-trait = "0.1"
+base64 = "0.22"
+serde_urlencoded = "0.7"
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls", "migrate"] }
 sea-query = "0.32"
 directories = "6"
@@ -52,6 +60,7 @@ gpui_platform.workspace = true
 gpui-component.workspace = true
 gpui-component-assets.workspace = true
 anyhow.workspace = true
+thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
@@ -67,6 +76,13 @@ es-fluent-manager-embedded.workspace = true
 strum.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
+reqwest.workspace = true
+http.workspace = true
+url.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+serde_urlencoded.workspace = true
 sqlx.workspace = true
 sea-query.workspace = true
 directories.workspace = true

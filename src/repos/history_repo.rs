@@ -25,11 +25,21 @@ pub trait HistoryRepository: Send + Sync {
         status_code: i64,
         blob_hash: Option<&str>,
         blob_size: Option<i64>,
+        response_headers_json: Option<&str>,
+        response_media_type: Option<&str>,
+        dispatched_at: Option<i64>,
+        first_byte_at: Option<i64>,
     ) -> RepoResult<()>;
     fn mark_failed(&self, id: HistoryEntryId, message: &str) -> RepoResult<()>;
+    fn finalize_cancelled(
+        &self,
+        id: HistoryEntryId,
+        partial_size: Option<i64>,
+    ) -> RepoResult<()>;
     fn mark_pending_as_failed_on_startup(&self) -> RepoResult<usize>;
     fn list_recent(&self, workspace_id: WorkspaceId, limit: usize)
     -> RepoResult<Vec<HistoryEntry>>;
+    fn get_latest_for_request(&self, request_id: RequestId) -> RepoResult<Option<HistoryEntry>>;
     fn referenced_blob_hashes(&self) -> RepoResult<HashSet<String>>;
 }
 
@@ -70,13 +80,23 @@ impl HistoryRepository for SqliteHistoryRepository {
             finalized_at: None,
             created_at: ts,
             updated_at: ts,
+            response_headers_json: None,
+            response_media_type: None,
+            dispatched_at: None,
+            first_byte_at: None,
+            cancelled_at: None,
+            partial_size: None,
         };
 
         self.db.block_on(async {
             sqlx::query(
                 "INSERT INTO history_index
-                 (id, workspace_id, request_id, method, url, status_code, started_at, completed_at, state, blob_hash, blob_size, error_message, created_at, updated_at, recovery_attempts, finalized_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 (id, workspace_id, request_id, method, url, status_code, started_at, completed_at,
+                  state, blob_hash, blob_size, error_message, created_at, updated_at,
+                  recovery_attempts, finalized_at,
+                  response_headers_json, response_media_type, dispatched_at, first_byte_at,
+                  cancelled_at, partial_size)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(entry.id.to_string())
             .bind(entry.workspace_id.to_string())
@@ -94,6 +114,12 @@ impl HistoryRepository for SqliteHistoryRepository {
             .bind(entry.updated_at)
             .bind(entry.recovery_attempts)
             .bind(entry.finalized_at)
+            .bind(entry.response_headers_json.clone())
+            .bind(entry.response_media_type.clone())
+            .bind(entry.dispatched_at)
+            .bind(entry.first_byte_at)
+            .bind(entry.cancelled_at)
+            .bind(entry.partial_size)
             .execute(self.db.pool())
             .await
             .context("failed to insert pending history row")?;
@@ -109,6 +135,10 @@ impl HistoryRepository for SqliteHistoryRepository {
         status_code: i64,
         blob_hash: Option<&str>,
         blob_size: Option<i64>,
+        response_headers_json: Option<&str>,
+        response_media_type: Option<&str>,
+        dispatched_at: Option<i64>,
+        first_byte_at: Option<i64>,
     ) -> RepoResult<()> {
         self.db.block_on(async {
             let ts = now_unix_ts();
@@ -121,7 +151,11 @@ impl HistoryRepository for SqliteHistoryRepository {
                      blob_size = ?,
                      error_message = NULL,
                      updated_at = ?,
-                     finalized_at = ?
+                     finalized_at = ?,
+                     response_headers_json = ?,
+                     response_media_type = ?,
+                     dispatched_at = ?,
+                     first_byte_at = ?
                  WHERE id = ?",
             )
             .bind(status_code)
@@ -131,6 +165,10 @@ impl HistoryRepository for SqliteHistoryRepository {
             .bind(blob_size)
             .bind(ts)
             .bind(ts)
+            .bind(response_headers_json)
+            .bind(response_media_type)
+            .bind(dispatched_at)
+            .bind(first_byte_at)
             .bind(id.to_string())
             .execute(self.db.pool())
             .await
@@ -160,6 +198,38 @@ impl HistoryRepository for SqliteHistoryRepository {
             .execute(self.db.pool())
             .await
             .context("failed to mark history as failed")?;
+            Ok::<(), anyhow::Error>(())
+        })
+    }
+
+    fn finalize_cancelled(
+        &self,
+        id: HistoryEntryId,
+        partial_size: Option<i64>,
+    ) -> RepoResult<()> {
+        self.db.block_on(async {
+            let ts = now_unix_ts();
+            sqlx::query(
+                "UPDATE history_index
+                 SET state = ?,
+                     completed_at = ?,
+                     cancelled_at = ?,
+                     partial_size = ?,
+                     blob_hash = NULL,
+                     updated_at = ?,
+                     finalized_at = ?
+                 WHERE id = ?",
+            )
+            .bind(HistoryState::Cancelled.as_str())
+            .bind(ts)
+            .bind(ts)
+            .bind(partial_size)
+            .bind(ts)
+            .bind(ts)
+            .bind(id.to_string())
+            .execute(self.db.pool())
+            .await
+            .context("failed to finalize cancelled history entry")?;
             Ok::<(), anyhow::Error>(())
         })
     }
@@ -196,8 +266,7 @@ impl HistoryRepository for SqliteHistoryRepository {
     ) -> RepoResult<Vec<HistoryEntry>> {
         self.db.block_on(async {
             let rows = sqlx::query(
-                "SELECT id, workspace_id, request_id, method, url, status_code, started_at, completed_at, state, blob_hash, blob_size, error_message, recovery_attempts, finalized_at, created_at, updated_at
-                 FROM history_index
+                "SELECT * FROM history_index
                  WHERE workspace_id = ?
                  ORDER BY started_at DESC
                  LIMIT ?",
@@ -208,6 +277,22 @@ impl HistoryRepository for SqliteHistoryRepository {
             .await
             .context("failed to list recent history rows")?;
             rows.into_iter().map(map_history_row).collect()
+        })
+    }
+
+    fn get_latest_for_request(&self, request_id: RequestId) -> RepoResult<Option<HistoryEntry>> {
+        self.db.block_on(async {
+            let row = sqlx::query(
+                "SELECT * FROM history_index
+                 WHERE request_id = ? AND state != 'pending'
+                 ORDER BY started_at DESC
+                 LIMIT 1",
+            )
+            .bind(request_id.to_string())
+            .fetch_optional(self.db.pool())
+            .await
+            .context("failed to get latest history for request")?;
+            row.map(map_history_row).transpose()
         })
     }
 
@@ -258,6 +343,12 @@ fn map_history_row(row: sqlx::sqlite::SqliteRow) -> RepoResult<HistoryEntry> {
         finalized_at: row.get("finalized_at"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
+        response_headers_json: row.try_get("response_headers_json").unwrap_or(None),
+        response_media_type: row.try_get("response_media_type").unwrap_or(None),
+        dispatched_at: row.try_get("dispatched_at").unwrap_or(None),
+        first_byte_at: row.try_get("first_byte_at").unwrap_or(None),
+        cancelled_at: row.try_get("cancelled_at").unwrap_or(None),
+        partial_size: row.try_get("partial_size").unwrap_or(None),
     })
 }
 

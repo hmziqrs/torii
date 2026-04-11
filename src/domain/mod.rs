@@ -6,6 +6,7 @@ pub mod ids;
 pub mod item_id;
 pub mod preferences;
 pub mod request;
+pub mod response;
 pub mod revision;
 pub mod secret_ref;
 pub mod workspace;

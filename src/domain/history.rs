@@ -40,4 +40,12 @@ pub struct HistoryEntry {
     pub finalized_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
+
+    // Phase 3 response metadata
+    pub response_headers_json: Option<String>,
+    pub response_media_type: Option<String>,
+    pub dispatched_at: Option<i64>,
+    pub first_byte_at: Option<i64>,
+    pub cancelled_at: Option<i64>,
+    pub partial_size: Option<i64>,
 }
