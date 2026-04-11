@@ -20,17 +20,20 @@ pub fn render(environment: &Environment) -> AnyElement {
                 .font_weight(gpui::FontWeight::BOLD)
                 .child(environment.name.clone()),
         )
-        .child(
-            h_flex().gap_3().child(chip(format!(
-                "{}: {}",
-                es_fluent::localize("environment_tab_variables", None),
-                variables
-            ))),
-        )
+        .child(h_flex().gap_3().child(chip(format!(
+            "{}: {}",
+            es_fluent::localize("environment_tab_variables", None),
+            variables
+        ))))
         .child(div().child(environment.variables_json.clone()))
         .into_any_element()
 }
 
 fn chip(label: String) -> impl IntoElement {
-    div().px_2().py_1().rounded(px(999.)).border_1().child(label)
+    div()
+        .px_2()
+        .py_1()
+        .rounded(px(999.))
+        .border_1()
+        .child(label)
 }

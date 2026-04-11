@@ -31,11 +31,7 @@ pub trait HistoryRepository: Send + Sync {
         first_byte_at: Option<i64>,
     ) -> RepoResult<()>;
     fn mark_failed(&self, id: HistoryEntryId, message: &str) -> RepoResult<()>;
-    fn finalize_cancelled(
-        &self,
-        id: HistoryEntryId,
-        partial_size: Option<i64>,
-    ) -> RepoResult<()>;
+    fn finalize_cancelled(&self, id: HistoryEntryId, partial_size: Option<i64>) -> RepoResult<()>;
     fn mark_pending_as_failed_on_startup(&self) -> RepoResult<usize>;
     fn list_recent(&self, workspace_id: WorkspaceId, limit: usize)
     -> RepoResult<Vec<HistoryEntry>>;
@@ -202,11 +198,7 @@ impl HistoryRepository for SqliteHistoryRepository {
         })
     }
 
-    fn finalize_cancelled(
-        &self,
-        id: HistoryEntryId,
-        partial_size: Option<i64>,
-    ) -> RepoResult<()> {
+    fn finalize_cancelled(&self, id: HistoryEntryId, partial_size: Option<i64>) -> RepoResult<()> {
         self.db.block_on(async {
             let ts = now_unix_ts();
             sqlx::query(

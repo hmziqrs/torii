@@ -59,11 +59,7 @@ pub trait RequestRepository: Send + Sync {
 
     // Phase 3 additions
     fn save(&self, request: &RequestItem, expected_revision: i64) -> Result<(), RequestRepoError>;
-    fn duplicate(
-        &self,
-        source_id: RequestId,
-        new_name: &str,
-    ) -> RepoResult<RequestItem>;
+    fn duplicate(&self, source_id: RequestId, new_name: &str) -> RepoResult<RequestItem>;
 }
 
 #[derive(Clone)]
@@ -89,13 +85,12 @@ impl RequestRepository for SqliteRequestRepository {
         self.db.block_on(async {
             let mut tx = self.db.pool().begin().await?;
             if let Some(parent) = parent_folder_id {
-                let parent_exists: Option<i64> = sqlx::query_scalar(
-                    "SELECT 1 FROM folders WHERE id = ? AND collection_id = ?",
-                )
-                .bind(parent.to_string())
-                .bind(collection_id.to_string())
-                .fetch_optional(&mut *tx)
-                .await?;
+                let parent_exists: Option<i64> =
+                    sqlx::query_scalar("SELECT 1 FROM folders WHERE id = ? AND collection_id = ?")
+                        .bind(parent.to_string())
+                        .bind(collection_id.to_string())
+                        .fetch_optional(&mut *tx)
+                        .await?;
                 if parent_exists.is_none() {
                     return Err(anyhow!("parent folder does not exist in target collection"));
                 }
@@ -111,8 +106,14 @@ impl RequestRepository for SqliteRequestRepository {
             .fetch_one(&mut *tx)
             .await?;
 
-            let request =
-                RequestItem::new(collection_id, parent_folder_id, name, method, url, next_sort);
+            let request = RequestItem::new(
+                collection_id,
+                parent_folder_id,
+                name,
+                method,
+                url,
+                next_sort,
+            );
             insert_request(&mut tx, &request).await?;
             tx.commit().await?;
             Ok::<RequestItem, anyhow::Error>(request)
@@ -322,13 +323,12 @@ impl RequestRepository for SqliteRequestRepository {
             let storage = |e: sqlx::Error| RequestRepoError::Storage(anyhow::Error::new(e));
             let mut tx = self.db.pool().begin().await.map_err(storage)?;
 
-            let current_revision: Option<i64> = sqlx::query_scalar(
-                "SELECT revision FROM requests WHERE id = ?",
-            )
-            .bind(request.id.to_string())
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(storage)?;
+            let current_revision: Option<i64> =
+                sqlx::query_scalar("SELECT revision FROM requests WHERE id = ?")
+                    .bind(request.id.to_string())
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(storage)?;
 
             let Some(current_revision) = current_revision else {
                 return Err(RequestRepoError::NotFound(request.id));
@@ -342,12 +342,18 @@ impl RequestRepository for SqliteRequestRepository {
             }
 
             let ts = now_unix_ts();
-            let params_json = serde_json::to_string(&request.params).map_err(|e| RequestRepoError::Storage(e.into()))?;
-            let headers_json = serde_json::to_string(&request.headers).map_err(|e| RequestRepoError::Storage(e.into()))?;
-            let auth_json = serde_json::to_string(&request.auth).map_err(|e| RequestRepoError::Storage(e.into()))?;
-            let body_json = serde_json::to_string(&request.body).map_err(|e| RequestRepoError::Storage(e.into()))?;
-            let scripts_json = serde_json::to_string(&request.scripts).map_err(|e| RequestRepoError::Storage(e.into()))?;
-            let settings_json = serde_json::to_string(&request.settings).map_err(|e| RequestRepoError::Storage(e.into()))?;
+            let params_json = serde_json::to_string(&request.params)
+                .map_err(|e| RequestRepoError::Storage(e.into()))?;
+            let headers_json = serde_json::to_string(&request.headers)
+                .map_err(|e| RequestRepoError::Storage(e.into()))?;
+            let auth_json = serde_json::to_string(&request.auth)
+                .map_err(|e| RequestRepoError::Storage(e.into()))?;
+            let body_json = serde_json::to_string(&request.body)
+                .map_err(|e| RequestRepoError::Storage(e.into()))?;
+            let scripts_json = serde_json::to_string(&request.scripts)
+                .map_err(|e| RequestRepoError::Storage(e.into()))?;
+            let settings_json = serde_json::to_string(&request.settings)
+                .map_err(|e| RequestRepoError::Storage(e.into()))?;
 
             sqlx::query(
                 "UPDATE requests
@@ -379,11 +385,7 @@ impl RequestRepository for SqliteRequestRepository {
         })
     }
 
-    fn duplicate(
-        &self,
-        source_id: RequestId,
-        new_name: &str,
-    ) -> RepoResult<RequestItem> {
+    fn duplicate(&self, source_id: RequestId, new_name: &str) -> RepoResult<RequestItem> {
         self.db.block_on(async {
             let mut tx = self.db.pool().begin().await?;
 
@@ -517,14 +519,24 @@ fn map_request_row(row: sqlx::sqlite::SqliteRow) -> RepoResult<RequestItem> {
         .map(|value| FolderId::parse(&value))
         .transpose()?;
 
-    let params_json: String = row.try_get("params_json").unwrap_or_else(|_| "{}".to_string());
-    let headers_json: String = row.try_get("headers_json").unwrap_or_else(|_| "[]".to_string());
-    let auth_json: String = row.try_get("auth_json").unwrap_or_else(|_| r#"{"type":"none"}"#.to_string());
-    let body_json: String = row.try_get("body_json").unwrap_or_else(|_| r#"{"type":"none"}"#.to_string());
-    let scripts_json: String = row.try_get("scripts_json").unwrap_or_else(|_| {
-        r#"{"pre_request":"","tests":""}"#.to_string()
-    });
-    let settings_json: String = row.try_get("settings_json").unwrap_or_else(|_| "{}".to_string());
+    let params_json: String = row
+        .try_get("params_json")
+        .unwrap_or_else(|_| "{}".to_string());
+    let headers_json: String = row
+        .try_get("headers_json")
+        .unwrap_or_else(|_| "[]".to_string());
+    let auth_json: String = row
+        .try_get("auth_json")
+        .unwrap_or_else(|_| r#"{"type":"none"}"#.to_string());
+    let body_json: String = row
+        .try_get("body_json")
+        .unwrap_or_else(|_| r#"{"type":"none"}"#.to_string());
+    let scripts_json: String = row
+        .try_get("scripts_json")
+        .unwrap_or_else(|_| r#"{"pre_request":"","tests":""}"#.to_string());
+    let settings_json: String = row
+        .try_get("settings_json")
+        .unwrap_or_else(|_| "{}".to_string());
 
     Ok(RequestItem {
         id: RequestId::parse(row.get::<&str, _>("id"))?,

@@ -195,7 +195,11 @@ mod tests {
         assert!(manager.reorder(2, 0));
         assert_eq!(
             manager.tabs.iter().map(|tab| tab.key).collect::<Vec<_>>(),
-            vec![TabKey::from(third), TabKey::from(first), TabKey::from(second)]
+            vec![
+                TabKey::from(third),
+                TabKey::from(first),
+                TabKey::from(second)
+            ]
         );
         assert_eq!(manager.active, Some(TabKey::from(third)));
     }

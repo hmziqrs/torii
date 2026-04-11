@@ -20,11 +20,7 @@ impl ItemKind {
     pub fn is_persisted(self) -> bool {
         matches!(
             self,
-            Self::Workspace
-                | Self::Collection
-                | Self::Folder
-                | Self::Environment
-                | Self::Request
+            Self::Workspace | Self::Collection | Self::Folder | Self::Environment | Self::Request
         )
     }
 

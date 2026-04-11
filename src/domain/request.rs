@@ -219,6 +219,9 @@ impl RequestItem {
 
     /// Returns true if the body variant holds a payload that should be persisted in the blob store.
     pub fn needs_body_blob(&self) -> bool {
-        matches!(self.body, BodyType::RawText { .. } | BodyType::RawJson { .. })
+        matches!(
+            self.body,
+            BodyType::RawText { .. } | BodyType::RawJson { .. }
+        )
     }
 }

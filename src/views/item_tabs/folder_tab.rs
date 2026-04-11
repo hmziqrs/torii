@@ -39,5 +39,10 @@ pub fn render(folder: &FolderTree) -> AnyElement {
 }
 
 fn chip(label: String) -> impl IntoElement {
-    div().px_2().py_1().rounded(px(999.)).border_1().child(label)
+    div()
+        .px_2()
+        .py_1()
+        .rounded(px(999.))
+        .border_1()
+        .child(label)
 }

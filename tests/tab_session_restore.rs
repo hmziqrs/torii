@@ -35,7 +35,13 @@ fn tab_session_repo_roundtrip_and_restore_skip_missing_items() -> Result<()> {
 
     let workspace = workspace_repo.create("Main")?;
     let collection = collection_repo.create(workspace.id, "Collection")?;
-    let request = request_repo.create(collection.id, None, "Request", "GET", "https://example.test")?;
+    let request = request_repo.create(
+        collection.id,
+        None,
+        "Request",
+        "GET",
+        "https://example.test",
+    )?;
     let environment = environment_repo.create(workspace.id, "Env")?;
 
     let session_id = SessionId::new();
@@ -67,8 +73,14 @@ fn tab_session_repo_roundtrip_and_restore_skip_missing_items() -> Result<()> {
         .load_session(session_id)?
         .expect("session should be stored");
     assert_eq!(roundtrip.tabs, tabs);
-    assert_eq!(roundtrip.active, Some(TabKey::from(ItemKey::environment(environment.id))));
-    assert_eq!(roundtrip.metadata.sidebar_selection, metadata.sidebar_selection);
+    assert_eq!(
+        roundtrip.active,
+        Some(TabKey::from(ItemKey::environment(environment.id)))
+    );
+    assert_eq!(
+        roundtrip.metadata.sidebar_selection,
+        metadata.sidebar_selection
+    );
     assert_eq!(roundtrip.metadata.window_layout, metadata.window_layout);
 
     let restore = SessionRestoreService::new(

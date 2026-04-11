@@ -18,8 +18,13 @@ fn focused_tab_remains_stable_after_reorder_and_delete() {
     assert!(manager.reorder(1, 0));
     assert_eq!(manager.active(), Some(TabKey::from(collection)));
 
-    let close = manager.close(TabKey::from(collection)).expect("collection tab should close");
+    let close = manager
+        .close(TabKey::from(collection))
+        .expect("collection tab should close");
     assert_eq!(close.next_active, Some(TabKey::from(workspace)));
     assert_eq!(manager.active(), Some(TabKey::from(workspace)));
-    assert_eq!(manager.tabs(), &[torii::session::tab_manager::TabState::new(workspace)]);
+    assert_eq!(
+        manager.tabs(),
+        &[torii::session::tab_manager::TabState::new(workspace)]
+    );
 }

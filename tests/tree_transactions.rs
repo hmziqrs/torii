@@ -28,10 +28,19 @@ fn get_by_id_returns_correct_item_or_none() -> Result<()> {
     let request = request_repo.create(collection.id, None, "R", "GET", "https://r.test")?;
     let environment = environment_repo.create(workspace.id, "Env")?;
 
-    assert_eq!(collection_repo.get(collection.id)?.map(|c| c.id), Some(collection.id));
+    assert_eq!(
+        collection_repo.get(collection.id)?.map(|c| c.id),
+        Some(collection.id)
+    );
     assert_eq!(folder_repo.get(folder.id)?.map(|f| f.id), Some(folder.id));
-    assert_eq!(request_repo.get(request.id)?.map(|r| r.id), Some(request.id));
-    assert_eq!(environment_repo.get(environment.id)?.map(|e| e.id), Some(environment.id));
+    assert_eq!(
+        request_repo.get(request.id)?.map(|r| r.id),
+        Some(request.id)
+    );
+    assert_eq!(
+        environment_repo.get(environment.id)?.map(|e| e.id),
+        Some(environment.id)
+    );
 
     let missing_collection = torii::domain::ids::CollectionId::new();
     let missing_folder = torii::domain::ids::FolderId::new();
@@ -56,7 +65,9 @@ fn workspace_rename_persists_and_bumps_revision() -> Result<()> {
 
     workspace_repo.rename(workspace.id, "Renamed")?;
 
-    let updated = workspace_repo.get(workspace.id)?.expect("workspace must still exist");
+    let updated = workspace_repo
+        .get(workspace.id)?
+        .expect("workspace must still exist");
     assert_eq!(updated.name, "Renamed");
     assert_eq!(updated.meta.revision, 2);
     assert_eq!(updated.meta.created_at, workspace.meta.created_at);

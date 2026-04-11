@@ -100,11 +100,12 @@ pub fn render_tab_bar(
                 .on_drop(move |dragged: &DraggedTab, window, cx| {
                     on_reorder(dragged.from, index, window, cx);
                 })
-                .suffix(
-                    close_tab_button(format!("close-tab-{key:?}"), move |_, window, cx| {
+                .suffix(close_tab_button(
+                    format!("close-tab-{key:?}"),
+                    move |_, window, cx| {
                         on_close(close_key, window, cx);
-                    }),
-                )
+                    },
+                ))
                 .on_click(move |_, window, cx| {
                     on_select(key, window, cx);
                 })
@@ -118,7 +119,12 @@ pub fn render_empty_state(title: SharedString, body: SharedString) -> AnyElement
         .items_center()
         .justify_center()
         .gap_3()
-        .child(div().text_xl().font_weight(gpui::FontWeight::BOLD).child(title))
+        .child(
+            div()
+                .text_xl()
+                .font_weight(gpui::FontWeight::BOLD)
+                .child(title),
+        )
         .child(div().text_sm().child(body))
         .into_any_element()
 }

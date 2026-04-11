@@ -6,13 +6,12 @@ use std::{
 use anyhow::Result;
 
 use crate::{
-    domain::{
-        ids::WorkspaceId,
-        item_id::ItemId,
-    },
+    domain::{ids::WorkspaceId, item_id::ItemId},
     repos::{
-        collection_repo::CollectionRepoRef, environment_repo::EnvironmentRepoRef,
-        folder_repo::FolderRepoRef, request_repo::RequestRepoRef,
+        collection_repo::CollectionRepoRef,
+        environment_repo::EnvironmentRepoRef,
+        folder_repo::FolderRepoRef,
+        request_repo::RequestRepoRef,
         tab_session_repo::{TabSessionRepoRef, TabSessionSnapshot},
         workspace_repo::WorkspaceRepoRef,
     },
@@ -95,7 +94,9 @@ impl SessionRestoreService {
             return Ok(None);
         }
 
-        let active = snapshot.active.filter(|key| tabs.iter().any(|tab| tab.key == *key));
+        let active = snapshot
+            .active
+            .filter(|key| tabs.iter().any(|tab| tab.key == *key));
         let mut selected_workspace_id = None;
         if let Some(active) = active {
             selected_workspace_id = self.workspace_for_item(active.item())?;
@@ -120,8 +121,12 @@ impl SessionRestoreService {
 
     fn item_exists(&self, item: ItemKey) -> Result<bool> {
         let exists = match (item.kind, item.id) {
-            (ItemKind::Workspace, Some(ItemId::Workspace(id))) => self.workspaces.get(id)?.is_some(),
-            (ItemKind::Collection, Some(ItemId::Collection(id))) => self.collections.get(id)?.is_some(),
+            (ItemKind::Workspace, Some(ItemId::Workspace(id))) => {
+                self.workspaces.get(id)?.is_some()
+            }
+            (ItemKind::Collection, Some(ItemId::Collection(id))) => {
+                self.collections.get(id)?.is_some()
+            }
             (ItemKind::Folder, Some(ItemId::Folder(id))) => self.folders.get(id)?.is_some(),
             (ItemKind::Environment, Some(ItemId::Environment(id))) => {
                 self.environments.get(id)?.is_some()
@@ -137,9 +142,10 @@ impl SessionRestoreService {
     pub fn workspace_for_item(&self, item: ItemKey) -> Result<Option<WorkspaceId>> {
         let workspace_id = match (item.kind, item.id) {
             (ItemKind::Workspace, Some(ItemId::Workspace(id))) => Some(id),
-            (ItemKind::Collection, Some(ItemId::Collection(id))) => {
-                self.collections.get(id)?.map(|collection| collection.workspace_id)
-            }
+            (ItemKind::Collection, Some(ItemId::Collection(id))) => self
+                .collections
+                .get(id)?
+                .map(|collection| collection.workspace_id),
             (ItemKind::Folder, Some(ItemId::Folder(id))) => {
                 let Some(folder) = self.folders.get(id)? else {
                     return Ok(None);
@@ -148,9 +154,10 @@ impl SessionRestoreService {
                     .get(folder.collection_id)?
                     .map(|collection| collection.workspace_id)
             }
-            (ItemKind::Environment, Some(ItemId::Environment(id))) => {
-                self.environments.get(id)?.map(|environment| environment.workspace_id)
-            }
+            (ItemKind::Environment, Some(ItemId::Environment(id))) => self
+                .environments
+                .get(id)?
+                .map(|environment| environment.workspace_id),
             (ItemKind::Request, Some(ItemId::Request(id))) => {
                 let Some(request) = self.requests.get(id)? else {
                     return Ok(None);

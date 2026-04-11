@@ -201,7 +201,10 @@ impl TabSessionRepository for SqliteTabSessionRepository {
     }
 }
 
-fn load_snapshot(db: &DbRef, session_id: Option<SessionId>) -> RepoResult<Option<TabSessionSnapshot>> {
+fn load_snapshot(
+    db: &DbRef,
+    session_id: Option<SessionId>,
+) -> RepoResult<Option<TabSessionSnapshot>> {
     db.block_on(async {
         let rows = if let Some(session_id) = session_id {
             sqlx::query(

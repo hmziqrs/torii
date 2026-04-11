@@ -4,8 +4,8 @@ pub mod infra;
 pub mod menus;
 pub mod repos;
 pub mod root;
-pub mod session;
 pub mod services;
+pub mod session;
 pub mod title_bar;
 pub mod views;
 

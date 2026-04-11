@@ -27,13 +27,16 @@ fn request_save_roundtrip_persists_expanded_fields() -> Result<()> {
 
     let workspace = workspace_repo.create("Workspace")?;
     let collection = collection_repo.create(workspace.id, "Collection")?;
-    let mut request = request_repo.create(collection.id, None, "Test", "POST", "https://api.test",)?;
+    let mut request =
+        request_repo.create(collection.id, None, "Test", "POST", "https://api.test")?;
 
     // Edit expanded fields
     request.url = "https://api.test/v2".to_string();
     request.method = "PUT".to_string();
     request.params.push(KeyValuePair::new("page", "1"));
-    request.headers.push(KeyValuePair::new("Authorization", "Bearer test"));
+    request
+        .headers
+        .push(KeyValuePair::new("Authorization", "Bearer test"));
     request.body = BodyType::RawJson {
         content: r#"{"key":"value"}"#.to_string(),
     };
@@ -73,7 +76,7 @@ fn request_revision_conflict_detected() -> Result<()> {
 
     let workspace = workspace_repo.create("Workspace")?;
     let collection = collection_repo.create(workspace.id, "Collection")?;
-    let request = request_repo.create(collection.id, None, "Test", "GET", "/api",)?;
+    let request = request_repo.create(collection.id, None, "Test", "GET", "/api")?;
 
     // First save succeeds
     let mut modified = request.clone();
@@ -85,7 +88,10 @@ fn request_revision_conflict_detected() -> Result<()> {
     let mut stale = request.clone();
     stale.url = "/stale-change".to_string();
     let result = request_repo.save(&stale, stale_revision);
-    assert!(matches!(result, Err(RequestRepoError::RevisionConflict { .. })));
+    assert!(matches!(
+        result,
+        Err(RequestRepoError::RevisionConflict { .. })
+    ));
 
     Ok(())
 }
@@ -100,7 +106,7 @@ fn request_duplicate_creates_independent_copy() -> Result<()> {
 
     let workspace = workspace_repo.create("Workspace")?;
     let collection = collection_repo.create(workspace.id, "Collection")?;
-    let mut request = request_repo.create(collection.id, None, "Original", "POST", "/api",)?;
+    let mut request = request_repo.create(collection.id, None, "Original", "POST", "/api")?;
 
     // Edit source request
     request.headers.push(KeyValuePair::new("X-Custom", "value"));
@@ -193,7 +199,10 @@ fn history_response_metadata_roundtrip() -> Result<()> {
     let found = recent.iter().find(|e| e.id == entry.id).unwrap();
     assert_eq!(found.status_code, Some(200));
     assert_eq!(found.response_headers_json.as_deref(), Some(headers));
-    assert_eq!(found.response_media_type.as_deref(), Some("application/json"));
+    assert_eq!(
+        found.response_media_type.as_deref(),
+        Some("application/json")
+    );
     assert_eq!(found.dispatched_at, Some(1000));
     assert_eq!(found.first_byte_at, Some(1200));
     assert_eq!(found.blob_hash.as_deref(), Some("abc123"));
@@ -213,7 +222,7 @@ fn history_get_latest_for_request() -> Result<()> {
 
     let workspace = workspace_repo.create("Workspace")?;
     let collection = collection_repo.create(workspace.id, "Collection")?;
-    let request = request_repo.create(collection.id, None, "Test", "GET", "/api",)?;
+    let request = request_repo.create(collection.id, None, "Test", "GET", "/api")?;
 
     // Create multiple history entries for same request
     let entry1 = history_repo.create_pending(workspace.id, Some(request.id), "GET", "/api")?;

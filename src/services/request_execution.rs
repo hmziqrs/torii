@@ -3,6 +3,7 @@ use std::{pin::Pin, sync::Arc, time::Instant};
 use anyhow::{Context as _, Result, anyhow};
 use base64::Engine as _;
 use bytes::Bytes;
+use futures::StreamExt as _;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
@@ -38,7 +39,7 @@ pub struct TransportResponse {
     pub status_text: String,
     pub headers: http::HeaderMap,
     pub media_type: Option<String>,
-    pub body_stream: Pin<Box<dyn futures::Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
+    pub body_stream: Pin<Box<dyn futures::Stream<Item = Result<Bytes>> + Send>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -97,9 +98,10 @@ impl HttpTransport for ReqwestTransport {
             .and_then(|v| v.to_str().ok())
             .map(|s| s.split(';').next().unwrap_or(s).trim().to_string());
 
-        let stream = response.bytes_stream();
-        let boxed: Pin<Box<dyn futures::Stream<Item = Result<Bytes, reqwest::Error>> + Send>> =
-            Box::pin(stream);
+        let stream = response
+            .bytes_stream()
+            .map(|result| result.map_err(|e| anyhow!("response stream error: {e}")));
+        let boxed: Pin<Box<dyn futures::Stream<Item = Result<Bytes>> + Send>> = Box::pin(stream);
 
         Ok(TransportResponse {
             status_code,
@@ -149,9 +151,7 @@ impl RequestExecutionService {
         let parsed_url = match url::Url::parse(&request.url) {
             Ok(u) => u,
             Err(e) => {
-                return Ok(ExecOutcome::PreflightFailed(format!(
-                    "invalid URL: {e}"
-                )));
+                return Ok(ExecOutcome::PreflightFailed(format!("invalid URL: {e}")));
             }
         };
 
@@ -247,21 +247,19 @@ impl RequestExecutionService {
 
     async fn stream_response_body(
         &self,
-        mut stream: Pin<Box<dyn futures::Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
+        mut stream: Pin<Box<dyn futures::Stream<Item = Result<Bytes>> + Send>>,
         media_type: &Option<String>,
         cancel: CancellationToken,
     ) -> Result<BodyRef> {
-        use futures::StreamExt;
-
         let mut preview_buf = Vec::new();
         let mut total_written: u64 = 0;
         let mut exceeded_preview_cap = false;
         let cap = ResponseBudgets::PREVIEW_CAP_BYTES;
 
-        let temp_path = self.blob_store.temp_dir().join(format!(
-            "response-stream-{}",
-            uuid::Uuid::now_v7()
-        ));
+        let temp_path = self
+            .blob_store
+            .temp_dir()
+            .join(format!("response-stream-{}", uuid::Uuid::now_v7()));
         let mut temp_file =
             std::fs::File::create(&temp_path).context("failed to create temp response file")?;
         use std::io::Write;
@@ -330,6 +328,7 @@ impl RequestExecutionService {
 // Outcome enum
 // ---------------------------------------------------------------------------
 
+#[derive(Debug)]
 pub enum ExecOutcome {
     Completed(ResponseSummary),
     Failed(String),
@@ -345,8 +344,7 @@ fn check_unresolved_placeholders(value: &str, context: &str) {
     if value.contains("{{") && value.contains("}}") {
         warn!(
             context,
-            value,
-            "unresolved {{}} placeholder detected; will be sent literally"
+            value, "unresolved {{}} placeholder detected; will be sent literally"
         );
     }
 }
@@ -368,8 +366,8 @@ fn resolve_auth_headers(
                     .ok_or_else(|| anyhow!("basic auth password not found in secret store"))?,
                 None => String::new(),
             };
-            let encoded = base64::engine::general_purpose::STANDARD
-                .encode(format!("{username}:{password}"));
+            let encoded =
+                base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"));
             headers.push((
                 http::header::AUTHORIZATION,
                 http::HeaderValue::from_str(&format!("Basic {encoded}"))?,
@@ -400,8 +398,7 @@ fn resolve_auth_headers(
             };
             match location {
                 crate::domain::request::ApiKeyLocation::Header => {
-                    let name =
-                        http::header::HeaderName::from_bytes(key_name.as_bytes())?;
+                    let name = http::header::HeaderName::from_bytes(key_name.as_bytes())?;
                     headers.push((name, http::HeaderValue::from_str(&value)?));
                 }
                 crate::domain::request::ApiKeyLocation::Query => {
@@ -425,8 +422,8 @@ fn build_request_body(request: &RequestItem) -> Result<Option<Bytes>> {
                 .filter(|e| e.enabled)
                 .map(|e| (e.key.clone(), e.value.clone()))
                 .collect();
-            let encoded = serde_urlencoded::to_string(&pairs)
-                .context("failed to encode url-form body")?;
+            let encoded =
+                serde_urlencoded::to_string(&pairs).context("failed to encode url-form body")?;
             Ok(Some(Bytes::from(encoded)))
         }
         BodyType::FormData { .. } => {

@@ -6,7 +6,9 @@ use anyhow::Result;
 use torii::{
     repos::{
         collection_repo::{CollectionRepoRef, CollectionRepository, SqliteCollectionRepository},
-        environment_repo::{EnvironmentRepoRef, EnvironmentRepository, SqliteEnvironmentRepository},
+        environment_repo::{
+            EnvironmentRepoRef, EnvironmentRepository, SqliteEnvironmentRepository,
+        },
         folder_repo::{FolderRepoRef, FolderRepository, SqliteFolderRepository},
         request_repo::{RequestRepoRef, RequestRepository, SqliteRequestRepository},
         workspace_repo::{SqliteWorkspaceRepository, WorkspaceRepoRef, WorkspaceRepository},
@@ -37,7 +39,13 @@ fn deleting_collection_closes_collection_and_descendant_tabs() -> Result<()> {
     let workspace = workspace_repo_impl.create("Main")?;
     let collection = collection_repo_impl.create(workspace.id, "Collection")?;
     let folder = folder_repo_impl.create(collection.id, None, "Folder")?;
-    let request = request_repo_impl.create(collection.id, Some(folder.id), "Request", "GET", "https://example.test")?;
+    let request = request_repo_impl.create(
+        collection.id,
+        Some(folder.id),
+        "Request",
+        "GET",
+        "https://example.test",
+    )?;
     let environment = environment_repo_impl.create(workspace.id, "Env")?;
 
     let catalog = load_workspace_catalog(
@@ -88,7 +96,13 @@ fn deleting_workspace_closes_all_workspace_descendant_tabs() -> Result<()> {
 
     let workspace = workspace_repo_impl.create("Main")?;
     let collection = collection_repo_impl.create(workspace.id, "Collection")?;
-    let request = request_repo_impl.create(collection.id, None, "Request", "GET", "https://example.test")?;
+    let request = request_repo_impl.create(
+        collection.id,
+        None,
+        "Request",
+        "GET",
+        "https://example.test",
+    )?;
     let environment = environment_repo_impl.create(workspace.id, "Env")?;
 
     let catalog = load_workspace_catalog(

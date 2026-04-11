@@ -92,12 +92,12 @@ fn reorder_moves_tabs_without_changing_active_identity() {
 
     assert!(manager.reorder(2, 0));
     assert_eq!(
-        manager
-            .tabs()
-            .iter()
-            .map(|tab| tab.key)
-            .collect::<Vec<_>>(),
-        vec![TabKey::from(third), TabKey::from(first), TabKey::from(second)]
+        manager.tabs().iter().map(|tab| tab.key).collect::<Vec<_>>(),
+        vec![
+            TabKey::from(third),
+            TabKey::from(first),
+            TabKey::from(second)
+        ]
     );
     assert_eq!(manager.active(), Some(TabKey::from(third)));
 

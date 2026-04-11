@@ -10,11 +10,16 @@ use gpui_component::{
 
 use crate::{
     app::About,
-    domain::{ids::{RequestId, RequestDraftId}, item_id::ItemId},
+    domain::{
+        ids::{RequestDraftId, RequestId},
+        item_id::ItemId,
+    },
     repos::tab_session_repo::TabSessionMetadata,
     services::{
         app_services::{AppServices, AppServicesGlobal},
-        workspace_tree::{CollectionTree, FolderTree, TreeItem, WorkspaceCatalog, load_workspace_catalog},
+        workspace_tree::{
+            CollectionTree, FolderTree, TreeItem, WorkspaceCatalog, load_workspace_catalog,
+        },
     },
     session::{
         item_key::{ItemKey, ItemKind, TabKey},
@@ -36,7 +41,8 @@ pub struct AppRoot {
     settings_page: Entity<SettingsPage>,
     about_page: Entity<AboutPage>,
     request_pages: std::collections::HashMap<RequestId, Entity<request_tab::RequestTabView>>,
-    request_draft_pages: std::collections::HashMap<RequestDraftId, Entity<request_tab::RequestTabView>>,
+    request_draft_pages:
+        std::collections::HashMap<RequestDraftId, Entity<request_tab::RequestTabView>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -53,7 +59,9 @@ impl AppRoot {
         let about_page = cx.new(|cx| AboutPage::new(window, cx));
 
         let restored = services.session_restore.take_next_restore().ok().flatten();
-        let selected_workspace_id = restored.as_ref().and_then(|restored| restored.selected_workspace_id);
+        let selected_workspace_id = restored
+            .as_ref()
+            .and_then(|restored| restored.selected_workspace_id);
         let mut catalog = load_workspace_catalog(
             &services.repos.workspace,
             &services.repos.collection,
@@ -160,8 +168,9 @@ impl AppRoot {
         let services = services(cx);
         match services.session_restore.workspace_for_item(item_key) {
             Ok(Some(workspace_id)) => {
-                self.session
-                    .update(cx, |session, cx| session.set_selected_workspace(Some(workspace_id), cx));
+                self.session.update(cx, |session, cx| {
+                    session.set_selected_workspace(Some(workspace_id), cx)
+                });
             }
             Ok(None) => {}
             Err(err) => tracing::error!("failed to resolve item workspace: {err}"),
@@ -224,10 +233,16 @@ impl AppRoot {
             .flatten();
 
         let result = match (item_key.kind, item_key.id) {
-            (ItemKind::Workspace, Some(ItemId::Workspace(id))) => services.repos.workspace.delete(id),
-            (ItemKind::Collection, Some(ItemId::Collection(id))) => services.repos.collection.delete(id),
+            (ItemKind::Workspace, Some(ItemId::Workspace(id))) => {
+                services.repos.workspace.delete(id)
+            }
+            (ItemKind::Collection, Some(ItemId::Collection(id))) => {
+                services.repos.collection.delete(id)
+            }
             (ItemKind::Folder, Some(ItemId::Folder(id))) => services.repos.folder.delete(id),
-            (ItemKind::Environment, Some(ItemId::Environment(id))) => services.repos.environment.delete(id),
+            (ItemKind::Environment, Some(ItemId::Environment(id))) => {
+                services.repos.environment.delete(id)
+            }
             (ItemKind::Request, Some(ItemId::Request(id))) => {
                 self.request_pages.remove(&id);
                 services.repos.request.delete(id)
@@ -260,7 +275,11 @@ impl AppRoot {
         }
     }
 
-    fn render_sidebar(&self, active_key: Option<ItemKey>, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_sidebar(
+        &self,
+        active_key: Option<ItemKey>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let selected_workspace_id = self.session.read(cx).selected_workspace_id;
         let weak_root = cx.entity().downgrade();
 
@@ -291,7 +310,10 @@ impl AppRoot {
                         let weak_root = weak_root.clone();
                         SidebarMenuItem::new(workspace.name.clone())
                             .icon(Icon::new(IconName::Inbox).small())
-                            .active(active_key == Some(item_key) || selected_workspace_id == Some(workspace.id))
+                            .active(
+                                active_key == Some(item_key)
+                                    || selected_workspace_id == Some(workspace.id),
+                            )
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.open_item(item_key, cx);
                             }))
@@ -314,35 +336,42 @@ impl AppRoot {
                 sidebar
                     .child(
                         SidebarGroup::new(es_fluent::localize("sidebar_collections", None)).child(
-                            SidebarMenu::new().children(workspace.collections.iter().map(|collection| {
-                                render_collection_menu_item(collection, active_key, cx)
-                            })),
+                            SidebarMenu::new().children(workspace.collections.iter().map(
+                                |collection| {
+                                    render_collection_menu_item(collection, active_key, cx)
+                                },
+                            )),
                         ),
                     )
                     .child(
                         SidebarGroup::new(es_fluent::localize("sidebar_environments", None)).child(
-                            SidebarMenu::new().children(workspace.environments.iter().map(|environment| {
-                                let item_key = ItemKey::environment(environment.id);
-                                let weak_root = weak_root.clone();
-                                SidebarMenuItem::new(environment.name.clone())
-                                    .icon(Icon::new(IconName::Globe).small())
-                                    .active(active_key == Some(item_key))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.open_item(item_key, cx);
-                                    }))
-                                    .context_menu(move |menu, _, _| {
-                                        let weak_root = weak_root.clone();
-                                        menu.item(
-                                            PopupMenuItem::new(es_fluent::localize("menu_delete", None))
+                            SidebarMenu::new().children(workspace.environments.iter().map(
+                                |environment| {
+                                    let item_key = ItemKey::environment(environment.id);
+                                    let weak_root = weak_root.clone();
+                                    SidebarMenuItem::new(environment.name.clone())
+                                        .icon(Icon::new(IconName::Globe).small())
+                                        .active(active_key == Some(item_key))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.open_item(item_key, cx);
+                                        }))
+                                        .context_menu(move |menu, _, _| {
+                                            let weak_root = weak_root.clone();
+                                            menu.item(
+                                                PopupMenuItem::new(es_fluent::localize(
+                                                    "menu_delete",
+                                                    None,
+                                                ))
                                                 .icon(Icon::new(IconName::Close))
                                                 .on_click(move |_, window, cx| {
                                                     let _ = weak_root.update(cx, |this, cx| {
                                                         this.delete_item(item_key, window, cx);
                                                     });
                                                 }),
-                                        )
-                                    })
-                            })),
+                                            )
+                                        })
+                                },
+                            )),
                         ),
                     )
             })
@@ -385,7 +414,8 @@ impl AppRoot {
         let services = services(cx);
         if let Ok(Some(history_entry)) = services.repos.history.get_latest_for_request(request.id) {
             page.update(cx, |tab, _cx| {
-                tab.editor_mut().set_latest_history_id(Some(history_entry.id));
+                tab.editor_mut()
+                    .set_latest_history_id(Some(history_entry.id));
             });
         }
 
@@ -401,9 +431,7 @@ impl AppRoot {
         cx: &mut Context<Self>,
     ) {
         let draft_id = RequestDraftId::new();
-        let page = cx.new(|cx| {
-            request_tab::RequestTabView::new_draft(collection_id, window, cx)
-        });
+        let page = cx.new(|cx| request_tab::RequestTabView::new_draft(collection_id, window, cx));
         self.request_draft_pages.insert(draft_id, page);
 
         // For now, we don't add draft tabs to the tab manager since they lack
@@ -670,7 +698,12 @@ fn render_collection_menu_item(
                     }),
             )
         })
-        .children(collection.children.iter().map(|item| render_tree_item(item, active_key, cx)))
+        .children(
+            collection
+                .children
+                .iter()
+                .map(|item| render_tree_item(item, active_key, cx)),
+        )
 }
 
 fn render_tree_item(
@@ -732,5 +765,10 @@ fn render_folder_menu_item(
                     }),
             )
         })
-        .children(folder.children.iter().map(|item| render_tree_item(item, active_key, cx)))
+        .children(
+            folder
+                .children
+                .iter()
+                .map(|item| render_tree_item(item, active_key, cx)),
+        )
 }

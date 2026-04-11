@@ -46,11 +46,7 @@ impl WorkspaceSession {
         }
     }
 
-    pub fn open_or_focus(
-        &mut self,
-        item_key: ItemKey,
-        cx: &mut Context<Self>,
-    ) -> OpenTabOutcome {
+    pub fn open_or_focus(&mut self, item_key: ItemKey, cx: &mut Context<Self>) -> OpenTabOutcome {
         self.sidebar_selection = Some(item_key);
         let outcome = self.tab_manager.open_or_focus(item_key);
         cx.notify();
@@ -66,7 +62,11 @@ impl WorkspaceSession {
         changed
     }
 
-    pub fn close_tab(&mut self, tab_key: TabKey, cx: &mut Context<Self>) -> Option<CloseTabOutcome> {
+    pub fn close_tab(
+        &mut self,
+        tab_key: TabKey,
+        cx: &mut Context<Self>,
+    ) -> Option<CloseTabOutcome> {
         let outcome = self.tab_manager.close(tab_key)?;
         self.sidebar_selection = self.tab_manager.active().map(|active| active.item());
         cx.notify();
@@ -109,8 +109,8 @@ impl WorkspaceSession {
         cx: &mut Context<Self>,
     ) {
         self.tab_manager.set_tabs(tabs, active);
-        self.sidebar_selection = sidebar_selection
-            .or_else(|| self.tab_manager.active().map(|tab| tab.item()));
+        self.sidebar_selection =
+            sidebar_selection.or_else(|| self.tab_manager.active().map(|tab| tab.item()));
         self.selected_workspace_id = selected_workspace_id;
         self.window_layout = window_layout;
         cx.notify();
@@ -144,7 +144,11 @@ impl WorkspaceSession {
     }
 
     pub fn close_tabs(&mut self, item_keys: &[ItemKey], cx: &mut Context<Self>) -> usize {
-        let keys = item_keys.iter().copied().map(TabKey::from).collect::<Vec<_>>();
+        let keys = item_keys
+            .iter()
+            .copied()
+            .map(TabKey::from)
+            .collect::<Vec<_>>();
         let closed = self.tab_manager.close_all(&keys);
         if closed > 0 {
             self.sidebar_selection = self.tab_manager.active().map(|tab| tab.item());

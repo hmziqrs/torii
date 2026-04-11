@@ -53,27 +53,25 @@ pub fn render(workspace: &WorkspaceTree) -> AnyElement {
         .child(
             v_flex()
                 .gap_2()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .child(es_fluent::localize("workspace_tab_collections_heading", None)),
-                )
+                .child(div().text_sm().font_weight(gpui::FontWeight::BOLD).child(
+                    es_fluent::localize("workspace_tab_collections_heading", None),
+                ))
                 .children(workspace.collections.iter().map(|collection| {
-                    div()
-                        .p_3()
-                        .rounded(px(6.))
-                        .border_1()
-                        .child(format!(
-                            "{} ({})",
-                            collection.collection.name,
-                            collection.request_count()
-                        ))
+                    div().p_3().rounded(px(6.)).border_1().child(format!(
+                        "{} ({})",
+                        collection.collection.name,
+                        collection.request_count()
+                    ))
                 })),
         )
         .into_any_element()
 }
 
 fn chip(label: String) -> impl IntoElement {
-    div().px_2().py_1().rounded(px(999.)).border_1().child(label)
+    div()
+        .px_2()
+        .py_1()
+        .rounded(px(999.))
+        .border_1()
+        .child(label)
 }

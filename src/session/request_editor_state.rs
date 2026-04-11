@@ -127,14 +127,7 @@ impl RequestEditorState {
 
     /// Create a new draft editor state for an unsaved request.
     pub fn new_draft(collection_id: crate::domain::ids::CollectionId) -> Self {
-        let draft = RequestItem::new(
-            collection_id,
-            None,
-            "Untitled Request",
-            "GET",
-            "",
-            0,
-        );
+        let draft = RequestItem::new(collection_id, None, "Untitled Request", "GET", "", 0);
         Self {
             identity: EditorIdentity::Draft(RequestDraftId::new()),
             draft,
@@ -294,7 +287,11 @@ impl RequestEditorState {
         }
     }
 
-    pub fn complete_exec(&mut self, response: ResponseSummary, operation_id: HistoryEntryId) -> bool {
+    pub fn complete_exec(
+        &mut self,
+        response: ResponseSummary,
+        operation_id: HistoryEntryId,
+    ) -> bool {
         if self.active_operation_id != Some(operation_id) {
             return false; // Late response — ignore.
         }
@@ -428,7 +425,10 @@ mod tests {
         editor.draft_mut().url = "/changed".to_string();
         editor.begin_save();
         editor.fail_save("conflict".to_string());
-        assert!(matches!(editor.save_status(), SaveStatus::SaveFailed { .. }));
+        assert!(matches!(
+            editor.save_status(),
+            SaveStatus::SaveFailed { .. }
+        ));
         assert!(editor.detect_dirty());
     }
 
@@ -513,7 +513,9 @@ mod tests {
         assert!(editor.cancel_exec(Some(1024), op_id));
         assert!(matches!(
             editor.exec_status(),
-            ExecStatus::Cancelled { partial_size: Some(1024) }
+            ExecStatus::Cancelled {
+                partial_size: Some(1024)
+            }
         ));
     }
 

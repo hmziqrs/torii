@@ -66,7 +66,9 @@ pub fn load_workspace_catalog(
                 .find(|workspace| workspace.id == workspace_id)
                 .cloned()
         })
-        .map(|workspace| build_workspace_tree(workspace, collections, folders, requests, environments))
+        .map(|workspace| {
+            build_workspace_tree(workspace, collections, folders, requests, environments)
+        })
         .transpose()?;
 
     Ok(WorkspaceCatalog {
@@ -137,7 +139,9 @@ fn build_tree_items(
 
 impl WorkspaceCatalog {
     pub fn selected_workspace_id(&self) -> Option<WorkspaceId> {
-        self.selected_workspace.as_ref().map(|workspace| workspace.workspace.id)
+        self.selected_workspace
+            .as_ref()
+            .map(|workspace| workspace.workspace.id)
     }
 
     pub fn first_workspace_id(&self) -> Option<WorkspaceId> {
@@ -153,15 +157,15 @@ impl WorkspaceCatalog {
     }
 
     pub fn find_collection(&self, id: CollectionId) -> Option<&CollectionTree> {
-        self.selected_workspace
-            .as_ref()
-            .and_then(|workspace| workspace.collections.iter().find(|collection| collection.collection.id == id))
+        self.selected_workspace.as_ref().and_then(|workspace| {
+            workspace
+                .collections
+                .iter()
+                .find(|collection| collection.collection.id == id)
+        })
     }
 
-    pub fn find_environment(
-        &self,
-        id: crate::domain::ids::EnvironmentId,
-    ) -> Option<&Environment> {
+    pub fn find_environment(&self, id: crate::domain::ids::EnvironmentId) -> Option<&Environment> {
         self.selected_workspace.as_ref().and_then(|workspace| {
             workspace
                 .environments

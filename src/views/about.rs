@@ -38,10 +38,6 @@ impl Render for AboutPage {
                     .text_color(cx.theme().muted_foreground)
                     .child(es_fluent::localize("about_version", None)),
             )
-            .child(
-                div()
-                    .w(px(360.))
-                    .child(Input::new(&self.input).large()),
-            )
+            .child(div().w(px(360.)).child(Input::new(&self.input).large()))
     }
 }

@@ -25,8 +25,9 @@ use crate::{
 use super::{
     app_services::{AppServices, Repositories},
     recovery::RecoveryCoordinator,
-    session_restore::SessionRestoreService,
     secret_manager::SecretManager,
+    session_restore::SessionRestoreService,
+    tokio_runtime::TokioRuntime,
     ui_preferences::{
         InMemoryUiPreferencesStore, SqliteUiPreferencesStore, UiPreferencesSnapshot,
         UiPreferencesStoreRef,
@@ -47,6 +48,7 @@ fn build_app_services() -> Result<AppServices> {
     let paths = AppPaths::from_system()?;
     let db = Arc::new(Database::connect(&paths)?);
     let blob_store = Arc::new(BlobStore::new(&paths)?);
+    let io_runtime = Arc::new(TokioRuntime::new().context("failed to build I/O runtime")?);
 
     let workspace_repo: WorkspaceRepoRef = Arc::new(SqliteWorkspaceRepository::new(db.clone()));
     let collection_repo: CollectionRepoRef = Arc::new(SqliteCollectionRepository::new(db.clone()));
@@ -103,6 +105,7 @@ fn build_app_services() -> Result<AppServices> {
     Ok(AppServices {
         paths,
         db,
+        io_runtime,
         blob_store,
         secret_store,
         secret_manager,
@@ -161,6 +164,9 @@ fn fallback_app_services() -> AppServices {
     let blob_store = Arc::new(BlobStore::new(&fallback_paths).unwrap_or_else(|err| {
         panic!("unable to initialize fallback blob store: {err}");
     }));
+    let io_runtime = Arc::new(TokioRuntime::new().unwrap_or_else(|err| {
+        panic!("unable to initialize fallback I/O runtime: {err}");
+    }));
 
     let workspace_repo: WorkspaceRepoRef = Arc::new(SqliteWorkspaceRepository::new(db.clone()));
     let collection_repo: CollectionRepoRef = Arc::new(SqliteCollectionRepository::new(db.clone()));
@@ -211,6 +217,7 @@ fn fallback_app_services() -> AppServices {
     AppServices {
         paths: fallback_paths,
         db,
+        io_runtime,
         blob_store,
         secret_store,
         secret_manager,
