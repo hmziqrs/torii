@@ -1,7 +1,7 @@
 use gpui::{
     AnyElement, App, AppContext as _, ClickEvent, InteractiveElement as _, IntoElement,
     ParentElement, Render, SharedString, StatefulInteractiveElement as _, StyleRefinement,
-    Styled as _, Window, div, px, rgb,
+    Styled as _, Window, div, rgb,
 };
 use gpui_component::{
     Icon, IconName, Selectable as _, Sizable as _, Size,
@@ -26,6 +26,8 @@ pub struct TabPresentation {
 struct DraggedTab {
     from: usize,
     title: SharedString,
+    icon: IconName,
+    selected: bool,
 }
 
 pub fn render_tab_bar(
@@ -64,17 +66,23 @@ pub fn render_tab_bar(
             let on_close = on_close.clone();
             let on_reorder = on_reorder.clone();
 
-            Tab::new()
-                .label(tab.title.clone())
-                .prefix(div().pl_2().child(Icon::new(tab.icon.clone()).size_3p5()))
+            build_tab(tab.title.clone(), tab.icon.clone(), tab.selected)
                 .selected(tab.selected)
                 .on_drag(
                     DraggedTab {
                         from: index,
                         title: tab.title.clone(),
+                        icon: tab.icon.clone(),
+                        selected: tab.selected,
                     },
                     |drag: &DraggedTab, _, _, cx: &mut App| {
-                        cx.new(|_| DragTabPreview::new(drag.title.clone()))
+                        cx.new(|_| {
+                            DragTabPreview::new(
+                                drag.title.clone(),
+                                drag.icon.clone(),
+                                drag.selected,
+                            )
+                        })
                     },
                 )
                 .drag_over::<DraggedTab>({
@@ -93,13 +101,9 @@ pub fn render_tab_bar(
                     on_reorder(dragged.from, index, window, cx);
                 })
                 .suffix(
-                    Button::new(format!("close-tab-{key:?}"))
-                        .ghost()
-                        .xsmall()
-                        .icon(IconName::Close)
-                        .on_click(move |_, window, cx| {
-                            on_close(close_key, window, cx);
-                        }),
+                    close_tab_button(format!("close-tab-{key:?}"), move |_, window, cx| {
+                        on_close(close_key, window, cx);
+                    }),
                 )
                 .on_click(move |_, window, cx| {
                     on_select(key, window, cx);
@@ -121,22 +125,53 @@ pub fn render_empty_state(title: SharedString, body: SharedString) -> AnyElement
 
 struct DragTabPreview {
     title: SharedString,
+    icon: IconName,
+    selected: bool,
 }
 
 impl DragTabPreview {
-    fn new(title: SharedString) -> Self {
-        Self { title }
+    fn new(title: SharedString, icon: IconName, selected: bool) -> Self {
+        Self {
+            title,
+            icon,
+            selected,
+        }
     }
 }
 
 impl Render for DragTabPreview {
     fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
-        div()
-            .px_3()
-            .py_2()
-            .rounded(px(8.))
-            .border_1()
-            .bg(rgb(0xFFFFFF))
-            .child(self.title.clone())
+        div().child(
+            TabBar::new("drag-preview-tabbar")
+                .with_size(Size::Small)
+                .selected_index(0)
+                .child(
+                    build_tab(self.title.clone(), self.icon.clone(), self.selected).suffix(
+                        Button::new("drag-preview-close")
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::Close),
+                    ),
+                ),
+        )
     }
+}
+
+fn build_tab(title: SharedString, icon: IconName, selected: bool) -> Tab {
+    Tab::new()
+        .label(title)
+        .prefix(div().pl_2().child(Icon::new(icon).size_3p5()))
+        .selected(selected)
+        .with_size(Size::Small)
+}
+
+fn close_tab_button(
+    id: impl Into<gpui::ElementId>,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> Button {
+    Button::new(id)
+        .ghost()
+        .xsmall()
+        .icon(IconName::Close)
+        .on_click(on_click)
 }
