@@ -6,6 +6,7 @@ use bytes::Bytes;
 use futures::StreamExt as _;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
+use tokio::sync::mpsc;
 
 use crate::{
     domain::{
@@ -135,6 +136,11 @@ pub struct RequestExecutionService {
     secret_store: SecretStoreRef,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecProgressEvent {
+    ResponseStreamingStarted,
+}
+
 impl RequestExecutionService {
     pub fn new(
         transport: Arc<dyn HttpTransport>,
@@ -154,8 +160,19 @@ impl RequestExecutionService {
     pub async fn execute(
         &self,
         request: &RequestItem,
+        workspace_id: WorkspaceId,
+        cancel: CancellationToken,
+    ) -> Result<ExecOutcome> {
+        self.execute_with_progress(request, workspace_id, cancel, None)
+            .await
+    }
+
+    pub async fn execute_with_progress(
+        &self,
+        request: &RequestItem,
         _workspace_id: WorkspaceId,
         cancel: CancellationToken,
+        progress_tx: Option<mpsc::UnboundedSender<ExecProgressEvent>>,
     ) -> Result<ExecOutcome> {
         tracing::info!(
             method = %request.method,
@@ -246,6 +263,10 @@ impl RequestExecutionService {
         let resp_headers = transport_response.headers;
 
         let headers_json = serialize_headers(&resp_headers);
+
+        if let Some(tx) = progress_tx.as_ref() {
+            let _ = tx.send(ExecProgressEvent::ResponseStreamingStarted);
+        }
 
         // --- Stream response body into blob + preview ---
         let body_ref = self

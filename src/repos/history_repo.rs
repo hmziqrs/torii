@@ -375,8 +375,8 @@ pub type HistoryRepoRef = Arc<dyn HistoryRepository>;
 pub fn build_request_snapshot(request: &crate::domain::request::RequestItem) -> RequestSnapshot {
     use crate::domain::request::{AuthType, BodyType};
 
-    // Redact URL: keep structure but redact query params that might carry secrets
-    let url_redacted = request.url.clone();
+    // Redact URL query values while preserving keys/shape.
+    let url_redacted = redact_url_query_values(&request.url);
 
     // Redact headers: replace auth-derived header values
     let headers_redacted: Vec<(String, String)> = request
@@ -432,5 +432,44 @@ pub fn build_request_snapshot(request: &crate::domain::request::RequestItem) -> 
         headers_redacted_json,
         auth_kind,
         body_summary_json,
+    }
+}
+
+fn redact_url_query_values(raw_url: &str) -> String {
+    if let Ok(mut absolute) = url::Url::parse(raw_url) {
+        let has_query = absolute.query().is_some();
+        if has_query {
+            let keys: Vec<String> = absolute
+                .query_pairs()
+                .map(|(k, _)| k.to_string())
+                .collect();
+            absolute.query_pairs_mut().clear().extend_pairs(
+                keys.iter().map(|k| (k.as_str(), "[REDACTED]")),
+            );
+        }
+        return absolute.to_string();
+    }
+
+    let (base, fragment) = match raw_url.split_once('#') {
+        Some((b, f)) => (b, Some(f)),
+        None => (raw_url, None),
+    };
+    let Some((path, query)) = base.split_once('?') else {
+        return raw_url.to_string();
+    };
+
+    let redacted_query = query
+        .split('&')
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| {
+            let key = segment.split_once('=').map(|(k, _)| k).unwrap_or(segment);
+            format!("{key}=[REDACTED]")
+        })
+        .collect::<Vec<_>>()
+        .join("&");
+
+    match fragment {
+        Some(fragment) => format!("{path}?{redacted_query}#{fragment}"),
+        None => format!("{path}?{redacted_query}"),
     }
 }

@@ -12,13 +12,13 @@ use gpui_component::{
 use crate::{
     domain::{
         ids::WorkspaceId,
-        request::{AuthType, BodyType, RequestItem},
+        request::{ApiKeyLocation, AuthType, BodyType, KeyValuePair, RequestItem},
         response::BodyRef,
     },
     repos::request_repo::RequestRepoError,
     services::{
         app_services::{AppServices, AppServicesGlobal},
-        request_execution::{ExecOutcome, RequestExecutionService},
+        request_execution::{ExecOutcome, ExecProgressEvent, RequestExecutionService},
     },
     session::request_editor_state::{EditorIdentity, ExecStatus, RequestEditorState, SaveStatus},
 };
@@ -35,6 +35,9 @@ pub struct RequestTabView {
     name_input: Entity<InputState>,
     method_input: Entity<InputState>,
     url_input: Entity<InputState>,
+    params_input: Entity<InputState>,
+    auth_input: Entity<InputState>,
+    headers_input: Entity<InputState>,
     body_input: Entity<InputState>,
     pre_request_input: Entity<InputState>,
     tests_input: Entity<InputState>,
@@ -86,6 +89,21 @@ impl RequestTabView {
         let body_input = cx.new(|cx| {
             let mut state = InputState::new(window, cx);
             state.set_value(body_editor_value(&initial.body), window, cx);
+            state
+        });
+        let params_input = cx.new(|cx| {
+            let mut state = InputState::new(window, cx);
+            state.set_value(key_value_pairs_to_text(&initial.params), window, cx);
+            state
+        });
+        let auth_input = cx.new(|cx| {
+            let mut state = InputState::new(window, cx);
+            state.set_value(auth_to_text(&initial.auth), window, cx);
+            state
+        });
+        let headers_input = cx.new(|cx| {
+            let mut state = InputState::new(window, cx);
+            state.set_value(key_value_pairs_to_text(&initial.headers), window, cx);
             state
         });
         let pre_request_input = cx.new(|cx| {
@@ -156,6 +174,49 @@ impl RequestTabView {
                     let url = state.read(cx).value().to_string();
                     if this.editor.draft().url != url {
                         this.editor.draft_mut().url = url;
+                        this.editor.refresh_save_status();
+                        cx.notify();
+                    }
+                }
+            },
+        ));
+
+        subscriptions.push(cx.subscribe(
+            &params_input,
+            |this: &mut RequestTabView, state: Entity<InputState>, event: &InputEvent, cx| {
+                if let InputEvent::Change = event {
+                    let next = parse_key_value_pairs(&state.read(cx).value());
+                    if this.editor.draft().params != next {
+                        this.editor.draft_mut().params = next;
+                        this.editor.refresh_save_status();
+                        cx.notify();
+                    }
+                }
+            },
+        ));
+
+        subscriptions.push(cx.subscribe(
+            &auth_input,
+            |this: &mut RequestTabView, state: Entity<InputState>, event: &InputEvent, cx| {
+                if let InputEvent::Change = event {
+                    let current = this.editor.draft().auth.clone();
+                    let next = parse_auth_text(&state.read(cx).value(), &current);
+                    if current != next {
+                        this.editor.draft_mut().auth = next;
+                        this.editor.refresh_save_status();
+                        cx.notify();
+                    }
+                }
+            },
+        ));
+
+        subscriptions.push(cx.subscribe(
+            &headers_input,
+            |this: &mut RequestTabView, state: Entity<InputState>, event: &InputEvent, cx| {
+                if let InputEvent::Change = event {
+                    let next = parse_key_value_pairs(&state.read(cx).value());
+                    if this.editor.draft().headers != next {
+                        this.editor.draft_mut().headers = next;
                         this.editor.refresh_save_status();
                         cx.notify();
                     }
@@ -269,6 +330,9 @@ impl RequestTabView {
             name_input,
             method_input,
             url_input,
+            params_input,
+            auth_input,
+            headers_input,
             body_input,
             pre_request_input,
             tests_input,
@@ -497,16 +561,46 @@ impl RequestTabView {
         cx.notify();
 
         let exec_service = build_execution_service(&services);
-        let cancel_token = self.editor.cancellation_token().unwrap().clone();
+        let Some(cancel_token) = self.editor.cancellation_token().cloned() else {
+            self.editor.set_preflight_error(
+                es_fluent::localize("request_tab_preflight", None).to_string(),
+            );
+            cx.notify();
+            return;
+        };
         let history_repo = services.repos.history.clone();
         let blob_store = services.blob_store.clone();
         let io_runtime = services.io_runtime.clone();
+        let (progress_tx, mut progress_rx) =
+            tokio::sync::mpsc::unbounded_channel::<ExecProgressEvent>();
+
+        cx.spawn(async move |this, cx| {
+            while let Some(event) = progress_rx.recv().await {
+                let _ = this.update(cx, |this, cx| {
+                    if this.editor.active_operation_id() != Some(operation_id) {
+                        return;
+                    }
+                    match event {
+                        ExecProgressEvent::ResponseStreamingStarted => {
+                            this.editor.transition_to_streaming();
+                            cx.notify();
+                        }
+                    }
+                });
+            }
+        })
+        .detach();
 
         cx.spawn(async move |this, cx| {
             let request = draft.clone();
             let handle = io_runtime.spawn(async move {
                 exec_service
-                    .execute(&request, workspace_id, cancel_token.clone())
+                    .execute_with_progress(
+                        &request,
+                        workspace_id,
+                        cancel_token.clone(),
+                        Some(progress_tx),
+                    )
                     .await
             });
             let result = handle
@@ -1240,16 +1334,7 @@ impl Render for RequestTabView {
                             .font_weight(gpui::FontWeight::MEDIUM)
                             .child(es_fluent::localize("request_tab_params_label", None)),
                     )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(gpui::hsla(0., 0., 0.45, 1.))
-                            .child(format!(
-                                "{}: {}",
-                                es_fluent::localize("request_tab_items", None),
-                                request.params.len()
-                            )),
-                    ),
+                    .child(Input::new(&self.params_input).large()),
             )
             .child(
                 v_flex()
@@ -1263,7 +1348,8 @@ impl Render for RequestTabView {
                             .font_weight(gpui::FontWeight::MEDIUM)
                             .child(es_fluent::localize("request_tab_auth_label", None)),
                     )
-                    .child(div().text_sm().child(auth_label)),
+                    .child(div().text_xs().text_color(gpui::hsla(0., 0., 0.45, 1.)).child(auth_label))
+                    .child(Input::new(&self.auth_input).large()),
             )
             .child(
                 v_flex()
@@ -1277,16 +1363,7 @@ impl Render for RequestTabView {
                             .font_weight(gpui::FontWeight::MEDIUM)
                             .child(es_fluent::localize("request_tab_headers_label", None)),
                     )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(gpui::hsla(0., 0., 0.45, 1.))
-                            .child(format!(
-                                "{}: {}",
-                                es_fluent::localize("request_tab_items", None),
-                                request.headers.len()
-                            )),
-                    ),
+                    .child(Input::new(&self.headers_input).large()),
             )
             .child(
                 v_flex()
@@ -1432,6 +1509,134 @@ impl Render for RequestTabView {
                     )
                     .child(response_panel),
             )
+    }
+}
+
+fn key_value_pairs_to_text(entries: &[KeyValuePair]) -> String {
+    entries
+        .iter()
+        .map(|entry| {
+            if entry.enabled {
+                format!("{}={}", entry.key, entry.value)
+            } else {
+                format!("#{}={}", entry.key, entry.value)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn parse_key_value_pairs(raw: &str) -> Vec<KeyValuePair> {
+    raw.lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            let (enabled, content) = if let Some(rest) = trimmed.strip_prefix('#') {
+                (false, rest.trim())
+            } else {
+                (true, trimmed)
+            };
+            let (key, value) = content.split_once('=').unwrap_or((content, ""));
+            let key = key.trim();
+            if key.is_empty() {
+                return None;
+            }
+            Some(KeyValuePair {
+                key: key.to_string(),
+                value: value.trim().to_string(),
+                enabled,
+            })
+        })
+        .collect()
+}
+
+fn auth_to_text(auth: &AuthType) -> String {
+    match auth {
+        AuthType::None => "none".to_string(),
+        AuthType::Basic {
+            username,
+            password_secret_ref,
+        } => format!(
+            "basic username={} password_ref={}",
+            username,
+            password_secret_ref.clone().unwrap_or_default()
+        ),
+        AuthType::Bearer { token_secret_ref } => format!(
+            "bearer token_ref={}",
+            token_secret_ref.clone().unwrap_or_default()
+        ),
+        AuthType::ApiKey {
+            key_name,
+            value_secret_ref,
+            location,
+        } => format!(
+            "api_key key={} value_ref={} location={}",
+            key_name,
+            value_secret_ref.clone().unwrap_or_default(),
+            match location {
+                ApiKeyLocation::Header => "header",
+                ApiKeyLocation::Query => "query",
+            }
+        ),
+    }
+}
+
+fn parse_auth_text(raw: &str, current: &AuthType) -> AuthType {
+    let line = raw.lines().next().unwrap_or("").trim();
+    if line.is_empty() {
+        return AuthType::None;
+    }
+    if line.eq_ignore_ascii_case("none") {
+        return AuthType::None;
+    }
+
+    let mut parts = line.split_whitespace();
+    let Some(kind) = parts.next() else {
+        return current.clone();
+    };
+
+    let mut map = std::collections::HashMap::new();
+    for part in parts {
+        if let Some((key, value)) = part.split_once('=') {
+            map.insert(key.to_ascii_lowercase(), value.to_string());
+        }
+    }
+
+    match kind.to_ascii_lowercase().as_str() {
+        "basic" => AuthType::Basic {
+            username: map.get("username").cloned().unwrap_or_default(),
+            password_secret_ref: map
+                .get("password_ref")
+                .cloned()
+                .and_then(|v| if v.is_empty() { None } else { Some(v) }),
+        },
+        "bearer" => AuthType::Bearer {
+            token_secret_ref: map
+                .get("token_ref")
+                .cloned()
+                .and_then(|v| if v.is_empty() { None } else { Some(v) }),
+        },
+        "api_key" => {
+            let location = match map
+                .get("location")
+                .map(|v| v.to_ascii_lowercase())
+                .as_deref()
+            {
+                Some("query") => ApiKeyLocation::Query,
+                _ => ApiKeyLocation::Header,
+            };
+            AuthType::ApiKey {
+                key_name: map.get("key").cloned().unwrap_or_default(),
+                value_secret_ref: map
+                    .get("value_ref")
+                    .cloned()
+                    .and_then(|v| if v.is_empty() { None } else { Some(v) }),
+                location,
+            }
+        }
+        _ => current.clone(),
     }
 }
 

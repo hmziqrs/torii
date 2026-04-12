@@ -769,7 +769,11 @@ fn history_snapshot_redacts_auth_headers() {
 
     let ws = ws_repo.create("WS").unwrap();
     let col = col_repo.create(ws.id, "Col").unwrap();
-    let mut request = simple_request("GET", "https://api.test/data", col.id);
+    let mut request = simple_request(
+        "GET",
+        "https://api.test/data?token=abc123&client_id=my-client",
+        col.id,
+    );
     request.auth = AuthType::Bearer {
         token_secret_ref: Some("my-api-key".to_string()),
     };
@@ -780,6 +784,10 @@ fn history_snapshot_redacts_auth_headers() {
 
     // Auth kind = "bearer", never the secret value
     assert_eq!(snapshot.auth_kind.as_deref(), Some("bearer"));
+    assert_eq!(
+        snapshot.url_redacted,
+        "https://api.test/data?token=%5BREDACTED%5D&client_id=%5BREDACTED%5D"
+    );
 
     // Redacted headers
     if let Some(headers_json) = &snapshot.headers_redacted_json {
