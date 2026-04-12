@@ -78,7 +78,7 @@ pub fn init(cx: &mut App) {
         .and_then(|snapshot| snapshot.locale.as_deref())
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| rust_i18n::locale().to_string());
-    set_locale(&startup_locale_source, cx);
+    set_locale_internal(&startup_locale_source, cx, false);
 
     // Load extra themes from the themes/ directory (with hot-reload)
     let persisted_for_closure = persisted.clone();
@@ -246,12 +246,18 @@ pub fn current_locale(cx: &App) -> SharedString {
 }
 
 pub fn set_locale(locale: &str, cx: &mut App) {
+    set_locale_internal(locale, cx, true);
+}
+
+fn set_locale_internal(locale: &str, cx: &mut App, persist: bool) {
     let locale = normalize_locale(locale);
     apply_locale(locale.as_ref());
     cx.set_global(LocaleState {
         current: locale.clone(),
     });
-    persist_ui_preferences(cx);
+    if persist {
+        persist_ui_preferences(cx);
+    }
     cx.refresh_windows();
 }
 
