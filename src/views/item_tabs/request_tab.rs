@@ -130,6 +130,7 @@ pub struct RequestTabView {
     error_detail_expanded: bool,
     headers_table: Entity<TableState<response_panel::HeadersTableDelegate>>,
     cookies_table: Entity<TableState<response_panel::CookiesTableDelegate>>,
+    timing_table: Entity<TableState<response_panel::TimingTableDelegate>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -690,6 +691,14 @@ impl RequestTabView {
                     .row_selectable(false)
                     .col_selectable(false)
                     .col_resizable(true)
+                    .col_movable(false)
+                    .sortable(false)
+            }),
+            timing_table: cx.new(|cx| {
+                TableState::new(response_panel::TimingTableDelegate::new(), window, cx)
+                    .row_selectable(false)
+                    .col_selectable(false)
+                    .col_resizable(false)
                     .col_movable(false)
                     .sortable(false)
             }),

@@ -201,19 +201,6 @@ pub(super) fn parse_set_cookie_rows(
     parsed
 }
 
-pub(super) fn timing_row(label: String, value: String) -> gpui::Div {
-    h_flex()
-        .justify_between()
-        .gap_3()
-        .child(
-            div()
-                .text_sm()
-                .text_color(gpui::hsla(0., 0., 0.45, 1.))
-                .child(label),
-        )
-        .child(div().text_sm().font_family("monospace").child(value))
-}
-
 pub(super) fn format_unix_ms(value: Option<i64>) -> String {
     let Some(value) = value else {
         return "—".to_string();

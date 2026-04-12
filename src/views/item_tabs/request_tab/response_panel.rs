@@ -180,6 +180,76 @@ impl TableDelegate for CookiesTableDelegate {
     }
 }
 
+// -- Timing table delegate ----------------------------------------------------
+
+pub(super) struct TimingRow {
+    phase: String,
+    value: String,
+}
+
+pub(super) struct TimingTableDelegate {
+    rows: Vec<TimingRow>,
+    columns: Vec<Column>,
+}
+
+impl TimingTableDelegate {
+    pub(super) fn new() -> Self {
+        Self {
+            rows: Vec::new(),
+            columns: vec![
+                Column::new("phase", es_fluent::localize("request_tab_response_timing_col_phase", None))
+                    .width(px(200.))
+                    .resizable(false)
+                    .movable(false),
+                Column::new("value", es_fluent::localize("request_tab_response_timing_col_value", None))
+                    .width(px(400.))
+                    .resizable(true)
+                    .movable(false),
+            ],
+        }
+    }
+
+    pub(super) fn set_rows(&mut self, rows: Vec<TimingRow>) {
+        self.rows = rows;
+    }
+}
+
+impl TableDelegate for TimingTableDelegate {
+    fn columns_count(&self, _: &App) -> usize {
+        self.columns.len()
+    }
+
+    fn rows_count(&self, _: &App) -> usize {
+        self.rows.len()
+    }
+
+    fn column(&self, col_ix: usize, _: &App) -> Column {
+        self.columns[col_ix].clone()
+    }
+
+    fn render_td(
+        &mut self,
+        row_ix: usize,
+        col_ix: usize,
+        _window: &mut Window,
+        _cx: &mut Context<TableState<Self>>,
+    ) -> impl IntoElement {
+        let row = &self.rows[row_ix];
+        match col_ix {
+            0 => div()
+                .text_sm()
+                .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                .child(row.phase.clone())
+                .into_any_element(),
+            _ => div()
+                .text_sm()
+                .font_family("monospace")
+                .child(row.value.clone())
+                .into_any_element(),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Response panel rendering — extracted from RequestTabView::render
 // ---------------------------------------------------------------------------
@@ -418,44 +488,50 @@ fn render_completed_response(
         div().h(px(200.)).child(DataTable::new(&view.cookies_table).bordered(true))
     };
 
-    let timing_content = v_flex()
-        .gap_1()
-        .child(timing_row(
-            es_fluent::localize("request_tab_response_timing_total", None).to_string(),
-            resp.total_ms
+    let timing_rows = vec![
+        TimingRow {
+            phase: es_fluent::localize("request_tab_response_timing_total", None).to_string(),
+            value: resp.total_ms
                 .map(|ms| format!("{ms} ms"))
                 .unwrap_or_else(|| "—".to_string()),
-        ))
-        .child(timing_row(
-            es_fluent::localize("request_tab_response_timing_ttfb", None).to_string(),
-            resp.ttfb_ms
+        },
+        TimingRow {
+            phase: es_fluent::localize("request_tab_response_timing_ttfb", None).to_string(),
+            value: resp.ttfb_ms
                 .map(|ms| format!("{ms} ms"))
                 .unwrap_or_else(|| "—".to_string()),
-        ))
-        .child(timing_row(
-            es_fluent::localize("request_tab_response_timing_dispatched_at", None).to_string(),
-            format_unix_ms(resp.dispatched_at_unix_ms),
-        ))
-        .child(timing_row(
-            es_fluent::localize("request_tab_response_timing_first_byte_at", None).to_string(),
-            format_unix_ms(resp.first_byte_at_unix_ms),
-        ))
-        .child(timing_row(
-            es_fluent::localize("request_tab_response_timing_completed_at", None).to_string(),
-            format_unix_ms(resp.completed_at_unix_ms),
-        ))
-        .child(timing_row(
-            es_fluent::localize("request_tab_response_timing_dns", None).to_string(),
-            "—".to_string(),
-        ))
-        .child(timing_row(
-            es_fluent::localize("request_tab_response_timing_tcp", None).to_string(),
-            "—".to_string(),
-        ))
-        .child(timing_row(
-            es_fluent::localize("request_tab_response_timing_tls", None).to_string(),
-            "—".to_string(),
-        ));
+        },
+        TimingRow {
+            phase: es_fluent::localize("request_tab_response_timing_dispatched_at", None).to_string(),
+            value: format_unix_ms(resp.dispatched_at_unix_ms),
+        },
+        TimingRow {
+            phase: es_fluent::localize("request_tab_response_timing_first_byte_at", None).to_string(),
+            value: format_unix_ms(resp.first_byte_at_unix_ms),
+        },
+        TimingRow {
+            phase: es_fluent::localize("request_tab_response_timing_completed_at", None).to_string(),
+            value: format_unix_ms(resp.completed_at_unix_ms),
+        },
+        TimingRow {
+            phase: es_fluent::localize("request_tab_response_timing_dns", None).to_string(),
+            value: "—".to_string(),
+        },
+        TimingRow {
+            phase: es_fluent::localize("request_tab_response_timing_tcp", None).to_string(),
+            value: "—".to_string(),
+        },
+        TimingRow {
+            phase: es_fluent::localize("request_tab_response_timing_tls", None).to_string(),
+            value: "—".to_string(),
+        },
+    ];
+    view.timing_table.update(cx, |state, cx| {
+        state.delegate_mut().set_rows(timing_rows);
+        state.refresh(cx);
+    });
+
+    let timing_content = div().h(px(280.)).child(DataTable::new(&view.timing_table).bordered(true));
 
     let can_copy = is_text_like_media_type(resp.media_type.as_deref());
     let body_actions = h_flex()
