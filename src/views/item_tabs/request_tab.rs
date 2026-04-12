@@ -27,6 +27,11 @@ use crate::{
     session::request_editor_state::{EditorIdentity, ExecStatus, RequestEditorState, SaveStatus},
 };
 
+mod helpers;
+mod state;
+
+use helpers::*;
+
 // ---------------------------------------------------------------------------
 // Actions for request tab keyboard shortcuts
 // ---------------------------------------------------------------------------
@@ -1553,48 +1558,90 @@ impl RequestTabView {
             .unwrap_or(AuthKind::None)
     }
 
-    fn auth_from_cached_inputs(&self, kind: AuthKind, cx: &App) -> AuthType {
+    fn read_secret_value(&self, secret_ref: &Option<String>, cx: &App) -> String {
+        let Some(secret_ref) = secret_ref else {
+            return String::new();
+        };
+        cx.global::<AppServicesGlobal>()
+            .0
+            .secret_store
+            .get_secret(secret_ref)
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+    }
+
+    fn upsert_auth_secret_value(
+        &mut self,
+        secret_kind: &str,
+        value: String,
+        cx: &mut Context<Self>,
+    ) -> Option<String> {
+        let services = cx.global::<AppServicesGlobal>().0.clone();
+        let (owner_kind, owner_id) = match self.editor.identity() {
+            EditorIdentity::Draft(id) => ("request_draft", id.to_string()),
+            EditorIdentity::Persisted(id) => ("request", id.to_string()),
+        };
+
+        if value.is_empty() {
+            let _ = services
+                .secret_manager
+                .delete_secret(owner_kind, &owner_id, secret_kind);
+            return None;
+        }
+
+        match services
+            .secret_manager
+            .upsert_secret(owner_kind, &owner_id, secret_kind, &value)
+        {
+            Ok(secret_ref) => Some(secret_ref.key_name),
+            Err(err) => {
+                self.editor
+                    .set_preflight_error(format!("failed to store auth secret: {err}"));
+                None
+            }
+        }
+    }
+
+    fn auth_from_cached_inputs(&mut self, kind: AuthKind, cx: &mut Context<Self>) -> AuthType {
         match kind {
             AuthKind::None => AuthType::None,
             AuthKind::Basic => {
                 let username = self.auth_basic_username_input.read(cx).value().to_string();
-                let password_ref = self
+                let password_value = self
                     .auth_basic_password_ref_input
                     .read(cx)
                     .value()
-                    .trim()
                     .to_string();
                 AuthType::Basic {
                     username,
-                    password_secret_ref: if password_ref.is_empty() {
-                        None
-                    } else {
-                        Some(password_ref)
-                    },
+                    password_secret_ref: self.upsert_auth_secret_value(
+                        "basic_password",
+                        password_value,
+                        cx,
+                    ),
                 }
             }
             AuthKind::Bearer => {
-                let token_ref = self
+                let token_value = self
                     .auth_bearer_token_ref_input
                     .read(cx)
                     .value()
-                    .trim()
                     .to_string();
                 AuthType::Bearer {
-                    token_secret_ref: if token_ref.is_empty() {
-                        None
-                    } else {
-                        Some(token_ref)
-                    },
+                    token_secret_ref: self.upsert_auth_secret_value(
+                        "bearer_token",
+                        token_value,
+                        cx,
+                    ),
                 }
             }
             AuthKind::ApiKey => {
                 let key_name = self.auth_api_key_name_input.read(cx).value().to_string();
-                let value_ref = self
+                let value_raw = self
                     .auth_api_key_value_ref_input
                     .read(cx)
                     .value()
-                    .trim()
                     .to_string();
                 let location_ix = self
                     .auth_api_key_location_select
@@ -1604,11 +1651,7 @@ impl RequestTabView {
                     .unwrap_or(0);
                 AuthType::ApiKey {
                     key_name,
-                    value_secret_ref: if value_ref.is_empty() {
-                        None
-                    } else {
-                        Some(value_ref)
-                    },
+                    value_secret_ref: self.upsert_auth_secret_value("api_key_value", value_raw, cx),
                     location: api_key_location_from_index(location_ix),
                 }
             }
@@ -1738,21 +1781,22 @@ impl RequestTabView {
                         s.set_value(username.clone(), window, cx);
                     });
                 }
-                let password_ref = password_secret_ref.clone().unwrap_or_default();
+                let password_value = self.read_secret_value(password_secret_ref, cx);
                 if self.auth_basic_password_ref_input.read(cx).value().as_ref()
-                    != password_ref.as_str()
+                    != password_value.as_str()
                 {
                     self.auth_basic_password_ref_input.update(cx, |s, cx| {
-                        s.set_value(password_ref.clone(), window, cx);
+                        s.set_value(password_value.clone(), window, cx);
                     });
                 }
             }
             AuthType::Bearer { token_secret_ref } => {
-                let token_ref = token_secret_ref.clone().unwrap_or_default();
-                if self.auth_bearer_token_ref_input.read(cx).value().as_ref() != token_ref.as_str()
+                let token_value = self.read_secret_value(token_secret_ref, cx);
+                if self.auth_bearer_token_ref_input.read(cx).value().as_ref()
+                    != token_value.as_str()
                 {
                     self.auth_bearer_token_ref_input.update(cx, |s, cx| {
-                        s.set_value(token_ref.clone(), window, cx);
+                        s.set_value(token_value.clone(), window, cx);
                     });
                 }
             }
@@ -1766,11 +1810,11 @@ impl RequestTabView {
                         s.set_value(key_name.clone(), window, cx);
                     });
                 }
-                let value_ref = value_secret_ref.clone().unwrap_or_default();
-                if self.auth_api_key_value_ref_input.read(cx).value().as_ref() != value_ref.as_str()
+                let value_raw = self.read_secret_value(value_secret_ref, cx);
+                if self.auth_api_key_value_ref_input.read(cx).value().as_ref() != value_raw.as_str()
                 {
                     self.auth_api_key_value_ref_input.update(cx, |s, cx| {
-                        s.set_value(value_ref.clone(), window, cx);
+                        s.set_value(value_raw.clone(), window, cx);
                     });
                 }
                 self.auth_api_key_location_select.update(cx, |select, cx| {
@@ -1821,523 +1865,6 @@ impl RequestTabView {
                 _ => 0,
             },
             _ => 0,
-        }
-    }
-
-    fn kv_rows(&self, target: KvTarget) -> &Vec<KeyValueEditorRow> {
-        match target {
-            KvTarget::Params => &self.params_rows,
-            KvTarget::Headers => &self.headers_rows,
-            KvTarget::BodyUrlEncoded => &self.body_urlencoded_rows,
-            KvTarget::BodyFormDataText => &self.body_form_text_rows,
-        }
-    }
-
-    fn kv_rows_mut(&mut self, target: KvTarget) -> &mut Vec<KeyValueEditorRow> {
-        match target {
-            KvTarget::Params => &mut self.params_rows,
-            KvTarget::Headers => &mut self.headers_rows,
-            KvTarget::BodyUrlEncoded => &mut self.body_urlencoded_rows,
-            KvTarget::BodyFormDataText => &mut self.body_form_text_rows,
-        }
-    }
-
-    fn next_kv_row_id(&mut self) -> u64 {
-        let id = self.next_kv_row_id;
-        self.next_kv_row_id += 1;
-        id
-    }
-
-    fn make_kv_row(
-        &mut self,
-        target: KvTarget,
-        entry: KeyValuePair,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> KeyValueEditorRow {
-        let id = self.next_kv_row_id();
-        let key_input = cx.new(|cx| {
-            let mut state = InputState::new(window, cx);
-            state.set_value(entry.key.clone(), window, cx);
-            state
-        });
-        let value_input = cx.new(|cx| {
-            let mut state = InputState::new(window, cx);
-            state.set_value(entry.value.clone(), window, cx);
-            state
-        });
-
-        self._subscriptions.push(cx.subscribe(
-            &key_input,
-            move |this: &mut RequestTabView, _: Entity<InputState>, event: &InputEvent, cx| {
-                if let InputEvent::Change = event {
-                    this.on_kv_rows_changed(target, cx);
-                }
-            },
-        ));
-        self._subscriptions.push(cx.subscribe(
-            &value_input,
-            move |this: &mut RequestTabView, _: Entity<InputState>, event: &InputEvent, cx| {
-                if let InputEvent::Change = event {
-                    this.on_kv_rows_changed(target, cx);
-                }
-            },
-        ));
-
-        KeyValueEditorRow {
-            id,
-            enabled: entry.enabled,
-            key_input,
-            value_input,
-        }
-    }
-
-    fn rebuild_kv_rows(
-        &mut self,
-        target: KvTarget,
-        entries: &[KeyValuePair],
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let normalized = if entries.is_empty() {
-            vec![KeyValuePair {
-                key: String::new(),
-                value: String::new(),
-                enabled: true,
-            }]
-        } else {
-            entries.to_vec()
-        };
-        let mut rows = Vec::with_capacity(normalized.len());
-        for entry in normalized {
-            rows.push(self.make_kv_row(target, entry, window, cx));
-        }
-        *self.kv_rows_mut(target) = rows;
-        self.ensure_trailing_empty_row(target, window, cx);
-    }
-
-    fn sync_kv_rows_with_draft(
-        &mut self,
-        target: KvTarget,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if target == KvTarget::BodyUrlEncoded
-            && !matches!(self.editor.draft().body, BodyType::UrlEncoded { .. })
-        {
-            return;
-        }
-        if target == KvTarget::BodyFormDataText
-            && !matches!(self.editor.draft().body, BodyType::FormData { .. })
-        {
-            return;
-        }
-        let draft_entries = match target {
-            KvTarget::Params => self.editor.draft().params.clone(),
-            KvTarget::Headers => self.editor.draft().headers.clone(),
-            KvTarget::BodyUrlEncoded => match &self.editor.draft().body {
-                BodyType::UrlEncoded { entries } => entries.clone(),
-                _ => Vec::new(),
-            },
-            KvTarget::BodyFormDataText => match &self.editor.draft().body {
-                BodyType::FormData { text_fields, .. } => text_fields.clone(),
-                _ => Vec::new(),
-            },
-        };
-        let current = self.collect_meaningful_pairs(target, cx);
-        if current != draft_entries {
-            self.rebuild_kv_rows(target, &draft_entries, window, cx);
-        }
-    }
-
-    fn ensure_trailing_empty_row(
-        &mut self,
-        target: KvTarget,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let has_trailing_empty = self
-            .kv_rows(target)
-            .last()
-            .map(|row| {
-                row.key_input.read(cx).value().trim().is_empty()
-                    && row.value_input.read(cx).value().trim().is_empty()
-            })
-            .unwrap_or(false);
-        if !has_trailing_empty {
-            let empty = KeyValuePair {
-                key: String::new(),
-                value: String::new(),
-                enabled: true,
-            };
-            let row = self.make_kv_row(target, empty, window, cx);
-            self.kv_rows_mut(target).push(row);
-        }
-    }
-
-    fn collect_meaningful_pairs(&self, target: KvTarget, cx: &App) -> Vec<KeyValuePair> {
-        self.kv_rows(target)
-            .iter()
-            .filter_map(|row| {
-                let key = row.key_input.read(cx).value().to_string();
-                let value = row.value_input.read(cx).value().to_string();
-                if key.trim().is_empty() && value.trim().is_empty() {
-                    None
-                } else {
-                    Some(KeyValuePair {
-                        key,
-                        value,
-                        enabled: row.enabled,
-                    })
-                }
-            })
-            .collect()
-    }
-
-    fn on_kv_rows_changed(&mut self, target: KvTarget, cx: &mut Context<Self>) {
-        if target == KvTarget::Params && self.input_sync_guard.is_active() {
-            self.input_sync_guard.deferred = true;
-            return;
-        }
-        let next = self.collect_meaningful_pairs(target, cx);
-        match target {
-            KvTarget::Params => {
-                if self.editor.draft().params != next {
-                    self.editor.draft_mut().params = next;
-                }
-                let next_url = url_with_params(
-                    self.editor.draft().url.as_str(),
-                    self.editor.draft().params.as_slice(),
-                );
-                if self.editor.draft().url != next_url {
-                    self.editor.draft_mut().url = next_url;
-                }
-            }
-            KvTarget::Headers => {
-                if self.editor.draft().headers != next {
-                    self.editor.draft_mut().headers = next;
-                }
-            }
-            KvTarget::BodyUrlEncoded => {
-                if self.selected_body_kind(cx) != BodyKind::UrlEncoded {
-                    return;
-                }
-                let next_body = BodyType::UrlEncoded { entries: next };
-                if self.editor.draft().body != next_body {
-                    self.editor.draft_mut().body = next_body;
-                }
-            }
-            KvTarget::BodyFormDataText => {
-                if self.selected_body_kind(cx) != BodyKind::FormData {
-                    return;
-                }
-                let file_fields = match &self.editor.draft().body {
-                    BodyType::FormData { file_fields, .. } => file_fields.clone(),
-                    _ => Vec::new(),
-                };
-                let next_body = BodyType::FormData {
-                    text_fields: next,
-                    file_fields,
-                };
-                if self.editor.draft().body != next_body {
-                    self.editor.draft_mut().body = next_body;
-                }
-            }
-        }
-        self.editor.refresh_save_status();
-        cx.notify();
-    }
-
-    fn add_kv_row(&mut self, target: KvTarget, window: &mut Window, cx: &mut Context<Self>) {
-        let row = self.make_kv_row(
-            target,
-            KeyValuePair {
-                key: String::new(),
-                value: String::new(),
-                enabled: true,
-            },
-            window,
-            cx,
-        );
-        self.kv_rows_mut(target).push(row);
-        cx.notify();
-    }
-
-    fn remove_kv_row(
-        &mut self,
-        target: KvTarget,
-        id: u64,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(ix) = self.kv_rows(target).iter().position(|row| row.id == id) {
-            self.kv_rows_mut(target).remove(ix);
-        }
-        self.ensure_trailing_empty_row(target, window, cx);
-        self.on_kv_rows_changed(target, cx);
-    }
-
-    fn set_kv_row_enabled(
-        &mut self,
-        target: KvTarget,
-        id: u64,
-        enabled: bool,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(row) = self.kv_rows_mut(target).iter_mut().find(|row| row.id == id) {
-            row.enabled = enabled;
-            self.on_kv_rows_changed(target, cx);
-        }
-    }
-
-    fn add_form_data_file_field(&mut self, cx: &mut Context<Self>) {
-        let BodyType::FormData {
-            text_fields,
-            mut file_fields,
-        } = self.editor.draft().body.clone()
-        else {
-            return;
-        };
-        file_fields.push(crate::domain::request::FileField {
-            key: format!("file{}", file_fields.len() + 1),
-            blob_hash: String::new(),
-            file_name: None,
-            enabled: true,
-        });
-        self.editor.draft_mut().body = BodyType::FormData {
-            text_fields,
-            file_fields,
-        };
-        self.editor.refresh_save_status();
-        cx.notify();
-    }
-
-    fn remove_form_data_file_field(&mut self, index: usize, cx: &mut Context<Self>) {
-        let BodyType::FormData {
-            text_fields,
-            mut file_fields,
-        } = self.editor.draft().body.clone()
-        else {
-            return;
-        };
-        if index < file_fields.len() {
-            file_fields.remove(index);
-            self.editor.draft_mut().body = BodyType::FormData {
-                text_fields,
-                file_fields,
-            };
-            self.editor.refresh_save_status();
-            cx.notify();
-        }
-    }
-
-    fn set_form_data_file_field_enabled(
-        &mut self,
-        index: usize,
-        enabled: bool,
-        cx: &mut Context<Self>,
-    ) {
-        let BodyType::FormData {
-            text_fields,
-            mut file_fields,
-        } = self.editor.draft().body.clone()
-        else {
-            return;
-        };
-        if let Some(field) = file_fields.get_mut(index) {
-            field.enabled = enabled;
-            self.editor.draft_mut().body = BodyType::FormData {
-                text_fields,
-                file_fields,
-            };
-            self.editor.refresh_save_status();
-            cx.notify();
-        }
-    }
-
-    fn clear_form_data_file_field(&mut self, index: usize, cx: &mut Context<Self>) {
-        let BodyType::FormData {
-            text_fields,
-            mut file_fields,
-        } = self.editor.draft().body.clone()
-        else {
-            return;
-        };
-        if let Some(field) = file_fields.get_mut(index) {
-            field.blob_hash.clear();
-            field.file_name = None;
-            self.editor.draft_mut().body = BodyType::FormData {
-                text_fields,
-                file_fields,
-            };
-            self.editor.refresh_save_status();
-            cx.notify();
-        }
-    }
-
-    fn clear_binary_body_file(&mut self, cx: &mut Context<Self>) {
-        if let BodyType::BinaryFile {
-            blob_hash,
-            file_name,
-        } = &mut self.editor.draft_mut().body
-        {
-            blob_hash.clear();
-            *file_name = None;
-            self.editor.refresh_save_status();
-            cx.notify();
-        }
-    }
-
-    fn pick_binary_body_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.pick_body_file_for_target(BodyFileTarget::Binary, window, cx);
-    }
-
-    fn pick_form_data_file_field(
-        &mut self,
-        index: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.pick_body_file_for_target(BodyFileTarget::FormDataIndex(index), window, cx);
-    }
-
-    fn pick_body_file_for_target(
-        &mut self,
-        target: BodyFileTarget,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some(
-                es_fluent::localize("request_tab_body_pick_file", None)
-                    .to_string()
-                    .into(),
-            ),
-        });
-        let services = cx.global::<AppServicesGlobal>().0.clone();
-
-        cx.spawn_in(window, async move |this, cx| {
-            let picked_path = match receiver.await {
-                Ok(Ok(Some(paths))) => paths.into_iter().next(),
-                _ => None,
-            };
-            let Some(path) = picked_path else {
-                return;
-            };
-
-            let size_bytes = std::fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
-            if size_bytes > LARGE_BODY_FILE_CONFIRM_BYTES {
-                let detail = format!(
-                    "{} {}",
-                    es_fluent::localize("request_tab_body_large_file_detail", None),
-                    format_bytes(size_bytes)
-                );
-                let answers = vec![
-                    gpui::PromptButton::ok(es_fluent::localize(
-                        "request_tab_body_large_file_continue",
-                        None,
-                    )),
-                    gpui::PromptButton::cancel(es_fluent::localize(
-                        "request_tab_body_large_file_cancel",
-                        None,
-                    )),
-                ];
-                let response = cx
-                    .prompt(
-                        gpui::PromptLevel::Warning,
-                        &es_fluent::localize("request_tab_body_large_file_title", None),
-                        Some(&detail),
-                        &answers,
-                    )
-                    .await
-                    .unwrap_or(1);
-                if response != 0 {
-                    return;
-                }
-            }
-
-            let path_for_import = path.clone();
-            let services_for_import = services.clone();
-            let imported =
-                tokio::task::spawn_blocking(move || -> Result<(String, Option<String>), String> {
-                    let file = std::fs::File::open(&path_for_import).map_err(|e| {
-                        format!(
-                            "{}: {e}",
-                            es_fluent::localize("request_tab_body_file_load_failed", None)
-                        )
-                    })?;
-                    let blob = services_for_import
-                        .blob_store
-                        .write_from_reader(file, None)
-                        .map_err(|e| {
-                            format!(
-                                "{}: {e}",
-                                es_fluent::localize("request_tab_body_file_load_failed", None)
-                            )
-                        })?;
-                    let file_name = path_for_import
-                        .file_name()
-                        .map(|name| name.to_string_lossy().to_string());
-                    Ok((blob.hash, file_name))
-                })
-                .await;
-
-            let (blob_hash, file_name) = match imported {
-                Ok(Ok(value)) => value,
-                Ok(Err(err)) => {
-                    let _ = this.update(cx, |this, cx| {
-                        this.editor.set_preflight_error(err);
-                        cx.notify();
-                    });
-                    return;
-                }
-                Err(err) => {
-                    let _ = this.update(cx, |this, cx| {
-                        this.editor
-                            .set_preflight_error(format!("file import task failed: {err}"));
-                        cx.notify();
-                    });
-                    return;
-                }
-            };
-
-            let _ = this.update(cx, |this, cx| {
-                this.apply_body_file_selection(target, blob_hash.clone(), file_name.clone());
-                this.editor.refresh_save_status();
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-
-    fn apply_body_file_selection(
-        &mut self,
-        target: BodyFileTarget,
-        blob_hash: String,
-        file_name: Option<String>,
-    ) {
-        match target {
-            BodyFileTarget::Binary => {
-                if let BodyType::BinaryFile {
-                    blob_hash: current_hash,
-                    file_name: current_name,
-                } = &mut self.editor.draft_mut().body
-                {
-                    *current_hash = blob_hash;
-                    *current_name = file_name;
-                }
-            }
-            BodyFileTarget::FormDataIndex(index) => {
-                if let BodyType::FormData { file_fields, .. } = &mut self.editor.draft_mut().body
-                    && let Some(field) = file_fields.get_mut(index)
-                {
-                    field.blob_hash = blob_hash;
-                    field.file_name = file_name;
-                }
-            }
         }
     }
 }
@@ -2878,11 +2405,15 @@ impl Render for RequestTabView {
                                 .text_xs()
                                 .text_color(gpui::hsla(0., 0., 0.45, 1.))
                                 .child(es_fluent::localize(
-                                    "request_tab_auth_basic_password_ref",
+                                    "request_tab_auth_basic_password",
                                     None,
                                 )),
                         )
-                        .child(Input::new(&self.auth_basic_password_ref_input).large())
+                        .child(
+                            Input::new(&self.auth_basic_password_ref_input)
+                                .large()
+                                .mask_toggle(),
+                        )
                         .into_any_element(),
                     AuthType::Bearer { .. } => v_flex()
                         .gap_2()
@@ -2890,12 +2421,13 @@ impl Render for RequestTabView {
                             div()
                                 .text_xs()
                                 .text_color(gpui::hsla(0., 0., 0.45, 1.))
-                                .child(es_fluent::localize(
-                                    "request_tab_auth_bearer_token_ref",
-                                    None,
-                                )),
+                                .child(es_fluent::localize("request_tab_auth_bearer_token", None)),
                         )
-                        .child(Input::new(&self.auth_bearer_token_ref_input).large())
+                        .child(
+                            Input::new(&self.auth_bearer_token_ref_input)
+                                .large()
+                                .mask_toggle(),
+                        )
                         .into_any_element(),
                     AuthType::ApiKey { .. } => v_flex()
                         .gap_2()
@@ -2910,12 +2442,13 @@ impl Render for RequestTabView {
                             div()
                                 .text_xs()
                                 .text_color(gpui::hsla(0., 0., 0.45, 1.))
-                                .child(es_fluent::localize(
-                                    "request_tab_auth_api_key_value_ref",
-                                    None,
-                                )),
+                                .child(es_fluent::localize("request_tab_auth_api_key_value", None)),
                         )
-                        .child(Input::new(&self.auth_api_key_value_ref_input).large())
+                        .child(
+                            Input::new(&self.auth_api_key_value_ref_input)
+                                .large()
+                                .mask_toggle(),
+                        )
                         .child(
                             div()
                                 .text_xs()
@@ -3538,494 +3071,6 @@ impl Render for RequestTabView {
                     )
                     .child(response_panel),
             )
-    }
-}
-
-fn section_tab_button(
-    id: &'static str,
-    label: String,
-    active: bool,
-    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
-) -> Button {
-    if active {
-        Button::new(id).primary().label(label).on_click(on_click)
-    } else {
-        Button::new(id).ghost().label(label).on_click(on_click)
-    }
-}
-
-fn response_tab_button(
-    id: &'static str,
-    label: String,
-    active: bool,
-    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
-) -> Button {
-    if active {
-        Button::new(id).primary().label(label).on_click(on_click)
-    } else {
-        Button::new(id).ghost().label(label).on_click(on_click)
-    }
-}
-
-#[derive(Debug, Clone)]
-struct CookieRow {
-    name: String,
-    value_preview: String,
-    domain: Option<String>,
-    path: Option<String>,
-    expires_or_max_age: Option<String>,
-    secure: bool,
-    http_only: bool,
-    same_site: Option<String>,
-}
-
-fn status_code_color(status_code: u16) -> Hsla {
-    match status_code {
-        200..=299 => gpui::hsla(120. / 360., 0.7, 0.35, 1.),
-        300..=399 => gpui::hsla(210. / 360., 0.8, 0.45, 1.),
-        400..=499 => gpui::hsla(42. / 360., 0.9, 0.4, 1.),
-        _ => gpui::hsla(0., 0.78, 0.45, 1.),
-    }
-}
-
-enum SaveSource {
-    InMemory(Vec<u8>),
-    Blob(String),
-}
-
-fn response_body_preview_text(
-    response: &crate::domain::response::ResponseSummary,
-    loaded_full_body_text: &Option<String>,
-) -> String {
-    if let Some(full) = loaded_full_body_text {
-        return full.clone();
-    }
-
-    match &response.body_ref {
-        BodyRef::Empty => String::new(),
-        BodyRef::InMemoryPreview { bytes, .. } => {
-            render_preview_text(bytes.as_ref(), response.media_type.as_deref())
-        }
-        BodyRef::DiskBlob {
-            preview,
-            size_bytes,
-            ..
-        } => {
-            let preview_text = preview
-                .as_ref()
-                .map(|b| render_preview_text(b.as_ref(), response.media_type.as_deref()))
-                .unwrap_or_default();
-            let preview_len = preview.as_ref().map(|b| b.len()).unwrap_or(0) as u64;
-            if *size_bytes > preview_len {
-                format!(
-                    "{}\n{}",
-                    preview_text,
-                    es_fluent::localize("request_tab_response_truncated", None)
-                )
-            } else {
-                preview_text
-            }
-        }
-    }
-}
-
-fn looks_like_image(media_type: Option<&str>) -> bool {
-    matches!(media_type, Some(value) if value.to_ascii_lowercase().starts_with("image/"))
-}
-
-fn is_text_like_media_type(media_type: Option<&str>) -> bool {
-    let Some(media_type) = media_type else {
-        return true;
-    };
-    let media_type = media_type.to_ascii_lowercase();
-    media_type.starts_with("text/")
-        || matches!(
-            media_type.as_str(),
-            "application/json"
-                | "application/xml"
-                | "text/xml"
-                | "text/html"
-                | "application/javascript"
-                | "application/x-www-form-urlencoded"
-        )
-}
-
-fn search_matches(text: &str, query: &str) -> Vec<usize> {
-    if query.trim().is_empty() {
-        return Vec::new();
-    }
-    let text_lower = text.to_ascii_lowercase();
-    let query_lower = query.to_ascii_lowercase();
-    let mut matches = Vec::new();
-    let mut offset = 0;
-    while let Some(found) = text_lower[offset..].find(&query_lower) {
-        let absolute = offset + found;
-        matches.push(absolute);
-        offset = absolute + query_lower.len().max(1);
-        if offset >= text.len() {
-            break;
-        }
-    }
-    matches
-}
-
-fn suggested_file_name(media_type: Option<&str>) -> String {
-    let ext = match media_type.map(|v| v.to_ascii_lowercase()) {
-        Some(mt) if mt == "application/json" => "json",
-        Some(mt) if mt == "application/xml" || mt == "text/xml" => "xml",
-        Some(mt) if mt == "text/html" => "html",
-        Some(mt) if mt.starts_with("text/") => "txt",
-        Some(mt) if mt.starts_with("image/") => "img",
-        _ => "bin",
-    };
-    format!("response.{ext}")
-}
-
-fn standard_method_index(method: &str) -> Option<usize> {
-    match method.to_ascii_uppercase().as_str() {
-        "GET" => Some(0),
-        "POST" => Some(1),
-        "PUT" => Some(2),
-        "PATCH" => Some(3),
-        "DELETE" => Some(4),
-        "HEAD" => Some(5),
-        "OPTIONS" => Some(6),
-        _ => None,
-    }
-}
-
-fn parse_set_cookie_rows(rows: &[crate::domain::response::ResponseHeaderRow]) -> Vec<CookieRow> {
-    let mut parsed = Vec::new();
-    for row in rows {
-        if !row.name.eq_ignore_ascii_case("set-cookie") {
-            continue;
-        }
-        let Ok(cookie) = cookie::Cookie::parse(row.value.clone()) else {
-            continue;
-        };
-
-        let raw_value = cookie.value().to_string();
-        let value_preview = if raw_value.len() > 80 {
-            format!("{}…", &raw_value[..80])
-        } else {
-            raw_value
-        };
-        let expires_or_max_age = cookie
-            .max_age()
-            .map(|d| format!("{}s", d.whole_seconds()))
-            .or_else(|| {
-                cookie.expires().and_then(|v| {
-                    v.datetime().and_then(|dt| {
-                        time::format_description::parse(
-                            "[year]-[month]-[day] [hour]:[minute]:[second] UTC",
-                        )
-                        .ok()
-                        .and_then(|fmt| dt.format(&fmt).ok())
-                    })
-                })
-            });
-        let same_site = cookie.same_site().map(|s| format!("{s:?}"));
-
-        parsed.push(CookieRow {
-            name: cookie.name().to_string(),
-            value_preview,
-            domain: cookie.domain().map(ToOwned::to_owned),
-            path: cookie.path().map(ToOwned::to_owned),
-            expires_or_max_age,
-            secure: cookie.secure().unwrap_or(false),
-            http_only: cookie.http_only().unwrap_or(false),
-            same_site,
-        });
-    }
-    parsed
-}
-
-fn timing_row(label: String, value: String) -> gpui::Div {
-    h_flex()
-        .justify_between()
-        .gap_3()
-        .child(
-            div()
-                .text_sm()
-                .text_color(gpui::hsla(0., 0., 0.45, 1.))
-                .child(label),
-        )
-        .child(div().text_sm().font_family("monospace").child(value))
-}
-
-fn format_unix_ms(value: Option<i64>) -> String {
-    let Some(value) = value else {
-        return "—".to_string();
-    };
-    let ts = crate::domain::response::normalize_unix_ms(value);
-    let nanos = ts.saturating_mul(1_000_000) as i128;
-    let Ok(dt) = time::OffsetDateTime::from_unix_timestamp_nanos(nanos) else {
-        return "—".to_string();
-    };
-    let Ok(fmt) = time::format_description::parse(
-        "[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3] UTC",
-    ) else {
-        return "—".to_string();
-    };
-    dt.format(&fmt).unwrap_or_else(|_| "—".to_string())
-}
-
-fn format_bytes(size: u64) -> String {
-    const KB: f64 = 1024.0;
-    const MB: f64 = 1024.0 * 1024.0;
-    if size < 1024 {
-        format!("{size} B")
-    } else if (size as f64) < MB {
-        format!("{:.1} KB", (size as f64) / KB)
-    } else {
-        format!("{:.2} MB", (size as f64) / MB)
-    }
-}
-
-fn params_from_url_query(url: &str) -> Vec<KeyValuePair> {
-    let raw_query = if let Ok(parsed) = url::Url::parse(url) {
-        parsed.query().map(ToOwned::to_owned)
-    } else {
-        url.split_once('?')
-            .map(|(_, q)| q.split_once('#').map(|(qq, _)| qq).unwrap_or(q).to_string())
-    };
-
-    raw_query
-        .map(|q| {
-            url::form_urlencoded::parse(q.as_bytes())
-                .map(|(k, v)| KeyValuePair::new(k.to_string(), v.to_string()))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default()
-}
-
-fn url_with_params(base_url: &str, params: &[KeyValuePair]) -> String {
-    let enabled: Vec<(String, String)> = params
-        .iter()
-        .filter(|p| p.enabled && !p.key.trim().is_empty())
-        .map(|p| (p.key.clone(), p.value.clone()))
-        .collect();
-
-    if let Ok(mut parsed) = url::Url::parse(base_url) {
-        if enabled.is_empty() {
-            parsed.set_query(None);
-        } else {
-            parsed
-                .query_pairs_mut()
-                .clear()
-                .extend_pairs(enabled.iter().map(|(k, v)| (k.as_str(), v.as_str())));
-        }
-        return parsed.to_string();
-    }
-
-    let (base, fragment) = match base_url.split_once('#') {
-        Some((b, f)) => (b, Some(f)),
-        None => (base_url, None),
-    };
-    let path_only = base.split_once('?').map(|(p, _)| p).unwrap_or(base);
-    let query = if enabled.is_empty() {
-        String::new()
-    } else {
-        let mut serializer = url::form_urlencoded::Serializer::new(String::new());
-        for (k, v) in &enabled {
-            serializer.append_pair(k, v);
-        }
-        serializer.finish()
-    };
-
-    match (query.is_empty(), fragment) {
-        (true, Some(f)) => format!("{path_only}#{f}"),
-        (true, None) => path_only.to_string(),
-        (false, Some(f)) => format!("{path_only}?{query}#{f}"),
-        (false, None) => format!("{path_only}?{query}"),
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AuthKind {
-    None,
-    Basic,
-    Bearer,
-    ApiKey,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BodyKind {
-    None,
-    RawText,
-    RawJson,
-    UrlEncoded,
-    FormData,
-    BinaryFile,
-}
-
-fn auth_kind_from_label(label: &str) -> AuthKind {
-    match label {
-        "Basic" => AuthKind::Basic,
-        "Bearer" => AuthKind::Bearer,
-        "API Key" => AuthKind::ApiKey,
-        _ => AuthKind::None,
-    }
-}
-
-fn auth_type_index(auth: &AuthType) -> usize {
-    match auth {
-        AuthType::None => 0,
-        AuthType::Basic { .. } => 1,
-        AuthType::Bearer { .. } => 2,
-        AuthType::ApiKey { .. } => 3,
-    }
-}
-
-fn api_key_location_index(location: ApiKeyLocation) -> usize {
-    match location {
-        ApiKeyLocation::Header => 0,
-        ApiKeyLocation::Query => 1,
-    }
-}
-
-fn api_key_location_from_index(index: usize) -> ApiKeyLocation {
-    match index {
-        1 => ApiKeyLocation::Query,
-        _ => ApiKeyLocation::Header,
-    }
-}
-
-fn body_kind_from_label(label: &str) -> BodyKind {
-    match label {
-        "Raw Text" => BodyKind::RawText,
-        "Raw JSON" => BodyKind::RawJson,
-        "URL Encoded" => BodyKind::UrlEncoded,
-        "Form Data" => BodyKind::FormData,
-        "Binary File" => BodyKind::BinaryFile,
-        _ => BodyKind::None,
-    }
-}
-
-fn body_type_index(body: &BodyType) -> usize {
-    match body {
-        BodyType::None => 0,
-        BodyType::RawText { .. } => 1,
-        BodyType::RawJson { .. } => 2,
-        BodyType::UrlEncoded { .. } => 3,
-        BodyType::FormData { .. } => 4,
-        BodyType::BinaryFile { .. } => 5,
-    }
-}
-
-fn latest_run_summary(exec_status: &ExecStatus) -> String {
-    match exec_status {
-        ExecStatus::Idle => es_fluent::localize("request_tab_latest_run_none", None).to_string(),
-        ExecStatus::Sending => es_fluent::localize("request_tab_sending", None).to_string(),
-        ExecStatus::Streaming => es_fluent::localize("request_tab_streaming", None).to_string(),
-        ExecStatus::Completed { response } => {
-            let status = format!("{} {}", response.status_code, response.status_text);
-            if let Some(ms) = response.total_ms {
-                format!("{status} • {ms} ms")
-            } else {
-                status
-            }
-        }
-        ExecStatus::Failed { summary, .. } => format!(
-            "{}: {}",
-            es_fluent::localize("request_tab_response_failed", None),
-            summary
-        ),
-        ExecStatus::Cancelled { partial_size } => match partial_size {
-            Some(size) => format!(
-                "{} ({size})",
-                es_fluent::localize("request_tab_response_cancelled_with_bytes", None)
-            ),
-            None => es_fluent::localize("request_tab_response_cancelled", None).to_string(),
-        },
-    }
-}
-
-fn classified_error_display(
-    classified: Option<&ClassifiedError>,
-    summary: &str,
-) -> (String, String) {
-    match classified {
-        Some(ClassifiedError::DnsFailure { host }) => (
-            es_fluent::localize("request_tab_error_dns_failure", None).to_string(),
-            format!("Could not resolve host: {host}"),
-        ),
-        Some(ClassifiedError::ConnectionRefused { host, port }) => (
-            es_fluent::localize("request_tab_error_connection_refused", None).to_string(),
-            format!("Connection refused: {host}:{port}"),
-        ),
-        Some(ClassifiedError::ConnectionTimeout) => (
-            es_fluent::localize("request_tab_error_connection_timeout", None).to_string(),
-            summary.to_string(),
-        ),
-        Some(ClassifiedError::RequestTimeout) => (
-            es_fluent::localize("request_tab_error_request_timeout", None).to_string(),
-            summary.to_string(),
-        ),
-        Some(ClassifiedError::TlsError { reason }) => (
-            es_fluent::localize("request_tab_error_tls_failure", None).to_string(),
-            reason.clone(),
-        ),
-        Some(ClassifiedError::TransportError { summary, detail }) => {
-            (summary.clone(), detail.clone())
-        }
-        None => (
-            es_fluent::localize("request_tab_error_transport_generic", None).to_string(),
-            summary.to_string(),
-        ),
-    }
-}
-
-fn render_preview_text(bytes: &[u8], media_type: Option<&str>) -> String {
-    let text = String::from_utf8_lossy(bytes).to_string();
-    if matches!(media_type, Some(mt) if mt.eq_ignore_ascii_case("application/json")) {
-        match serde_json::from_str::<serde_json::Value>(&text) {
-            Ok(value) => serde_json::to_string_pretty(&value).unwrap_or(text),
-            Err(_) => text,
-        }
-    } else if matches!(
-        media_type,
-        Some(mt)
-            if mt.eq_ignore_ascii_case("application/xml")
-                || mt.eq_ignore_ascii_case("text/xml")
-                || mt.eq_ignore_ascii_case("text/html")
-    ) {
-        pretty_print_xml_like(&text).unwrap_or(text)
-    } else {
-        text
-    }
-}
-
-fn pretty_print_xml_like(input: &str) -> Option<String> {
-    use quick_xml::Writer;
-    use quick_xml::events::Event;
-
-    let mut reader = quick_xml::Reader::from_str(input);
-    reader.config_mut().trim_text(false);
-    let mut writer = Writer::new_with_indent(Vec::new(), b' ', 2);
-    let mut buf = Vec::new();
-
-    loop {
-        match reader.read_event_into(&mut buf) {
-            Ok(Event::Eof) => break,
-            Ok(event) => {
-                if writer.write_event(event).is_err() {
-                    return None;
-                }
-            }
-            Err(_) => return None,
-        }
-        buf.clear();
-    }
-
-    String::from_utf8(writer.into_inner()).ok()
-}
-
-fn truncate_for_tab_cap(bytes: Vec<u8>, max_bytes: usize) -> (Vec<u8>, bool) {
-    if bytes.len() > max_bytes {
-        (bytes[..max_bytes].to_vec(), true)
-    } else {
-        (bytes, false)
     }
 }
 

@@ -31,7 +31,8 @@ Status legend: `done` / `partial` / `pending`
 - Slice 5 (Auth structured editor): `partial`
   - done: replaced text DSL input with auth type dropdown + per-type structured panels (None/Basic/Bearer/API Key), including API key location dropdown.
   - done: removed `auth_to_text()` / `parse_auth_text()` path.
-  - pending: integrate secret value read/write UX via `SecretManager` (instead of direct secret-ref fields), show/hide secret toggles, extract `auth_editor.rs`.
+  - done: auth secret inputs now read/write secret values through `SecretManager` (stored as refs in `AuthType`) and use mask-toggle UX.
+  - pending: extract `auth_editor.rs` submodule and refine secret-field copy/visibility affordances.
 - Slice 6 (Body structured editor + streamed request payload): `partial`
   - done: method dropdown replacing freeform method-only editing.
   - done: body type dropdown + per-type panels for None/Raw Text/Raw JSON/URL Encoded; removed `body_input` and `body_editor_value()`.
