@@ -13,7 +13,10 @@ use crate::{
     domain::{
         ids::{HistoryEntryId, RequestId, WorkspaceId},
         request::{ApiKeyLocation, AuthType, BodyType, RequestItem},
-        response::{BodyRef, ResponseBudgets, ResponseSummary},
+        response::{
+            BodyRef, ResponseBudgets, ResponseHeaderRow, ResponseSummary,
+            serialize_response_header_rows,
+        },
     },
     infra::{blobs::BlobStore, secrets::SecretStoreRef},
     repos::history_repo::{HistoryRepoRef, build_request_snapshot},
@@ -196,8 +199,8 @@ impl RequestExecutionService {
                     blob_size,
                     headers_json,
                     summary.media_type.as_deref(),
-                    None,
-                    None,
+                    summary.dispatched_at_unix_ms,
+                    summary.first_byte_at_unix_ms,
                 );
             }
             Ok(ExecOutcome::Failed(error)) => {
@@ -322,6 +325,7 @@ impl RequestExecutionService {
         let body = self.build_request_body(request, &mut header_map)?;
 
         let dispatched_at = Instant::now();
+        let dispatched_at_unix_ms = now_unix_ms();
         tracing::info!(method = %request.method, "request dispatched");
         let transport_response = match self
             .transport
@@ -340,6 +344,7 @@ impl RequestExecutionService {
         };
 
         let first_byte_elapsed = dispatched_at.elapsed();
+        let first_byte_at_unix_ms = now_unix_ms();
 
         let status_code = transport_response.status_code;
         let status_text = transport_response.status_text;
@@ -355,6 +360,7 @@ impl RequestExecutionService {
             .stream_response_body(transport_response.body_stream, &media_type, cancel)
             .await?;
 
+        let completed_at_unix_ms = now_unix_ms();
         let total_ms = Some(dispatched_at.elapsed().as_millis() as u64);
         let ttfb_ms = Some(first_byte_elapsed.as_millis() as u64);
 
@@ -366,6 +372,9 @@ impl RequestExecutionService {
             body_ref,
             total_ms,
             ttfb_ms,
+            dispatched_at_unix_ms: Some(dispatched_at_unix_ms),
+            first_byte_at_unix_ms: Some(first_byte_at_unix_ms),
+            completed_at_unix_ms: Some(completed_at_unix_ms),
         }))
     }
 
@@ -670,20 +679,16 @@ fn check_body_placeholders(body: &BodyType) {
 }
 
 fn serialize_headers(headers: &http::HeaderMap) -> Option<String> {
-    if headers.is_empty() {
-        return None;
-    }
-    let mut map = serde_json::Map::new();
-    for (name, value) in headers {
-        let key = name.as_str().to_string();
-        let val = value.to_str().unwrap_or("<non-ascii>").to_string();
-        map.entry(key)
-            .and_modify(|existing| {
-                if let serde_json::Value::String(s) = existing {
-                    *s = format!("{s}, {val}");
-                }
-            })
-            .or_insert(serde_json::Value::String(val));
-    }
-    Some(serde_json::Value::Object(map).to_string())
+    let rows = headers
+        .iter()
+        .map(|(name, value)| ResponseHeaderRow {
+            name: name.as_str().to_string(),
+            value: value.to_str().unwrap_or("<non-ascii>").to_string(),
+        })
+        .collect::<Vec<_>>();
+    serialize_response_header_rows(&rows)
+}
+
+fn now_unix_ms() -> i64 {
+    (time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000) as i64
 }

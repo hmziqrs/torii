@@ -483,6 +483,9 @@ mod tests {
             body_ref: crate::domain::response::BodyRef::Empty,
             total_ms: Some(150),
             ttfb_ms: Some(50),
+            dispatched_at_unix_ms: None,
+            first_byte_at_unix_ms: None,
+            completed_at_unix_ms: None,
         };
         assert!(editor.complete_exec(summary, op_id));
         assert!(editor.exec_status().is_terminal());
@@ -512,6 +515,9 @@ mod tests {
             body_ref: crate::domain::response::BodyRef::Empty,
             total_ms: None,
             ttfb_ms: None,
+            dispatched_at_unix_ms: None,
+            first_byte_at_unix_ms: None,
+            completed_at_unix_ms: None,
         };
         assert!(!editor.complete_exec(summary, op1));
         assert!(editor.exec_status().is_in_flight()); // Still sending for op2
@@ -576,6 +582,9 @@ mod tests {
             body_ref: crate::domain::response::BodyRef::Empty,
             total_ms: None,
             ttfb_ms: None,
+            dispatched_at_unix_ms: None,
+            first_byte_at_unix_ms: None,
+            completed_at_unix_ms: None,
         };
         assert!(editor.complete_exec(summary, op_id));
 

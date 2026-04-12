@@ -264,6 +264,9 @@ fn late_response_after_cancel_is_ignored() {
         body_ref: BodyRef::Empty,
         total_ms: None,
         ttfb_ms: None,
+        dispatched_at_unix_ms: None,
+        first_byte_at_unix_ms: None,
+        completed_at_unix_ms: None,
     };
     let accepted = editor.complete_exec(summary, op1);
     assert!(!accepted, "late op1 response must be ignored");
@@ -278,6 +281,9 @@ fn late_response_after_cancel_is_ignored() {
         body_ref: BodyRef::Empty,
         total_ms: None,
         ttfb_ms: None,
+        dispatched_at_unix_ms: None,
+        first_byte_at_unix_ms: None,
+        completed_at_unix_ms: None,
     };
     let accepted2 = editor.complete_exec(summary2, op2);
     assert!(accepted2, "op2 response must be accepted");

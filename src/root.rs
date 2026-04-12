@@ -1,12 +1,12 @@
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme as _, Icon, IconName, Root, Sizable as _, WindowExt as _,
+    Icon, IconName, Root, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     menu::PopupMenuItem,
     resizable::{h_resizable, resizable_panel},
     scroll::ScrollableElement as _,
-    sidebar::{Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem},
+    sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem},
     v_flex,
 };
 
@@ -16,7 +16,7 @@ use crate::{
         history::HistoryState,
         ids::{RequestDraftId, RequestId},
         item_id::ItemId,
-        response::{BodyRef, ResponseBudgets, ResponseSummary},
+        response::{BodyRef, ResponseBudgets, ResponseSummary, normalize_unix_ms},
     },
     repos::tab_session_repo::TabSessionMetadata,
     services::{
@@ -629,22 +629,24 @@ impl AppRoot {
                             .ok()
                             .and_then(|status| status.canonical_reason().map(ToOwned::to_owned))
                             .unwrap_or_default();
-                        let total_ms =
-                            match (history_entry.dispatched_at, history_entry.completed_at) {
-                                (Some(dispatched), Some(completed)) if completed >= dispatched => {
-                                    Some((completed - dispatched) as u64)
-                                }
-                                _ => None,
-                            };
-                        let ttfb_ms =
-                            match (history_entry.dispatched_at, history_entry.first_byte_at) {
-                                (Some(dispatched), Some(first_byte))
-                                    if first_byte >= dispatched =>
-                                {
-                                    Some((first_byte - dispatched) as u64)
-                                }
-                                _ => None,
-                            };
+                        let dispatched_at_unix_ms =
+                            history_entry.dispatched_at.map(normalize_unix_ms);
+                        let first_byte_at_unix_ms =
+                            history_entry.first_byte_at.map(normalize_unix_ms);
+                        let completed_at_unix_ms =
+                            history_entry.completed_at.map(normalize_unix_ms);
+                        let total_ms = match (dispatched_at_unix_ms, completed_at_unix_ms) {
+                            (Some(dispatched), Some(completed)) if completed >= dispatched => {
+                                Some((completed - dispatched) as u64)
+                            }
+                            _ => None,
+                        };
+                        let ttfb_ms = match (dispatched_at_unix_ms, first_byte_at_unix_ms) {
+                            (Some(dispatched), Some(first_byte)) if first_byte >= dispatched => {
+                                Some((first_byte - dispatched) as u64)
+                            }
+                            _ => None,
+                        };
 
                         tab.editor_mut()
                             .restore_completed_response(ResponseSummary {
@@ -655,6 +657,9 @@ impl AppRoot {
                                 body_ref,
                                 total_ms,
                                 ttfb_ms,
+                                dispatched_at_unix_ms,
+                                first_byte_at_unix_ms,
+                                completed_at_unix_ms,
                             });
                     }
                     HistoryState::Failed => {

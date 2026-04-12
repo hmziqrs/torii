@@ -13,7 +13,9 @@ use crate::{
     domain::{
         ids::WorkspaceId,
         request::{ApiKeyLocation, AuthType, BodyType, KeyValuePair, RequestItem},
-        response::{BodyRef, ResponseBudgets},
+        response::{
+            BodyRef, HeaderJsonFormat, ResponseBudgets, parse_response_header_rows,
+        },
     },
     repos::request_repo::RequestRepoError,
     services::{
@@ -40,6 +42,14 @@ enum RequestSectionTab {
     Tests,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResponseTab {
+    Body,
+    Headers,
+    Cookies,
+    Timing,
+}
+
 pub struct RequestTabView {
     editor: RequestEditorState,
     focus_handle: FocusHandle,
@@ -55,6 +65,7 @@ pub struct RequestTabView {
     timeout_input: Entity<InputState>,
     follow_redirects_input: Entity<InputState>,
     active_section: RequestSectionTab,
+    active_response_tab: ResponseTab,
     loaded_full_body_blob_id: Option<String>,
     loaded_full_body_text: Option<String>,
     input_sync_guard: ReentrancyGuard,
@@ -406,6 +417,7 @@ impl RequestTabView {
             timeout_input,
             follow_redirects_input,
             active_section: RequestSectionTab::Params,
+            active_response_tab: ResponseTab::Body,
             loaded_full_body_blob_id: None,
             loaded_full_body_text: None,
             input_sync_guard: ReentrancyGuard::default(),
@@ -1025,6 +1037,13 @@ impl RequestTabView {
         }
     }
 
+    fn set_active_response_tab(&mut self, tab: ResponseTab, cx: &mut Context<Self>) {
+        if self.active_response_tab != tab {
+            self.active_response_tab = tab;
+            cx.notify();
+        }
+    }
+
     fn open_settings_dialog(&self, window: &mut Window, cx: &mut Context<Self>) {
         let timeout_input = self.timeout_input.clone();
         let follow_redirects_input = self.follow_redirects_input.clone();
@@ -1163,38 +1182,13 @@ impl Render for RequestTabView {
             ),
             ExecStatus::Completed { response } => {
                 let resp = response.as_ref();
-                let status_color = if resp.status_code < 400 {
-                    gpui::hsla(120. / 360., 0.7, 0.35, 1.)
-                } else {
-                    gpui::red()
-                };
+                let status_color = status_code_color(resp.status_code);
+                let status_size = format_bytes(resp.body_ref.size_bytes());
 
-                let mut body_preview = match &resp.body_ref {
-                    BodyRef::Empty => String::new(),
-                    BodyRef::InMemoryPreview { bytes, .. } => {
-                        render_preview_text(bytes.as_ref(), resp.media_type.as_deref())
-                    }
-                    BodyRef::DiskBlob {
-                        preview,
-                        size_bytes,
-                        ..
-                    } => {
-                        let preview_text = preview
-                            .as_ref()
-                            .map(|b| render_preview_text(b.as_ref(), resp.media_type.as_deref()))
-                            .unwrap_or_default();
-                        let preview_len = preview.as_ref().map(|b| b.len()).unwrap_or(0) as u64;
-                        if *size_bytes > preview_len {
-                            format!(
-                                "{}\n{}",
-                                preview_text,
-                                es_fluent::localize("request_tab_response_truncated", None)
-                            )
-                        } else {
-                            preview_text
-                        }
-                    }
-                };
+                let mut body_preview = response_body_preview_text(resp, &self.loaded_full_body_text);
+                let (header_rows, header_format) =
+                    parse_response_header_rows(resp.headers_json.as_deref());
+                let cookies = parse_set_cookie_rows(&header_rows);
 
                 let load_full_button = match &resp.body_ref {
                     BodyRef::DiskBlob { blob_id, .. } => {
@@ -1222,10 +1216,173 @@ impl Render for RequestTabView {
                     _ => div(),
                 };
 
+                let body_content = if looks_like_image(resp.media_type.as_deref()) {
+                    div()
+                        .text_sm()
+                        .text_color(gpui::hsla(0., 0., 0.5, 1.))
+                        .child(es_fluent::localize("request_tab_response_image_preview_todo", None))
+                } else if !body_preview.is_empty() {
+                    div()
+                        .mt_2()
+                        .p_3()
+                        .rounded(px(4.))
+                        .bg(gpui::hsla(0., 0., 0.97, 1.))
+                        .text_sm()
+                        .font_family("monospace")
+                        .child(body_preview)
+                } else {
+                    div()
+                        .text_sm()
+                        .text_color(gpui::hsla(0., 0., 0.5, 1.))
+                        .child(es_fluent::localize("request_tab_response_body_empty", None))
+                };
+
+                let headers_content = if header_rows.is_empty() {
+                    div()
+                        .text_sm()
+                        .text_color(gpui::hsla(0., 0., 0.5, 1.))
+                        .child(es_fluent::localize("request_tab_response_headers_empty", None))
+                } else {
+                    v_flex()
+                        .gap_1()
+                        .when(
+                            matches!(header_format, Some(HeaderJsonFormat::LegacyObjectMap)),
+                            |el: gpui::Div| {
+                                el.child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(gpui::hsla(30. / 360., 0.9, 0.38, 1.))
+                                        .child(es_fluent::localize(
+                                            "request_tab_response_headers_legacy_note",
+                                            None,
+                                        )),
+                                )
+                            },
+                        )
+                        .children(header_rows.iter().enumerate().map(|(idx, row)| {
+                            h_flex()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .font_family("monospace")
+                                        .text_sm()
+                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                        .child(row.name.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .font_family("monospace")
+                                        .text_sm()
+                                        .text_color(gpui::hsla(0., 0., 0.35, 1.))
+                                        .child(row.value.clone()),
+                                )
+                                .id(("response-header-row", idx))
+                        }))
+                };
+
+                let cookies_content = if cookies.is_empty() {
+                    div()
+                        .text_sm()
+                        .text_color(gpui::hsla(0., 0., 0.5, 1.))
+                        .child(es_fluent::localize("request_tab_response_cookies_empty", None))
+                } else {
+                    v_flex().gap_1().children(cookies.iter().enumerate().map(|(idx, cookie)| {
+                        let same_site = cookie.same_site.clone().unwrap_or_else(|| "—".to_string());
+                        let expires = cookie
+                            .expires_or_max_age
+                            .clone()
+                            .unwrap_or_else(|| "—".to_string());
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .font_family("monospace")
+                                    .text_sm()
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .child(cookie.name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .font_family("monospace")
+                                    .text_sm()
+                                    .text_color(gpui::hsla(0., 0., 0.35, 1.))
+                                    .child(format!(
+                                        "{}; domain={}; path={}; expires/max-age={}; secure={}; httpOnly={}; sameSite={}",
+                                        cookie.value_preview,
+                                        cookie.domain.clone().unwrap_or_else(|| "—".to_string()),
+                                        cookie.path.clone().unwrap_or_else(|| "—".to_string()),
+                                        expires,
+                                        if cookie.secure { "true" } else { "false" },
+                                        if cookie.http_only { "true" } else { "false" },
+                                        same_site,
+                                    )),
+                            )
+                            .id(("response-cookie-row", idx))
+                    }))
+                };
+
+                let timing_content = v_flex()
+                    .gap_1()
+                    .child(timing_row(
+                        es_fluent::localize("request_tab_response_timing_total", None).to_string(),
+                        resp.total_ms
+                            .map(|ms| format!("{ms} ms"))
+                            .unwrap_or_else(|| "—".to_string()),
+                    ))
+                    .child(timing_row(
+                        es_fluent::localize("request_tab_response_timing_ttfb", None).to_string(),
+                        resp.ttfb_ms
+                            .map(|ms| format!("{ms} ms"))
+                            .unwrap_or_else(|| "—".to_string()),
+                    ))
+                    .child(timing_row(
+                        es_fluent::localize(
+                            "request_tab_response_timing_dispatched_at",
+                            None,
+                        )
+                        .to_string(),
+                        format_unix_ms(resp.dispatched_at_unix_ms),
+                    ))
+                    .child(timing_row(
+                        es_fluent::localize(
+                            "request_tab_response_timing_first_byte_at",
+                            None,
+                        )
+                        .to_string(),
+                        format_unix_ms(resp.first_byte_at_unix_ms),
+                    ))
+                    .child(timing_row(
+                        es_fluent::localize(
+                            "request_tab_response_timing_completed_at",
+                            None,
+                        )
+                        .to_string(),
+                        format_unix_ms(resp.completed_at_unix_ms),
+                    ))
+                    .child(timing_row(
+                        es_fluent::localize("request_tab_response_timing_dns", None).to_string(),
+                        "—".to_string(),
+                    ))
+                    .child(timing_row(
+                        es_fluent::localize("request_tab_response_timing_tcp", None).to_string(),
+                        "—".to_string(),
+                    ))
+                    .child(timing_row(
+                        es_fluent::localize("request_tab_response_timing_tls", None).to_string(),
+                        "—".to_string(),
+                    ));
+
+                let active_content = match self.active_response_tab {
+                    ResponseTab::Body => body_content.into_any_element(),
+                    ResponseTab::Headers => headers_content.into_any_element(),
+                    ResponseTab::Cookies => cookies_content.into_any_element(),
+                    ResponseTab::Timing => timing_content.into_any_element(),
+                };
+
                 div()
                     .gap_2()
                     .child(
-                        h_flex().gap_3().child(
+                        h_flex().gap_3().items_center().child(
                             div()
                                 .text_sm()
                                 .font_weight(gpui::FontWeight::BOLD)
@@ -1233,42 +1390,68 @@ impl Render for RequestTabView {
                                 .child(format!("{} {}", resp.status_code, resp.status_text)),
                         ),
                     )
-                    .when(resp.total_ms.is_some(), |el: gpui::Div| {
-                        el.child(
-                            div()
-                                .text_xs()
-                                .text_color(gpui::hsla(0., 0., 0.5, 1.))
-                                .child(format!(
-                                    "{} {}",
-                                    resp.total_ms.unwrap(),
-                                    es_fluent::localize("request_tab_ms", None)
-                                )),
-                        )
-                    })
-                    .when(resp.ttfb_ms.is_some(), |el: gpui::Div| {
-                        el.child(
-                            div()
-                                .text_xs()
-                                .text_color(gpui::hsla(0., 0., 0.5, 1.))
-                                .child(format!(
-                                    "TTFB: {} {}",
-                                    resp.ttfb_ms.unwrap(),
-                                    es_fluent::localize("request_tab_ms", None)
-                                )),
-                        )
-                    })
-                    .when(!body_preview.is_empty(), |el: gpui::Div| {
-                        el.child(
-                            div()
-                                .mt_2()
-                                .p_3()
-                                .rounded(px(4.))
-                                .bg(gpui::hsla(0., 0., 0.97, 1.))
-                                .text_sm()
-                                .font_family("monospace")
-                                .child(body_preview),
-                        )
-                    })
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .text_xs()
+                            .text_color(gpui::hsla(0., 0., 0.5, 1.))
+                            .child(format!(
+                                "{}: {}",
+                                es_fluent::localize("request_tab_response_size", None),
+                                status_size
+                            ))
+                            .child("•")
+                            .child(format!(
+                                "{}: {}",
+                                es_fluent::localize("request_tab_response_total_time", None),
+                                resp.total_ms
+                                    .map(|ms| format!("{ms} ms"))
+                                    .unwrap_or_else(|| "—".to_string())
+                            )),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .flex_wrap()
+                            .child(response_tab_button(
+                                "request-response-tab-body",
+                                es_fluent::localize("request_tab_response_tab_body", None)
+                                    .to_string(),
+                                self.active_response_tab == ResponseTab::Body,
+                                cx.listener(|this, _, _, cx| {
+                                    this.set_active_response_tab(ResponseTab::Body, cx);
+                                }),
+                            ))
+                            .child(response_tab_button(
+                                "request-response-tab-headers",
+                                es_fluent::localize("request_tab_response_tab_headers", None)
+                                    .to_string(),
+                                self.active_response_tab == ResponseTab::Headers,
+                                cx.listener(|this, _, _, cx| {
+                                    this.set_active_response_tab(ResponseTab::Headers, cx);
+                                }),
+                            ))
+                            .child(response_tab_button(
+                                "request-response-tab-cookies",
+                                es_fluent::localize("request_tab_response_tab_cookies", None)
+                                    .to_string(),
+                                self.active_response_tab == ResponseTab::Cookies,
+                                cx.listener(|this, _, _, cx| {
+                                    this.set_active_response_tab(ResponseTab::Cookies, cx);
+                                }),
+                            ))
+                            .child(response_tab_button(
+                                "request-response-tab-timing",
+                                es_fluent::localize("request_tab_response_tab_timing", None)
+                                    .to_string(),
+                                self.active_response_tab == ResponseTab::Timing,
+                                cx.listener(|this, _, _, cx| {
+                                    this.set_active_response_tab(ResponseTab::Timing, cx);
+                                }),
+                            )),
+                    )
+                    .child(active_content)
                     .child(load_full_button)
             }
             ExecStatus::Failed { error } => {
@@ -1578,6 +1761,167 @@ fn section_tab_button(
     }
 }
 
+fn response_tab_button(
+    id: &'static str,
+    label: String,
+    active: bool,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+) -> Button {
+    if active {
+        Button::new(id).primary().label(label).on_click(on_click)
+    } else {
+        Button::new(id).ghost().label(label).on_click(on_click)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CookieRow {
+    name: String,
+    value_preview: String,
+    domain: Option<String>,
+    path: Option<String>,
+    expires_or_max_age: Option<String>,
+    secure: bool,
+    http_only: bool,
+    same_site: Option<String>,
+}
+
+fn status_code_color(status_code: u16) -> Hsla {
+    match status_code {
+        200..=299 => gpui::hsla(120. / 360., 0.7, 0.35, 1.),
+        300..=399 => gpui::hsla(210. / 360., 0.8, 0.45, 1.),
+        400..=499 => gpui::hsla(42. / 360., 0.9, 0.4, 1.),
+        _ => gpui::hsla(0., 0.78, 0.45, 1.),
+    }
+}
+
+fn response_body_preview_text(
+    response: &crate::domain::response::ResponseSummary,
+    loaded_full_body_text: &Option<String>,
+) -> String {
+    if let Some(full) = loaded_full_body_text {
+        return full.clone();
+    }
+
+    match &response.body_ref {
+        BodyRef::Empty => String::new(),
+        BodyRef::InMemoryPreview { bytes, .. } => {
+            render_preview_text(bytes.as_ref(), response.media_type.as_deref())
+        }
+        BodyRef::DiskBlob {
+            preview,
+            size_bytes,
+            ..
+        } => {
+            let preview_text = preview
+                .as_ref()
+                .map(|b| render_preview_text(b.as_ref(), response.media_type.as_deref()))
+                .unwrap_or_default();
+            let preview_len = preview.as_ref().map(|b| b.len()).unwrap_or(0) as u64;
+            if *size_bytes > preview_len {
+                format!(
+                    "{}\n{}",
+                    preview_text,
+                    es_fluent::localize("request_tab_response_truncated", None)
+                )
+            } else {
+                preview_text
+            }
+        }
+    }
+}
+
+fn looks_like_image(media_type: Option<&str>) -> bool {
+    matches!(media_type, Some(value) if value.to_ascii_lowercase().starts_with("image/"))
+}
+
+fn parse_set_cookie_rows(rows: &[crate::domain::response::ResponseHeaderRow]) -> Vec<CookieRow> {
+    let mut parsed = Vec::new();
+    for row in rows {
+        if !row.name.eq_ignore_ascii_case("set-cookie") {
+            continue;
+        }
+        let Ok(cookie) = cookie::Cookie::parse(row.value.clone()) else {
+            continue;
+        };
+
+        let raw_value = cookie.value().to_string();
+        let value_preview = if raw_value.len() > 80 {
+            format!("{}…", &raw_value[..80])
+        } else {
+            raw_value
+        };
+        let expires_or_max_age = cookie.max_age().map(|d| format!("{}s", d.whole_seconds())).or_else(
+            || {
+                cookie.expires().and_then(|v| {
+                    v.datetime().and_then(|dt| {
+                        time::format_description::parse(
+                            "[year]-[month]-[day] [hour]:[minute]:[second] UTC",
+                        )
+                        .ok()
+                        .and_then(|fmt| dt.format(&fmt).ok())
+                    })
+                })
+            },
+        );
+        let same_site = cookie.same_site().map(|s| format!("{s:?}"));
+
+        parsed.push(CookieRow {
+            name: cookie.name().to_string(),
+            value_preview,
+            domain: cookie.domain().map(ToOwned::to_owned),
+            path: cookie.path().map(ToOwned::to_owned),
+            expires_or_max_age,
+            secure: cookie.secure().unwrap_or(false),
+            http_only: cookie.http_only().unwrap_or(false),
+            same_site,
+        });
+    }
+    parsed
+}
+
+fn timing_row(label: String, value: String) -> gpui::Div {
+    h_flex()
+        .justify_between()
+        .gap_3()
+        .child(
+            div()
+                .text_sm()
+                .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                .child(label),
+        )
+        .child(div().text_sm().font_family("monospace").child(value))
+}
+
+fn format_unix_ms(value: Option<i64>) -> String {
+    let Some(value) = value else {
+        return "—".to_string();
+    };
+    let ts = crate::domain::response::normalize_unix_ms(value);
+    let nanos = ts.saturating_mul(1_000_000) as i128;
+    let Ok(dt) = time::OffsetDateTime::from_unix_timestamp_nanos(nanos) else {
+        return "—".to_string();
+    };
+    let Ok(fmt) = time::format_description::parse(
+        "[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3] UTC",
+    ) else {
+        return "—".to_string();
+    };
+    dt.format(&fmt).unwrap_or_else(|_| "—".to_string())
+}
+
+fn format_bytes(size: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = 1024.0 * 1024.0;
+    if size < 1024 {
+        format!("{size} B")
+    } else if (size as f64) < MB {
+        format!("{:.1} KB", (size as f64) / KB)
+    } else {
+        format!("{:.2} MB", (size as f64) / MB)
+    }
+}
+
 fn key_value_pairs_to_text(entries: &[KeyValuePair]) -> String {
     entries
         .iter()
@@ -1839,9 +2183,42 @@ fn render_preview_text(bytes: &[u8], media_type: Option<&str>) -> String {
             Ok(value) => serde_json::to_string_pretty(&value).unwrap_or(text),
             Err(_) => text,
         }
+    } else if matches!(
+        media_type,
+        Some(mt)
+            if mt.eq_ignore_ascii_case("application/xml")
+                || mt.eq_ignore_ascii_case("text/xml")
+                || mt.eq_ignore_ascii_case("text/html")
+    ) {
+        pretty_print_xml_like(&text).unwrap_or(text)
     } else {
         text
     }
+}
+
+fn pretty_print_xml_like(input: &str) -> Option<String> {
+    use quick_xml::Writer;
+    use quick_xml::events::Event;
+
+    let mut reader = quick_xml::Reader::from_str(input);
+    reader.config_mut().trim_text(false);
+    let mut writer = Writer::new_with_indent(Vec::new(), b' ', 2);
+    let mut buf = Vec::new();
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Eof) => break,
+            Ok(event) => {
+                if writer.write_event(event).is_err() {
+                    return None;
+                }
+            }
+            Err(_) => return None,
+        }
+        buf.clear();
+    }
+
+    String::from_utf8(writer.into_inner()).ok()
 }
 
 fn truncate_for_tab_cap(bytes: Vec<u8>, max_bytes: usize) -> (Vec<u8>, bool) {
