@@ -783,6 +783,7 @@ fn history_snapshot_redacts_auth_headers() {
     let snapshot = torii::repos::history_repo::build_request_snapshot(&request);
 
     // Auth kind = "bearer", never the secret value
+    assert_eq!(snapshot.method, "GET");
     assert_eq!(snapshot.auth_kind.as_deref(), Some("bearer"));
     assert_eq!(
         snapshot.url_redacted,

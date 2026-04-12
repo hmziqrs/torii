@@ -51,6 +51,7 @@ pub struct HistoryEntry {
 
     // Phase 3 secret-safe sent-request snapshot
     pub request_url_redacted: Option<String>,
+    pub request_method: Option<String>,
     pub request_headers_redacted_json: Option<String>,
     pub request_auth_kind: Option<String>,
     pub request_body_summary_json: Option<String>,

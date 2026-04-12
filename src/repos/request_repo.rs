@@ -521,7 +521,7 @@ fn map_request_row(row: sqlx::sqlite::SqliteRow) -> RepoResult<RequestItem> {
 
     let params_json: String = row
         .try_get("params_json")
-        .unwrap_or_else(|_| "{}".to_string());
+        .unwrap_or_else(|_| "[]".to_string());
     let headers_json: String = row
         .try_get("headers_json")
         .unwrap_or_else(|_| "[]".to_string());

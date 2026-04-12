@@ -24,6 +24,7 @@ use crate::{
 
 use super::{
     app_services::{AppServices, Repositories},
+    request_execution::{RequestExecutionService, ReqwestTransport},
     recovery::RecoveryCoordinator,
     secret_manager::SecretManager,
     session_restore::SessionRestoreService,
@@ -81,6 +82,13 @@ fn build_app_services() -> Result<AppServices> {
     );
     let ui_preferences: UiPreferencesStoreRef =
         Arc::new(SqliteUiPreferencesStore::new(preferences_repo.clone()));
+    let transport = Arc::new(ReqwestTransport::new().context("failed to build HTTP transport")?);
+    let request_execution = Arc::new(RequestExecutionService::new(
+        transport,
+        history_repo.clone(),
+        blob_store.clone(),
+        secret_store.clone(),
+    ));
 
     let recovery = RecoveryCoordinator::new(db.clone(), history_repo.clone(), blob_store.clone());
     recovery
@@ -106,6 +114,7 @@ fn build_app_services() -> Result<AppServices> {
         paths,
         db,
         io_runtime,
+        request_execution,
         blob_store,
         secret_store,
         secret_manager,
@@ -195,6 +204,14 @@ fn fallback_app_services() -> AppServices {
     let ui_preferences: UiPreferencesStoreRef = Arc::new(InMemoryUiPreferencesStore::new(Some(
         UiPreferencesSnapshot::default(),
     )));
+    let transport =
+        Arc::new(ReqwestTransport::new().expect("failed to build fallback HTTP transport"));
+    let request_execution = Arc::new(RequestExecutionService::new(
+        transport,
+        history_repo.clone(),
+        blob_store.clone(),
+        secret_store.clone(),
+    ));
 
     let recovery = RecoveryCoordinator::new(db.clone(), history_repo.clone(), blob_store.clone());
     let _ = recovery.run_startup_recovery();
@@ -218,6 +235,7 @@ fn fallback_app_services() -> AppServices {
         paths: fallback_paths,
         db,
         io_runtime,
+        request_execution,
         blob_store,
         secret_store,
         secret_manager,

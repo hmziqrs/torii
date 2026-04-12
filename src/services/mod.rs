@@ -4,6 +4,7 @@ pub mod request_execution;
 pub mod secret_manager;
 pub mod session_restore;
 pub mod startup;
+pub mod telemetry;
 pub mod tokio_runtime;
 pub mod ui_preferences;
 pub mod workspace_tree;

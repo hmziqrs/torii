@@ -83,6 +83,12 @@ impl RecoveryCoordinator {
             .blob_store
             .cleanup_orphan_blobs(&referenced_hashes)
             .context("failed to cleanup orphan blobs")?;
+        if orphan_blob_removed > 0 {
+            tracing::warn!(
+                orphan_blob_removed,
+                "orphan-blob cleanup removed unreferenced blobs during startup recovery"
+            );
+        }
 
         let finished_at = time::OffsetDateTime::now_utc().unix_timestamp();
         self.db.block_on(async {

@@ -14,6 +14,7 @@ use crate::{
 };
 
 use super::{
+    request_execution::RequestExecutionService,
     recovery::RecoveryCoordinator, secret_manager::SecretManager,
     session_restore::SessionRestoreService, tokio_runtime::TokioRuntime,
     ui_preferences::UiPreferencesStoreRef,
@@ -37,6 +38,7 @@ pub struct AppServices {
     pub paths: AppPaths,
     pub db: Arc<Database>,
     pub io_runtime: Arc<TokioRuntime>,
+    pub request_execution: Arc<RequestExecutionService>,
     pub blob_store: Arc<BlobStore>,
     pub secret_store: SecretStoreRef,
     pub secret_manager: SecretManager,

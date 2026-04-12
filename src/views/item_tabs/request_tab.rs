@@ -13,12 +13,13 @@ use crate::{
     domain::{
         ids::WorkspaceId,
         request::{ApiKeyLocation, AuthType, BodyType, KeyValuePair, RequestItem},
-        response::BodyRef,
+        response::{BodyRef, ResponseBudgets},
     },
     repos::request_repo::RequestRepoError,
     services::{
         app_services::{AppServices, AppServicesGlobal},
-        request_execution::{ExecOutcome, ExecProgressEvent, RequestExecutionService},
+        request_execution::{ExecOutcome, ExecProgressEvent},
+        telemetry,
     },
     session::request_editor_state::{EditorIdentity, ExecStatus, RequestEditorState, SaveStatus},
 };
@@ -76,10 +77,17 @@ impl RequestTabView {
     }
 
     fn build_with_editor(
-        editor: RequestEditorState,
+        mut editor: RequestEditorState,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        if editor.draft().params.is_empty() {
+            let from_url = params_from_url_query(editor.draft().url.as_str());
+            if !from_url.is_empty() {
+                editor.draft_mut().params = from_url;
+                editor.refresh_save_status();
+            }
+        }
         let initial = editor.draft().clone();
 
         let name_input = cx.new(|cx| {
@@ -185,6 +193,10 @@ impl RequestTabView {
                     let url = state.read(cx).value().to_string();
                     if this.editor.draft().url != url {
                         this.editor.draft_mut().url = url;
+                        let next_params = params_from_url_query(this.editor.draft().url.as_str());
+                        if this.editor.draft().params != next_params {
+                            this.editor.draft_mut().params = next_params;
+                        }
                         this.editor.refresh_save_status();
                         cx.notify();
                     }
@@ -199,6 +211,13 @@ impl RequestTabView {
                     let next = parse_key_value_pairs(&state.read(cx).value());
                     if this.editor.draft().params != next {
                         this.editor.draft_mut().params = next;
+                        let next_url = url_with_params(
+                            this.editor.draft().url.as_str(),
+                            this.editor.draft().params.as_slice(),
+                        );
+                        if this.editor.draft().url != next_url {
+                            this.editor.draft_mut().url = next_url;
+                        }
                         this.editor.refresh_save_status();
                         cx.notify();
                     }
@@ -544,14 +563,10 @@ impl RequestTabView {
 
         // Create pending history row with secret-safe snapshot
         let draft = self.editor.draft().clone();
-        let snapshot = crate::repos::history_repo::build_request_snapshot(&draft);
-        let history_entry = match services.repos.history.create_pending(
-            workspace_id,
-            self.editor.request_id(),
-            &draft.method,
-            &draft.url,
-            Some(snapshot),
-        ) {
+        let history_entry = match services
+            .request_execution
+            .create_pending_history(workspace_id, self.editor.request_id(), &draft)
+        {
             Ok(entry) => entry,
             Err(e) => {
                 self.editor.set_preflight_error(format!(
@@ -572,7 +587,7 @@ impl RequestTabView {
         }
         cx.notify();
 
-        let exec_service = build_execution_service(&services);
+        let exec_service = services.request_execution.clone();
         let Some(cancel_token) = self.editor.cancellation_token().cloned() else {
             self.editor.set_preflight_error(
                 es_fluent::localize("request_tab_preflight", None).to_string(),
@@ -580,15 +595,13 @@ impl RequestTabView {
             cx.notify();
             return;
         };
-        let history_repo = services.repos.history.clone();
-        let blob_store = services.blob_store.clone();
         let io_runtime = services.io_runtime.clone();
         let (progress_tx, mut progress_rx) =
             tokio::sync::mpsc::unbounded_channel::<ExecProgressEvent>();
 
         cx.spawn(async move |this, cx| {
             while let Some(event) = progress_rx.recv().await {
-                let _ = this.update(cx, |this, cx| {
+                if let Err(err) = this.update(cx, |this, cx| {
                     if this.editor.active_operation_id() != Some(operation_id) {
                         return;
                     }
@@ -598,15 +611,19 @@ impl RequestTabView {
                             cx.notify();
                         }
                     }
-                });
+                }) {
+                    tracing::warn!(error = %err, "failed to update request tab for streaming progress");
+                    telemetry::inc_async_update_failures("dropped_entity");
+                }
             }
         })
         .detach();
 
         cx.spawn(async move |this, cx| {
             let request = draft.clone();
+            let exec_service_for_task = exec_service.clone();
             let handle = io_runtime.spawn(async move {
-                exec_service
+                exec_service_for_task
                     .execute_with_progress(
                         &request,
                         workspace_id,
@@ -619,50 +636,9 @@ impl RequestTabView {
                 .await
                 .unwrap_or_else(|e| Err(anyhow::anyhow!("task join error: {e}")));
 
-            match &result {
-                Ok(ExecOutcome::Completed(summary)) => {
-                    let headers_json = summary.headers_json.as_deref();
-                    let (blob_hash_owned, blob_size) = match &summary.body_ref {
-                        BodyRef::DiskBlob {
-                            blob_id,
-                            size_bytes,
-                            ..
-                        } => (Some(blob_id.clone()), Some(*size_bytes as i64)),
-                        BodyRef::InMemoryPreview { bytes, .. } => {
-                            match blob_store.write_bytes(bytes, summary.media_type.as_deref()) {
-                                Ok(meta) => (Some(meta.hash), Some(meta.size_bytes as i64)),
-                                Err(_) => (None, None),
-                            }
-                        }
-                        BodyRef::Empty => (None, None),
-                    };
-                    let _ = history_repo.finalize_completed(
-                        operation_id,
-                        summary.status_code as i64,
-                        blob_hash_owned.as_deref(),
-                        blob_size,
-                        headers_json,
-                        summary.media_type.as_deref(),
-                        None,
-                        None,
-                    );
-                }
-                Ok(ExecOutcome::Failed(error)) => {
-                    let _ = history_repo.mark_failed(operation_id, error);
-                }
-                Ok(ExecOutcome::Cancelled { partial_size }) => {
-                    let _ = history_repo
-                        .finalize_cancelled(operation_id, partial_size.map(|s| s as i64));
-                }
-                Ok(ExecOutcome::PreflightFailed(msg)) => {
-                    let _ = history_repo.mark_failed(operation_id, msg);
-                }
-                Err(e) => {
-                    let _ = history_repo.mark_failed(operation_id, &e.to_string());
-                }
-            }
+            exec_service.finalize_history(operation_id, &result);
 
-            let _ = this.update(cx, |this, cx| {
+            if let Err(err) = this.update(cx, |this, cx| {
                 this.loaded_full_body_blob_id = None;
                 this.loaded_full_body_text = None;
                 match result {
@@ -700,7 +676,10 @@ impl RequestTabView {
                 }
                 this.editor.set_latest_history_id(Some(operation_id));
                 cx.notify();
-            });
+            }) {
+                tracing::warn!(error = %err, "failed to update request tab for terminal execution state");
+                telemetry::inc_async_update_failures("dropped_entity");
+            }
         })
         .detach();
     }
@@ -711,6 +690,7 @@ impl RequestTabView {
 
     /// Cancel the active send operation.
     pub fn cancel_send(&mut self, cx: &mut Context<Self>) {
+        let _span = tracing::info_span!("request.cancel").entered();
         if let Some(token) = self.editor.cancellation_token() {
             token.cancel();
         }
@@ -757,7 +737,13 @@ impl RequestTabView {
             )
         })?;
 
-        self.loaded_full_body_text = Some(render_preview_text(&bytes, media_type.as_deref()));
+        let (capped, was_truncated) = truncate_for_tab_cap(bytes);
+        let mut text = render_preview_text(&capped, media_type.as_deref());
+        if was_truncated {
+            text.push('\n');
+            text.push_str(&es_fluent::localize("request_tab_response_truncated", None));
+        }
+        self.loaded_full_body_text = Some(text);
         self.loaded_full_body_blob_id = Some(blob_id);
         cx.notify();
         Ok(())
@@ -1065,20 +1051,6 @@ impl RequestTabView {
     }
 }
 
-fn build_execution_service(
-    services: &std::sync::Arc<crate::services::app_services::AppServices>,
-) -> RequestExecutionService {
-    use crate::services::request_execution::ReqwestTransport;
-
-    let transport = Arc::new(ReqwestTransport::new().expect("failed to build HTTP transport"));
-    RequestExecutionService::new(
-        transport,
-        services.repos.history.clone(),
-        services.blob_store.clone(),
-        services.secret_store.clone(),
-    )
-}
-
 impl Focusable for RequestTabView {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
@@ -1086,8 +1058,20 @@ impl Focusable for RequestTabView {
 }
 
 impl Render for RequestTabView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let request = self.editor.draft();
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let draft = self.editor.draft().clone();
+        let canonical_params_text = key_value_pairs_to_text(&draft.params);
+        if self.url_input.read(cx).value().as_ref() != draft.url.as_str() {
+            self.url_input.update(cx, |s, cx| {
+                s.set_value(draft.url.clone(), window, cx);
+            });
+        }
+        if self.params_input.read(cx).value().as_ref() != canonical_params_text.as_str() {
+            self.params_input.update(cx, |s, cx| {
+                s.set_value(canonical_params_text, window, cx);
+            });
+        }
+        let request = &draft;
         let save_status = self.editor.save_status().clone();
         let is_dirty = matches!(
             save_status,
@@ -1266,11 +1250,7 @@ impl Render for RequestTabView {
         };
 
         let auth_label = auth_type_label(&request.auth);
-        let latest_run = self
-            .editor
-            .latest_history_id()
-            .map(|id| id.to_string())
-            .unwrap_or_else(|| es_fluent::localize("request_tab_latest_run_none", None).to_string());
+        let latest_run = latest_run_summary(self.editor.exec_status());
 
         let section_content = match self.active_section {
             RequestSectionTab::Params => v_flex()
@@ -1584,6 +1564,65 @@ fn parse_key_value_pairs(raw: &str) -> Vec<KeyValuePair> {
         .collect()
 }
 
+fn params_from_url_query(url: &str) -> Vec<KeyValuePair> {
+    let raw_query = if let Ok(parsed) = url::Url::parse(url) {
+        parsed.query().map(ToOwned::to_owned)
+    } else {
+        url.split_once('?')
+            .map(|(_, q)| q.split_once('#').map(|(qq, _)| qq).unwrap_or(q).to_string())
+    };
+
+    raw_query
+        .map(|q| {
+            url::form_urlencoded::parse(q.as_bytes())
+                .map(|(k, v)| KeyValuePair::new(k.to_string(), v.to_string()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn url_with_params(base_url: &str, params: &[KeyValuePair]) -> String {
+    let enabled: Vec<(String, String)> = params
+        .iter()
+        .filter(|p| p.enabled && !p.key.trim().is_empty())
+        .map(|p| (p.key.clone(), p.value.clone()))
+        .collect();
+
+    if let Ok(mut parsed) = url::Url::parse(base_url) {
+        if enabled.is_empty() {
+            parsed.set_query(None);
+        } else {
+            parsed
+                .query_pairs_mut()
+                .clear()
+                .extend_pairs(enabled.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+        }
+        return parsed.to_string();
+    }
+
+    let (base, fragment) = match base_url.split_once('#') {
+        Some((b, f)) => (b, Some(f)),
+        None => (base_url, None),
+    };
+    let path_only = base.split_once('?').map(|(p, _)| p).unwrap_or(base);
+    let query = if enabled.is_empty() {
+        String::new()
+    } else {
+        let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+        for (k, v) in &enabled {
+            serializer.append_pair(k, v);
+        }
+        serializer.finish()
+    };
+
+    match (query.is_empty(), fragment) {
+        (true, Some(f)) => format!("{path_only}#{f}"),
+        (true, None) => path_only.to_string(),
+        (false, Some(f)) => format!("{path_only}?{query}#{f}"),
+        (false, None) => format!("{path_only}?{query}"),
+    }
+}
+
 fn auth_to_text(auth: &AuthType) -> String {
     match auth {
         AuthType::None => "none".to_string(),
@@ -1711,6 +1750,34 @@ fn auth_type_label(auth: &AuthType) -> String {
     }
 }
 
+fn latest_run_summary(exec_status: &ExecStatus) -> String {
+    match exec_status {
+        ExecStatus::Idle => es_fluent::localize("request_tab_latest_run_none", None).to_string(),
+        ExecStatus::Sending => es_fluent::localize("request_tab_sending", None).to_string(),
+        ExecStatus::Streaming => es_fluent::localize("request_tab_streaming", None).to_string(),
+        ExecStatus::Completed { response } => {
+            let status = format!("{} {}", response.status_code, response.status_text);
+            if let Some(ms) = response.total_ms {
+                format!("{status} • {ms} ms")
+            } else {
+                status
+            }
+        }
+        ExecStatus::Failed { error } => format!(
+            "{}: {}",
+            es_fluent::localize("request_tab_response_failed", None),
+            error
+        ),
+        ExecStatus::Cancelled { partial_size } => match partial_size {
+            Some(size) => format!(
+                "{} ({size})",
+                es_fluent::localize("request_tab_response_cancelled_with_bytes", None)
+            ),
+            None => es_fluent::localize("request_tab_response_cancelled", None).to_string(),
+        },
+    }
+}
+
 fn render_preview_text(bytes: &[u8], media_type: Option<&str>) -> String {
     let text = String::from_utf8_lossy(bytes).to_string();
     if matches!(media_type, Some(mt) if mt.eq_ignore_ascii_case("application/json")) {
@@ -1720,5 +1787,16 @@ fn render_preview_text(bytes: &[u8], media_type: Option<&str>) -> String {
         }
     } else {
         text
+    }
+}
+
+fn truncate_for_tab_cap(bytes: Vec<u8>) -> (Vec<u8>, bool) {
+    if bytes.len() > ResponseBudgets::PER_TAB_CAP_BYTES {
+        (
+            bytes[..ResponseBudgets::PER_TAB_CAP_BYTES].to_vec(),
+            true,
+        )
+    } else {
+        (bytes, false)
     }
 }

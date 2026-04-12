@@ -13,6 +13,7 @@ use super::{DbRef, RepoResult};
 
 /// Redacted snapshot of what was sent, persisted alongside the history row.
 pub struct RequestSnapshot {
+    pub method: String,
     pub url_redacted: String,
     pub headers_redacted_json: Option<String>,
     pub auth_kind: Option<String>,
@@ -93,6 +94,7 @@ impl HistoryRepository for SqliteHistoryRepository {
             first_byte_at: None,
             cancelled_at: None,
             partial_size: None,
+            request_method: snap.map(|s| s.method.clone()),
             request_url_redacted: snap.map(|s| s.url_redacted.clone()),
             request_headers_redacted_json: snap.and_then(|s| s.headers_redacted_json.clone()),
             request_auth_kind: snap.and_then(|s| s.auth_kind.clone()),
@@ -107,8 +109,8 @@ impl HistoryRepository for SqliteHistoryRepository {
                   recovery_attempts, finalized_at,
                   response_headers_json, response_media_type, dispatched_at, first_byte_at,
                   cancelled_at, partial_size,
-                  request_url_redacted, request_headers_redacted_json, request_auth_kind, request_body_summary_json)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  request_method, request_url_redacted, request_headers_redacted_json, request_auth_kind, request_body_summary_json)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(entry.id.to_string())
             .bind(entry.workspace_id.to_string())
@@ -132,6 +134,7 @@ impl HistoryRepository for SqliteHistoryRepository {
             .bind(entry.first_byte_at)
             .bind(entry.cancelled_at)
             .bind(entry.partial_size)
+            .bind(entry.request_method.clone())
             .bind(entry.request_url_redacted.clone())
             .bind(entry.request_headers_redacted_json.clone())
             .bind(entry.request_auth_kind.clone())
@@ -361,6 +364,7 @@ fn map_history_row(row: sqlx::sqlite::SqliteRow) -> RepoResult<HistoryEntry> {
         first_byte_at: row.try_get("first_byte_at").unwrap_or(None),
         cancelled_at: row.try_get("cancelled_at").unwrap_or(None),
         partial_size: row.try_get("partial_size").unwrap_or(None),
+        request_method: row.try_get("request_method").unwrap_or(None),
         request_url_redacted: row.try_get("request_url_redacted").unwrap_or(None),
         request_headers_redacted_json: row.try_get("request_headers_redacted_json").unwrap_or(None),
         request_auth_kind: row.try_get("request_auth_kind").unwrap_or(None),
@@ -428,6 +432,7 @@ pub fn build_request_snapshot(request: &crate::domain::request::RequestItem) -> 
     let body_summary_json = serde_json::to_string(&body_summary).ok();
 
     RequestSnapshot {
+        method: request.method.clone(),
         url_redacted,
         headers_redacted_json,
         auth_kind,

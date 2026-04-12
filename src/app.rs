@@ -8,6 +8,7 @@ use gpui_component::{ActiveTheme, Root, Theme, ThemeMode, TitleBar};
 
 use crate::services::{
     app_services::AppServicesGlobal, startup::bootstrap_app_services,
+    tokio_runtime::TokioRuntimeGlobal,
     ui_preferences::UiPreferencesSnapshot,
 };
 
@@ -64,6 +65,7 @@ pub fn init(cx: &mut App) {
 
     let services = bootstrap_app_services();
     cx.set_global(AppServicesGlobal(services.clone()));
+    cx.set_global(TokioRuntimeGlobal(services.io_runtime.clone()));
 
     let persisted = match services.ui_preferences.load() {
         Ok(value) => value,

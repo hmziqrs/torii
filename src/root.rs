@@ -874,26 +874,51 @@ impl Render for AppRoot {
                 .iter()
                 .enumerate()
                 .map(|(index, tab)| {
-                    let title = match tab.key.item().id {
+                    let (title, dirty) = match tab.key.item().id {
                         Some(ItemId::RequestDraft(draft_id)) => self
                             .request_draft_pages
                             .get(&draft_id)
                             .map(|p| {
-                                p.read(cx).editor().draft().name.clone()
+                                let page = p.read(cx);
+                                (page.editor().draft().name.clone(), page.has_unsaved_changes())
                             })
                             .unwrap_or_else(|| {
-                                es_fluent::localize(
-                                    "request_tab_draft_title",
-                                    None,
+                                (
+                                    es_fluent::localize(
+                                        "request_tab_draft_title",
+                                        None,
+                                    )
+                                    .to_string(),
+                                    false,
                                 )
-                                .to_string()
                             }),
-                        _ => self
-                            .catalog
-                            .find_title(tab.key.item())
-                            .unwrap_or_else(|| {
-                                es_fluent::localize("tab_missing_short", None)
-                            }),
+                        Some(ItemId::Request(request_id)) => {
+                            let base = self
+                                .catalog
+                                .find_title(tab.key.item())
+                                .unwrap_or_else(|| {
+                                    es_fluent::localize("tab_missing_short", None)
+                                });
+                            let dirty = self
+                                .request_pages
+                                .get(&request_id)
+                                .map(|p| p.read(cx).has_unsaved_changes())
+                                .unwrap_or(false);
+                            (base, dirty)
+                        }
+                        _ => (
+                            self.catalog
+                                .find_title(tab.key.item())
+                                .unwrap_or_else(|| {
+                                    es_fluent::localize("tab_missing_short", None)
+                                }),
+                            false,
+                        ),
+                    };
+                    let title = if dirty {
+                        format!("* {title}")
+                    } else {
+                        title
                     };
                     TabPresentation {
                         index,

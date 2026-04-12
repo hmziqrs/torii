@@ -4,25 +4,22 @@ use anyhow::{Context as _, Result, anyhow};
 use base64::Engine as _;
 use bytes::Bytes;
 use futures::StreamExt as _;
-use tokio_util::sync::CancellationToken;
-use tracing::warn;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
+use tracing::{info_span, warn};
 
 use crate::{
     domain::{
-        ids::WorkspaceId,
-        request::{AuthType, RequestItem},
+        ids::{HistoryEntryId, RequestId, WorkspaceId},
+        request::{ApiKeyLocation, AuthType, BodyType, RequestItem},
         response::{BodyRef, ResponseBudgets, ResponseSummary},
     },
     infra::{blobs::BlobStore, secrets::SecretStoreRef},
-    repos::history_repo::HistoryRepoRef,
+    repos::history_repo::{HistoryRepoRef, build_request_snapshot},
+    services::telemetry,
 };
 
-// ---------------------------------------------------------------------------
-// HttpTransport trait (for testability)
-// ---------------------------------------------------------------------------
-
-/// Abstraction over HTTP transport so tests can inject a MockTransport.
 #[async_trait::async_trait]
 pub trait HttpTransport: Send + Sync {
     async fn send(
@@ -42,10 +39,6 @@ pub struct TransportResponse {
     pub media_type: Option<String>,
     pub body_stream: Pin<Box<dyn futures::Stream<Item = Result<Bytes>> + Send>>,
 }
-
-// ---------------------------------------------------------------------------
-// ReqwestTransport (production)
-// ---------------------------------------------------------------------------
 
 pub struct ReqwestTransport {
     client: reqwest::Client,
@@ -123,14 +116,9 @@ impl HttpTransport for ReqwestTransport {
     }
 }
 
-// ---------------------------------------------------------------------------
-// RequestExecutionService
-// ---------------------------------------------------------------------------
-
 #[derive(Clone)]
 pub struct RequestExecutionService {
     transport: Arc<dyn HttpTransport>,
-    #[allow(dead_code)]
     history_repo: HistoryRepoRef,
     blob_store: Arc<BlobStore>,
     secret_store: SecretStoreRef,
@@ -139,6 +127,14 @@ pub struct RequestExecutionService {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecProgressEvent {
     ResponseStreamingStarted,
+}
+
+#[derive(Debug)]
+pub enum ExecOutcome {
+    Completed(ResponseSummary),
+    Failed(String),
+    Cancelled { partial_size: Option<u64> },
+    PreflightFailed(String),
 }
 
 impl RequestExecutionService {
@@ -156,7 +152,75 @@ impl RequestExecutionService {
         }
     }
 
-    /// Execute a request: resolve auth, build HTTP request, send, stream response.
+    pub fn create_pending_history(
+        &self,
+        workspace_id: WorkspaceId,
+        request_id: Option<RequestId>,
+        request: &RequestItem,
+    ) -> Result<crate::domain::history::HistoryEntry> {
+        self.history_repo
+            .create_pending(
+                workspace_id,
+                request_id,
+                &request.method,
+                &request.url,
+                Some(build_request_snapshot(request)),
+            )
+            .map_err(|e| anyhow!("failed to create pending history row: {e}"))
+    }
+
+    pub fn finalize_history(&self, operation_id: HistoryEntryId, result: &Result<ExecOutcome>) {
+        let _span = info_span!("response.persist", op_id = %operation_id).entered();
+        match result {
+            Ok(ExecOutcome::Completed(summary)) => {
+                telemetry::inc_requests_completed();
+                let headers_json = summary.headers_json.as_deref();
+                let (blob_hash_owned, blob_size) = match &summary.body_ref {
+                    BodyRef::DiskBlob {
+                        blob_id,
+                        size_bytes,
+                        ..
+                    } => (Some(blob_id.clone()), Some(*size_bytes as i64)),
+                    BodyRef::InMemoryPreview { bytes, .. } => {
+                        match self.blob_store.write_bytes(bytes, summary.media_type.as_deref()) {
+                            Ok(meta) => (Some(meta.hash), Some(meta.size_bytes as i64)),
+                            Err(_) => (None, None),
+                        }
+                    }
+                    BodyRef::Empty => (None, None),
+                };
+                let _ = self.history_repo.finalize_completed(
+                    operation_id,
+                    summary.status_code as i64,
+                    blob_hash_owned.as_deref(),
+                    blob_size,
+                    headers_json,
+                    summary.media_type.as_deref(),
+                    None,
+                    None,
+                );
+            }
+            Ok(ExecOutcome::Failed(error)) => {
+                telemetry::inc_requests_failed();
+                let _ = self.history_repo.mark_failed(operation_id, error);
+            }
+            Ok(ExecOutcome::Cancelled { partial_size }) => {
+                telemetry::inc_requests_cancelled();
+                let _ = self
+                    .history_repo
+                    .finalize_cancelled(operation_id, partial_size.map(|s| s as i64));
+            }
+            Ok(ExecOutcome::PreflightFailed(msg)) => {
+                telemetry::inc_requests_failed();
+                let _ = self.history_repo.mark_failed(operation_id, msg);
+            }
+            Err(e) => {
+                telemetry::inc_requests_failed();
+                let _ = self.history_repo.mark_failed(operation_id, &e.to_string());
+            }
+        }
+    }
+
     pub async fn execute(
         &self,
         request: &RequestItem,
@@ -174,13 +238,9 @@ impl RequestExecutionService {
         cancel: CancellationToken,
         progress_tx: Option<mpsc::UnboundedSender<ExecProgressEvent>>,
     ) -> Result<ExecOutcome> {
-        tracing::info!(
-            method = %request.method,
-            url = %request.url,
-            "request execution starting"
-        );
+        info_span!("request.send", method = %request.method, url = %request.url)
+            .in_scope(|| tracing::info!("request lifecycle started"));
 
-        // --- Preflight: parse URL ---
         let parsed_url = match url::Url::parse(&request.url) {
             Ok(u) => u,
             Err(e) => {
@@ -189,17 +249,22 @@ impl RequestExecutionService {
             }
         };
 
-        // --- Preflight: check for unresolved {{}} placeholders ---
         check_unresolved_placeholders(&request.url, "URL");
+        for kv in &request.params {
+            if kv.enabled {
+                check_unresolved_placeholders(&kv.value, &format!("query param '{}'", kv.key));
+            }
+        }
         for kv in &request.headers {
             if kv.enabled {
                 check_unresolved_placeholders(&kv.value, &format!("header '{}'", kv.key));
             }
         }
+        check_auth_placeholders(&request.auth);
+        check_body_placeholders(&request.body);
 
-        // --- Preflight: resolve auth secrets ---
-        let auth_headers = match resolve_auth_headers(&request.auth, &self.secret_store) {
-            Ok(h) => h,
+        let resolved_auth = match resolve_auth(&request.auth, &self.secret_store) {
+            Ok(v) => v,
             Err(e) => {
                 tracing::warn!(error = %e, "preflight rejected: auth resolution failed");
                 return Ok(ExecOutcome::PreflightFailed(format!(
@@ -208,7 +273,6 @@ impl RequestExecutionService {
             }
         };
 
-        // --- Build HTTP request ---
         let method = match http::Method::from_bytes(request.method.as_bytes()) {
             Ok(m) => m,
             Err(_) => {
@@ -229,14 +293,34 @@ impl RequestExecutionService {
                 }
             }
         }
-        for (name, value) in auth_headers {
+        for (name, value) in resolved_auth.headers {
             header_map.append(name, value);
         }
 
-        // --- Build body ---
-        let body = build_request_body(request)?;
+        let mut parsed_url = parsed_url;
+        let enabled_params: Vec<(String, String)> = request
+            .params
+            .iter()
+            .filter(|p| p.enabled && !p.key.trim().is_empty())
+            .map(|p| (p.key.clone(), p.value.clone()))
+            .collect();
+        if !enabled_params.is_empty() {
+            parsed_url
+                .query_pairs_mut()
+                .clear()
+                .extend_pairs(enabled_params.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+        }
+        if !resolved_auth.query_pairs.is_empty() {
+            parsed_url.query_pairs_mut().extend_pairs(
+                resolved_auth
+                    .query_pairs
+                    .iter()
+                    .map(|(k, v)| (k.as_str(), v.as_str())),
+            );
+        }
 
-        // --- Send ---
+        let body = self.build_request_body(request, &mut header_map)?;
+
         let dispatched_at = Instant::now();
         tracing::info!(method = %request.method, "request dispatched");
         let transport_response = match self
@@ -261,14 +345,12 @@ impl RequestExecutionService {
         let status_text = transport_response.status_text;
         let media_type = transport_response.media_type;
         let resp_headers = transport_response.headers;
-
         let headers_json = serialize_headers(&resp_headers);
 
         if let Some(tx) = progress_tx.as_ref() {
             let _ = tx.send(ExecProgressEvent::ResponseStreamingStarted);
         }
 
-        // --- Stream response body into blob + preview ---
         let body_ref = self
             .stream_response_body(transport_response.body_stream, &media_type, cancel)
             .await?;
@@ -287,6 +369,83 @@ impl RequestExecutionService {
         }))
     }
 
+    fn build_request_body(
+        &self,
+        request: &RequestItem,
+        headers: &mut http::HeaderMap,
+    ) -> Result<Option<Bytes>> {
+        match &request.body {
+            BodyType::None => Ok(None),
+            BodyType::RawText { content } => {
+                ensure_content_type(headers, "text/plain")?;
+                Ok(Some(Bytes::from(content.clone())))
+            }
+            BodyType::RawJson { content } => {
+                ensure_content_type(headers, "application/json")?;
+                Ok(Some(Bytes::from(content.clone())))
+            }
+            BodyType::UrlEncoded { entries } => {
+                let pairs: Vec<(String, String)> = entries
+                    .iter()
+                    .filter(|e| e.enabled)
+                    .map(|e| (e.key.clone(), e.value.clone()))
+                    .collect();
+                let encoded =
+                    serde_urlencoded::to_string(&pairs).context("failed to encode url-form body")?;
+                ensure_content_type(headers, "application/x-www-form-urlencoded")?;
+                Ok(Some(Bytes::from(encoded)))
+            }
+            BodyType::FormData {
+                text_fields,
+                file_fields,
+            } => {
+                let boundary = format!("torii-{}", uuid::Uuid::now_v7());
+                let mut body = Vec::new();
+
+                for field in text_fields.iter().filter(|f| f.enabled) {
+                    body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+                    body.extend_from_slice(
+                        format!("Content-Disposition: form-data; name=\"{}\"\r\n\r\n", field.key)
+                            .as_bytes(),
+                    );
+                    body.extend_from_slice(field.value.as_bytes());
+                    body.extend_from_slice(b"\r\n");
+                }
+
+                for field in file_fields.iter().filter(|f| f.enabled) {
+                    let bytes = self
+                        .blob_store
+                        .read_all(&field.blob_hash)
+                        .context("failed to read form-data file blob")?;
+                    body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+                    body.extend_from_slice(
+                        format!(
+                            "Content-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\n",
+                            field.key,
+                            field.file_name.clone().unwrap_or_else(|| "file.bin".to_string())
+                        )
+                        .as_bytes(),
+                    );
+                    body.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
+                    body.extend_from_slice(&bytes);
+                    body.extend_from_slice(b"\r\n");
+                }
+
+                body.extend_from_slice(format!("--{}--\r\n", boundary).as_bytes());
+                ensure_content_type(headers, &format!("multipart/form-data; boundary={boundary}"))?;
+                Ok(Some(Bytes::from(body)))
+            }
+            BodyType::BinaryFile { blob_hash, .. } => {
+                let bytes = self
+                    .blob_store
+                    .read_all(blob_hash)
+                    .context("failed to read binary body blob")?;
+                ensure_content_type(headers, "application/octet-stream")?;
+                Ok(Some(Bytes::from(bytes)))
+            }
+        }
+    }
+
     async fn stream_response_body(
         &self,
         mut stream: Pin<Box<dyn futures::Stream<Item = Result<Bytes>> + Send>>,
@@ -303,15 +462,15 @@ impl RequestExecutionService {
             .blob_store
             .temp_dir()
             .join(format!("response-stream-{}", uuid::Uuid::now_v7()));
-        let mut temp_file =
-            std::fs::File::create(&temp_path).context("failed to create temp response file")?;
-        use std::io::Write;
+        let mut temp_file = tokio::fs::File::create(&temp_path)
+            .await
+            .context("failed to create temp response file")?;
 
         while let Some(chunk_result) = stream.next().await {
             if cancel.is_cancelled() {
                 tracing::info!(bytes_written = total_written, "response stream cancelled");
                 drop(temp_file);
-                match std::fs::remove_file(&temp_path) {
+                match tokio::fs::remove_file(&temp_path).await {
                     Ok(()) => tracing::debug!("cleaned up partial response blob"),
                     Err(e) => tracing::warn!(error = %e, "failed to clean up partial response blob"),
                 }
@@ -322,14 +481,14 @@ impl RequestExecutionService {
                 Ok(c) => c,
                 Err(e) => {
                     drop(temp_file);
-                    let _ = std::fs::remove_file(&temp_path);
+                    let _ = tokio::fs::remove_file(&temp_path).await;
                     return Err(anyhow!("response stream error: {e}"));
                 }
             };
 
-            if let Err(e) = temp_file.write_all(&chunk) {
+            if let Err(e) = temp_file.write_all(&chunk).await {
                 drop(temp_file);
-                let _ = std::fs::remove_file(&temp_path);
+                let _ = tokio::fs::remove_file(&temp_path).await;
                 return Err(anyhow!("response write error: {e}"));
             }
 
@@ -348,21 +507,31 @@ impl RequestExecutionService {
 
         drop(temp_file);
 
-        let file = std::fs::File::open(&temp_path).context("failed to reopen temp response")?;
-        let blob_meta = self
-            .blob_store
-            .write_from_reader(file, media_type.as_deref())
-            .context("failed to write response blob")?;
+        let blob_store = self.blob_store.clone();
+        let temp_path_for_blocking = temp_path.clone();
+        let media_owned = media_type.clone();
+        let blob_meta = tokio::task::spawn_blocking(move || -> Result<_> {
+            let file = std::fs::File::open(&temp_path_for_blocking)
+                .context("failed to reopen temp response")?;
+            blob_store
+                .write_from_reader(file, media_owned.as_deref())
+                .context("failed to write response blob")
+        })
+        .await
+        .map_err(|e| anyhow!("response persist task join error: {e}"))??;
 
-        let _ = std::fs::remove_file(&temp_path);
+        let _ = tokio::fs::remove_file(&temp_path).await;
 
         if exceeded_preview_cap {
+            telemetry::inc_responses_truncated();
+            telemetry::observe_preview_bytes(preview_buf.len());
             Ok(BodyRef::DiskBlob {
                 blob_id: blob_meta.hash,
                 preview: Some(Bytes::from(preview_buf)),
                 size_bytes: total_written,
             })
         } else {
+            telemetry::observe_preview_bytes(preview_buf.len());
             Ok(BodyRef::InMemoryPreview {
                 bytes: Bytes::from(preview_buf),
                 truncated: false,
@@ -371,36 +540,14 @@ impl RequestExecutionService {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Outcome enum
-// ---------------------------------------------------------------------------
-
-#[derive(Debug)]
-pub enum ExecOutcome {
-    Completed(ResponseSummary),
-    Failed(String),
-    Cancelled { partial_size: Option<u64> },
-    PreflightFailed(String),
+struct ResolvedAuth {
+    headers: Vec<(http::header::HeaderName, http::HeaderValue)>,
+    query_pairs: Vec<(String, String)>,
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-fn check_unresolved_placeholders(value: &str, context: &str) {
-    if value.contains("{{") && value.contains("}}") {
-        warn!(
-            context,
-            value, "unresolved {{}} placeholder detected; will be sent literally"
-        );
-    }
-}
-
-fn resolve_auth_headers(
-    auth: &AuthType,
-    secret_store: &SecretStoreRef,
-) -> Result<Vec<(http::header::HeaderName, http::HeaderValue)>> {
+fn resolve_auth(auth: &AuthType, secret_store: &SecretStoreRef) -> Result<ResolvedAuth> {
     let mut headers = Vec::new();
+    let mut query_pairs = Vec::new();
     match auth {
         AuthType::None => {}
         AuthType::Basic {
@@ -444,43 +591,81 @@ fn resolve_auth_headers(
                 None => String::new(),
             };
             match location {
-                crate::domain::request::ApiKeyLocation::Header => {
+                ApiKeyLocation::Header => {
                     let name = http::header::HeaderName::from_bytes(key_name.as_bytes())?;
                     headers.push((name, http::HeaderValue::from_str(&value)?));
                 }
-                crate::domain::request::ApiKeyLocation::Query => {
-                    warn!("API key in query location not yet fully supported in execution");
+                ApiKeyLocation::Query => {
+                    query_pairs.push((key_name.clone(), value));
                 }
             }
         }
     }
-    Ok(headers)
+
+    Ok(ResolvedAuth {
+        headers,
+        query_pairs,
+    })
 }
 
-fn build_request_body(request: &RequestItem) -> Result<Option<Bytes>> {
-    use crate::domain::request::BodyType;
-    match &request.body {
-        BodyType::None => Ok(None),
-        BodyType::RawText { content } => Ok(Some(Bytes::from(content.clone()))),
-        BodyType::RawJson { content } => Ok(Some(Bytes::from(content.clone()))),
+fn ensure_content_type(headers: &mut http::HeaderMap, value: &str) -> Result<()> {
+    if !headers.contains_key(http::header::CONTENT_TYPE) {
+        headers.insert(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_str(value)?,
+        );
+    }
+    Ok(())
+}
+
+fn check_unresolved_placeholders(value: &str, context: &str) {
+    if value.contains("{{") && value.contains("}}") {
+        warn!(
+            context,
+            value, "unresolved {{}} placeholder detected; will be sent literally"
+        );
+    }
+}
+
+fn check_auth_placeholders(auth: &AuthType) {
+    match auth {
+        AuthType::None => {}
+        AuthType::Basic { username, .. } => {
+            check_unresolved_placeholders(username, "auth.basic.username");
+        }
+        AuthType::Bearer { .. } => {}
+        AuthType::ApiKey { key_name, .. } => {
+            check_unresolved_placeholders(key_name, "auth.api_key.name");
+        }
+    }
+}
+
+fn check_body_placeholders(body: &BodyType) {
+    match body {
+        BodyType::None => {}
+        BodyType::RawText { content } | BodyType::RawJson { content } => {
+            check_unresolved_placeholders(content, "body.raw");
+        }
         BodyType::UrlEncoded { entries } => {
-            let pairs: Vec<(String, String)> = entries
-                .iter()
-                .filter(|e| e.enabled)
-                .map(|e| (e.key.clone(), e.value.clone()))
-                .collect();
-            let encoded =
-                serde_urlencoded::to_string(&pairs).context("failed to encode url-form body")?;
-            Ok(Some(Bytes::from(encoded)))
+            for entry in entries.iter().filter(|e| e.enabled) {
+                check_unresolved_placeholders(
+                    &entry.value,
+                    &format!("body.urlencoded '{}'", entry.key),
+                );
+            }
         }
-        BodyType::FormData { .. } => {
-            warn!("multipart form-data body type not yet fully supported in execution");
-            Ok(None)
+        BodyType::FormData {
+            text_fields,
+            file_fields: _,
+        } => {
+            for field in text_fields.iter().filter(|f| f.enabled) {
+                check_unresolved_placeholders(
+                    &field.value,
+                    &format!("body.form_data '{}'", field.key),
+                );
+            }
         }
-        BodyType::BinaryFile { .. } => {
-            warn!("binary file body type not yet fully supported in execution");
-            Ok(None)
-        }
+        BodyType::BinaryFile { .. } => {}
     }
 }
 
