@@ -8,6 +8,7 @@ use gpui_component::{
     h_flex,
     input::{Input, InputEvent, InputState, TabSize},
     select::{Select, SelectEvent, SelectState},
+    table::{Column, TableDelegate, TableState},
     v_flex,
 };
 
@@ -127,6 +128,8 @@ pub struct RequestTabView {
     body_search_visible: bool,
     body_search_input: Entity<InputState>,
     error_detail_expanded: bool,
+    headers_table: Entity<TableState<response_panel::HeadersTableDelegate>>,
+    cookies_table: Entity<TableState<response_panel::CookiesTableDelegate>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -674,6 +677,22 @@ impl RequestTabView {
             body_search_visible: false,
             body_search_input,
             error_detail_expanded: false,
+            headers_table: cx.new(|cx| {
+                TableState::new(response_panel::HeadersTableDelegate::new(), window, cx)
+                    .row_selectable(false)
+                    .col_selectable(false)
+                    .col_resizable(true)
+                    .col_movable(false)
+                    .sortable(false)
+            }),
+            cookies_table: cx.new(|cx| {
+                TableState::new(response_panel::CookiesTableDelegate::new(), window, cx)
+                    .row_selectable(false)
+                    .col_selectable(false)
+                    .col_resizable(true)
+                    .col_movable(false)
+                    .sortable(false)
+            }),
             _subscriptions: subscriptions,
         };
         this.rebuild_kv_rows(KvTarget::Params, &initial.params, window, cx);

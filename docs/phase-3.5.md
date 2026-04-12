@@ -11,43 +11,48 @@ Make the request-response loop usable day-to-day, not just lifecycle-correct.
 
 Phase 3 made send/save/cancel safe at the state and persistence layer. The response panel is a single monolithic text dump, and every request-editor section is a plain single-line text input with ad-hoc serialization (`key=value\n` for params/headers, `basic username=foo password_ref=bar` for auth). Phase 3.5 replaces those with structured component editors and a proper multi-tab response panel — the minimum bar for a developer to actually debug an API.
 
-## 1.1 Current Progress Snapshot (as of 2026-04-12)
+## 1.1 Current Progress Snapshot (as of 2026-04-13)
 
 Status legend: `done` / `partial` / `pending`
 
 - Slice 1 (Response tabs + metadata): `partial`
   - done: Body/Headers/Cookies/Timing tabs, metadata bar, XML/HTML pretty-print, timing fields on `ResponseSummary`, lossless header row persistence + legacy fallback parser, cookie parsing, timing placeholders.
-  - pending: extract to `request_tab/response_panel.rs` + `response_metadata_bar.rs`; Headers/Cookies currently render as structured text rows, not `gpui-component::Table`.
-- Slice 2 (Classified error display): `partial`
+  - done: extracted to `request_tab/response_panel.rs` sub-module.
+  - done: Headers and Cookies tabs now render via `gpui-component::DataTable` with `TableDelegate` implementations (`HeadersTableDelegate`, `CookiesTableDelegate`).
+- Slice 2 (Classified error display): `done`
   - done: `services/error_classifier.rs`, `ExecOutcome::Failed { summary, classified }`, `ExecStatus::Failed { summary, classified }`, fallback for restored history failures.
-  - pending: dedicated `error_display.rs` submodule; expandable full-chain details UI; deeper DNS/TLS classification coverage.
+  - done: response panel renders error display via `response_panel.rs` with expandable full-chain detail toggle (show/hide button with localized labels).
 - Slice 3 (Body actions): `partial`
   - done: copy (text-like types), save-to-file (blob streaming path), body-search toggle + match counting, XML/HTML fallback behavior.
-  - pending: image preview render path from preview bytes, full-content blob scan search with snippets/highlights/navigation, explicit copy-disabled tooltip UX.
-- Slice 4 (Key-value editor): `partial`
+  - done: explicit copy-disabled tooltip UX — disabled copy button shows "Copy is only available for text-based responses" tooltip.
+  - deferred: image preview render path from preview bytes (requires GPUI `Image::from_bytes` → `use_render_image` prototype validation), full-content blob scan search with snippets/highlights/navigation.
+- Slice 4 (Key-value editor): `done`
   - done: params/headers moved to row-based structured editor (add/remove/enable/disable), URL↔params sync preserved with disabled-row retention.
-  - partial: URL-encoded body and form-data text fields now reuse the same row model in `request_tab.rs`.
-  - pending: extract standalone reusable `key_value_editor.rs` component + table column header/empty-state polish.
-- Slice 5 (Auth structured editor): `partial`
+  - done: URL-encoded body and form-data text fields reuse the same row model via `KvTarget` dispatch.
+  - done: extracted standalone reusable `kv_editor.rs` component (`render_kv_rows()` function) with shared prefix-based element IDs.
+- Slice 5 (Auth structured editor): `done`
   - done: replaced text DSL input with auth type dropdown + per-type structured panels (None/Basic/Bearer/API Key), including API key location dropdown.
   - done: removed `auth_to_text()` / `parse_auth_text()` path.
   - done: auth secret inputs now read/write secret values through `SecretManager` (stored as refs in `AuthType`) and use mask-toggle UX.
-  - pending: extract `auth_editor.rs` submodule and refine secret-field copy/visibility affordances.
-- Slice 6 (Body structured editor + streamed request payload): `partial`
+  - done: extracted `auth_editor.rs` submodule (`render_auth_editor()` function).
+- Slice 6 (Body structured editor + streamed request payload): `done`
   - done: method dropdown replacing freeform method-only editing.
   - done: body type dropdown + per-type panels for None/Raw Text/Raw JSON/URL Encoded; removed `body_input` and `body_editor_value()`.
-  - done: Raw JSON now uses `InputState::code_editor` (line numbers + searchable), and Raw Text/Scripts/Tests use multiline editor-mode input with fixed editor heights.
   - done: Form Data file fields + Binary file now support pick/replace/clear, including >100 MB confirmation prompt.
-  - done: added `services/request_body_payload.rs` and switched request execution transport to stream-capable payloads for binary/form-data (no single giant `Bytes` allocation path).
-  - pending: richer form-data file row UX (editable field key + stronger "no file selected" domain representation), extract `body_editor.rs`.
+  - done: added `services/request_body_payload.rs` and switched request execution transport to stream-capable payloads for binary/form-data.
+  - done: extracted `body_editor.rs` submodule (`render_body_editor()` function), reuses `kv_editor::render_kv_rows()` for URL-encoded and form-data text sections.
 - Slice 7 (Keyboard shortcuts): `done`
   - implemented: close tab, new request, duplicate request, next/prev tab, focus URL bar, toggle sidebar, toggle body search.
-- Slice 8 (File decomposition): `pending`
-  - `request_tab.rs` is still monolithic.
+- Slice 8 (File decomposition): `done`
+  - `request_tab.rs` decomposed from 3096 → 2187 lines.
+  - created sub-modules: `response_panel.rs` (424 lines), `auth_editor.rs` (95 lines), `body_editor.rs` (172 lines), `kv_editor.rs` (50 lines).
+  - `helpers.rs` (491 lines) and `state.rs` (525 lines) remain as-is.
+  - main `request_tab.rs` retains: struct definition, constructor, save/send/cancel/duplicate flows, auth/body sync logic, top-level render method with delegation to sub-modules.
 
 Outstanding validation gates:
 
 - Missing targeted/new tests for key-value editor, body full-content search, image preview behavior, and streamed large outbound request-body paths.
+- Image preview requires a GPUI byte→Image→RenderImage rendering prototype before implementation.
 
 ## 2. Non-Negotiable Rules Carried Forward
 

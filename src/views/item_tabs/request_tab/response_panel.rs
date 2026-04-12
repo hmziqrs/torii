@@ -1,4 +1,184 @@
 use super::*;
+use crate::domain::response::ResponseHeaderRow;
+use gpui_component::table::DataTable;
+
+// ---------------------------------------------------------------------------
+// Table delegates for response headers and cookies
+// ---------------------------------------------------------------------------
+
+// -- Headers table delegate --------------------------------------------------
+
+pub(super) struct HeadersTableDelegate {
+    rows: Vec<ResponseHeaderRow>,
+    columns: Vec<Column>,
+}
+
+impl HeadersTableDelegate {
+    pub(super) fn new() -> Self {
+        Self {
+            rows: Vec::new(),
+            columns: vec![
+                Column::new("name", es_fluent::localize("request_tab_response_headers_col_name", None))
+                    .width(px(200.))
+                    .resizable(true)
+                    .movable(false),
+                Column::new("value", es_fluent::localize("request_tab_response_headers_col_value", None))
+                    .width(px(500.))
+                    .resizable(true)
+                    .movable(false),
+            ],
+        }
+    }
+
+    pub(super) fn set_rows(&mut self, rows: Vec<ResponseHeaderRow>) {
+        self.rows = rows;
+    }
+}
+
+impl TableDelegate for HeadersTableDelegate {
+    fn columns_count(&self, _: &App) -> usize {
+        self.columns.len()
+    }
+
+    fn rows_count(&self, _: &App) -> usize {
+        self.rows.len()
+    }
+
+    fn column(&self, col_ix: usize, _: &App) -> Column {
+        self.columns[col_ix].clone()
+    }
+
+    fn render_td(
+        &mut self,
+        row_ix: usize,
+        col_ix: usize,
+        _window: &mut Window,
+        _cx: &mut Context<TableState<Self>>,
+    ) -> impl IntoElement {
+        let row = &self.rows[row_ix];
+        match col_ix {
+            0 => div()
+                .font_family("monospace")
+                .text_sm()
+                .font_weight(FontWeight::MEDIUM)
+                .child(row.name.clone())
+                .into_any_element(),
+            _ => div()
+                .font_family("monospace")
+                .text_sm()
+                .text_color(gpui::hsla(0., 0., 0.35, 1.))
+                .child(row.value.clone())
+                .into_any_element(),
+        }
+    }
+}
+
+// -- Cookies table delegate ---------------------------------------------------
+
+pub(super) struct CookiesTableDelegate {
+    rows: Vec<CookieRow>,
+    columns: Vec<Column>,
+}
+
+impl CookiesTableDelegate {
+    pub(super) fn new() -> Self {
+        Self {
+            rows: Vec::new(),
+            columns: vec![
+                Column::new("name", es_fluent::localize("request_tab_cookies_col_name", None))
+                    .width(px(120.))
+                    .resizable(true)
+                    .movable(false),
+                Column::new("value", es_fluent::localize("request_tab_cookies_col_value", None))
+                    .width(px(150.))
+                    .resizable(true)
+                    .movable(false),
+                Column::new("domain", es_fluent::localize("request_tab_cookies_col_domain", None))
+                    .width(px(120.))
+                    .resizable(true)
+                    .movable(false),
+                Column::new("path", es_fluent::localize("request_tab_cookies_col_path", None))
+                    .width(px(80.))
+                    .resizable(true)
+                    .movable(false),
+                Column::new("expires", es_fluent::localize("request_tab_cookies_col_expires", None))
+                    .width(px(120.))
+                    .resizable(true)
+                    .movable(false),
+                Column::new("secure", es_fluent::localize("request_tab_cookies_col_secure", None))
+                    .width(px(60.))
+                    .resizable(false)
+                    .movable(false),
+                Column::new("httponly", es_fluent::localize("request_tab_cookies_col_httponly", None))
+                    .width(px(70.))
+                    .resizable(false)
+                    .movable(false),
+                Column::new("samesite", es_fluent::localize("request_tab_cookies_col_samesite", None))
+                    .width(px(80.))
+                    .resizable(true)
+                    .movable(false),
+            ],
+        }
+    }
+
+    pub(super) fn set_rows(&mut self, rows: Vec<CookieRow>) {
+        self.rows = rows;
+    }
+}
+
+impl TableDelegate for CookiesTableDelegate {
+    fn columns_count(&self, _: &App) -> usize {
+        self.columns.len()
+    }
+
+    fn rows_count(&self, _: &App) -> usize {
+        self.rows.len()
+    }
+
+    fn column(&self, col_ix: usize, _: &App) -> Column {
+        self.columns[col_ix].clone()
+    }
+
+    fn render_td(
+        &mut self,
+        row_ix: usize,
+        col_ix: usize,
+        _window: &mut Window,
+        _cx: &mut Context<TableState<Self>>,
+    ) -> impl IntoElement {
+        let cookie = &self.rows[row_ix];
+        match col_ix {
+            0 => div()
+                .font_weight(FontWeight::MEDIUM)
+                .child(cookie.name.clone())
+                .into_any_element(),
+            1 => div().child(cookie.value_preview.clone()).into_any_element(),
+            2 => div()
+                .child(cookie.domain.clone().unwrap_or_else(|| "—".to_string()))
+                .into_any_element(),
+            3 => div()
+                .child(cookie.path.clone().unwrap_or_else(|| "—".to_string()))
+                .into_any_element(),
+            4 => div()
+                .child(
+                    cookie
+                        .expires_or_max_age
+                        .clone()
+                        .unwrap_or_else(|| "—".to_string()),
+                )
+                .into_any_element(),
+            5 => div()
+                .child(if cookie.secure { "true" } else { "false" })
+                .into_any_element(),
+            6 => div()
+                .child(if cookie.http_only { "true" } else { "false" })
+                .into_any_element(),
+            _ => div()
+                .child(cookie.same_site.clone().unwrap_or_else(|| "—".to_string()))
+                .into_any_element(),
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Response panel rendering — extracted from RequestTabView::render
@@ -29,8 +209,6 @@ pub(super) fn render_response_panel(
                 .child(es_fluent::localize("request_tab_streaming", None)),
         ),
         ExecStatus::Completed { .. } => {
-            // Clone the response to release the immutable borrow on view.editor
-            // before calling render_completed_response which needs &mut view.
             let response = match view.editor.exec_status() {
                 ExecStatus::Completed { response } => response.clone(),
                 _ => unreachable!(),
@@ -108,6 +286,16 @@ fn render_completed_response(
     let mut body_preview = response_body_preview_text(resp, &view.loaded_full_body_text);
     let (header_rows, header_format) = parse_response_header_rows(resp.headers_json.as_deref());
     let cookies = parse_set_cookie_rows(&header_rows);
+
+    // Feed data into the table delegates
+    view.headers_table.update(cx, |state, cx| {
+        state.delegate_mut().set_rows(header_rows.clone());
+        state.refresh(cx);
+    });
+    view.cookies_table.update(cx, |state, cx| {
+        state.delegate_mut().set_rows(cookies.clone());
+        state.refresh(cx);
+    });
 
     let load_full_button = match &resp.body_ref {
         BodyRef::DiskBlob { blob_id, .. } => {
@@ -213,25 +401,9 @@ fn render_completed_response(
                     )
                 },
             )
-            .children(header_rows.iter().enumerate().map(|(idx, row)| {
-                h_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .font_family("monospace")
-                            .text_sm()
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .child(row.name.clone()),
-                    )
-                    .child(
-                        div()
-                            .font_family("monospace")
-                            .text_sm()
-                            .text_color(gpui::hsla(0., 0., 0.35, 1.))
-                            .child(row.value.clone()),
-                    )
-                    .id(("response-header-row", idx))
-            }))
+            .child(
+                div().h(px(200.)).child(DataTable::new(&view.headers_table).bordered(true)),
+            )
     };
 
     let cookies_content = if cookies.is_empty() {
@@ -243,41 +415,7 @@ fn render_completed_response(
                 None,
             ))
     } else {
-        v_flex().gap_1().children(cookies.iter().enumerate().map(
-            |(idx, cookie)| {
-                let same_site = cookie.same_site.clone().unwrap_or_else(|| "—".to_string());
-                let expires = cookie
-                    .expires_or_max_age
-                    .clone()
-                    .unwrap_or_else(|| "—".to_string());
-                h_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .font_family("monospace")
-                            .text_sm()
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .child(cookie.name.clone()),
-                    )
-                    .child(
-                        div()
-                            .font_family("monospace")
-                            .text_sm()
-                            .text_color(gpui::hsla(0., 0., 0.35, 1.))
-                            .child(format!(
-                            "{}; domain={}; path={}; expires/max-age={}; secure={}; httpOnly={}; sameSite={}",
-                            cookie.value_preview,
-                            cookie.domain.clone().unwrap_or_else(|| "—".to_string()),
-                            cookie.path.clone().unwrap_or_else(|| "—".to_string()),
-                            expires,
-                            if cookie.secure { "true" } else { "false" },
-                            if cookie.http_only { "true" } else { "false" },
-                            same_site,
-                        )),
-                    )
-                    .id(("response-cookie-row", idx))
-            },
-        ))
+        div().h(px(200.)).child(DataTable::new(&view.cookies_table).bordered(true))
     };
 
     let timing_content = v_flex()
