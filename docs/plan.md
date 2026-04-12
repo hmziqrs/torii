@@ -393,49 +393,73 @@ Detailed execution document: [docs/phase-3.5.md](docs/phase-3.5.md) (to be creat
 
 Scope:
 
+- Response presentation must stay aligned with Phase 3 memory and persistence rules:
+  - body rendering operates on the bounded in-memory preview by default
+  - copy, save, and full-text search must transparently switch to blob-backed full-body reads when the preview is truncated
+  - reopening a request tab restores the latest-run response summary and preview from persisted history/blob data without re-sending the request
+  - usability work in this phase must not bypass preview caps, blob reload rules, or late-response ignore semantics introduced in Phase 3
 - Tabbed response panel with four tabs:
-  - Body (current preview, plus pretty-print and raw toggle)
-  - Headers (key-value table for response headers)
-  - Cookies (key-value table for response cookies parsed from Set-Cookie headers)
-  - Timing (total time, TTFB, with placeholders for DNS/TCP/TLS phases when middleware supports them)
-- Classified error display:
-  - DNS failure → "Could not resolve host: {host}"
-  - Connection refused → "Connection refused: {host}:{port}"
-  - Connection timeout → "Connection timed out"
-  - TLS error → "TLS handshake failed: {reason}"
-  - Generic → simplified reason with expandable detail
+  - Body (preview by default, pretty-print and raw toggle, explicit "load full body" path when only a preview is in memory)
+  - Headers (preserve repeated header rows; do not collapse duplicate names into a lossy map)
+  - Cookies (table parsed from `Set-Cookie` headers with name, value preview, domain, path, expiry/max-age, secure, httpOnly, sameSite)
+  - Timing (total time, TTFB, request start/completed timestamps, with DNS/TCP/TLS placeholders only when the transport exposes them)
+- Classified request failure display:
+  - preflight validation failures remain distinct from wire failures:
+    - malformed URL
+    - missing/unreadable body file
+    - secret resolution failure
+    - unsupported request configuration for the current transport
+  - transport failures are classified into human-readable groups:
+    - DNS failure → "Could not resolve host: {host}"
+    - connection refused → "Connection refused: {host}:{port}"
+    - connection timeout → "Connection timed out"
+    - TLS error → "TLS handshake failed: {reason}"
+    - cancelled request → explicit cancelled state, not generic failure
+    - generic transport error → simplified reason with expandable detail
 - Response metadata bar:
   - status code with color coding (2xx green, 3xx blue, 4xx yellow, 5xx red)
   - status text
   - response size (formatted: B / KB / MB)
   - total time
 - Response body improvements:
-  - copy response body to clipboard
-  - save response body to file
+  - copy response body to clipboard from preview or blob-backed full body depending on availability
+  - save response body to file without forcing the whole payload into hot memory first
   - image preview for image/* media types
   - XML/HTML pretty-print alongside existing JSON pretty-print
-  - search within response body
+  - search within response body across the active preview and full-body reload path
 - Request editor improvements:
   - tabbed request builder (Params, Auth, Headers, Body, Scripts, Settings) instead of flat sections
   - key-value editor component for headers and params (add/remove/enable/disable rows)
   - auth type selector dropdown with inline credential fields
   - body type selector dropdown (none, raw text, raw JSON, urlencoded, form-data, binary)
+  - file-backed body UX for `form-data` and `binary`:
+    - pick file
+    - replace file
+    - clear file
+    - show missing/unreadable file state before send
+    - persist file/blob references through the existing request model rather than ad hoc view-local paths
 - Keyboard shortcut expansion:
-  - Cmd+W — close tab
-  - Cmd+N — new request
-  - Cmd+D — duplicate request
-  - Cmd+Shift+] / [ — next/prev tab
-  - Cmd+L — focus URL bar
-  - Cmd+\ — toggle sidebar
+  - define shortcuts as `Cmd` on macOS and `Ctrl` on Windows/Linux where applicable
+  - specify scope for each shortcut so text inputs and modal dialogs keep expected native behavior
+  - close tab
+  - new request
+  - duplicate request
+  - next/prev tab
+  - focus URL bar
+  - toggle sidebar
+  - all labels, empty states, errors, and shortcut hints introduced in this phase must use Fluent i18n
 
 Exit criteria:
 
-- Response panel shows body, headers, cookies, and timing in separate tabs
-- Network errors display human-readable messages with actionable guidance
+- Response panel shows body, headers, cookies, and timing in separate tabs without violating preview-memory caps
+- Latest-run response data reopens from persisted history/blob storage without requiring a resend
+- Preflight validation failures and transport failures display distinct, human-readable states
 - Response metadata bar shows status code, size, and time at a glance
-- Copy and save response actions work for all body types
-- Request editor uses tabbed layout with structured editors for headers, params, auth, and body
-- All new shortcuts are documented and functional
+- Copy, save, and search actions work for preview-backed and blob-backed response bodies
+- Header and cookie views preserve repeated headers and cookie attributes without lossy flattening
+- Request editor uses tabbed layout with structured editors for headers, params, auth, and body, including file-backed body flows
+- All new shortcuts are documented, platform-correct, scoped correctly, and functional
+- All new user-facing copy and error messages are Fluent-based
 
 ## Phase 4 (P1): Collections, Folders, Environments, and Drag/Drop
 
