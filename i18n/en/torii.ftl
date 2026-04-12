@@ -153,6 +153,7 @@ menu_language_english = English
 menu_language_simplified_chinese = Simplified Chinese
 menu_theme = Theme
 menu_delete = Delete
+menu_new_request = New Request
 
 delete_success = Item deleted.
 delete_failed = Delete failed.
@@ -175,6 +176,7 @@ titlebar_radius_0 = 0px
 
 home_get_started_clicked = Get Started clicked!
 request_tab_title = Request
+request_tab_draft_title = Untitled Request
 request_tab_dirty = Unsaved changes
 request_tab_action_save = Save
 request_tab_action_duplicate = Duplicate

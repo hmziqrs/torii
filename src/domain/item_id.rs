@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::domain::ids::{CollectionId, EnvironmentId, FolderId, RequestId, WorkspaceId};
+use crate::domain::ids::{CollectionId, EnvironmentId, FolderId, RequestDraftId, RequestId, WorkspaceId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ItemId {
@@ -9,6 +9,7 @@ pub enum ItemId {
     Folder(FolderId),
     Environment(EnvironmentId),
     Request(RequestId),
+    RequestDraft(RequestDraftId),
 }
 
 impl From<WorkspaceId> for ItemId {
@@ -38,5 +39,11 @@ impl From<EnvironmentId> for ItemId {
 impl From<RequestId> for ItemId {
     fn from(value: RequestId) -> Self {
         Self::Request(value)
+    }
+}
+
+impl From<RequestDraftId> for ItemId {
+    fn from(value: RequestDraftId) -> Self {
+        Self::RequestDraft(value)
     }
 }

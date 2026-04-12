@@ -4,6 +4,7 @@ use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 
 use crate::domain::item_id::ItemId;
+use crate::domain::ids::RequestDraftId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ItemKind {
@@ -92,6 +93,10 @@ impl ItemKey {
         Self::new(ItemKind::Request, Some(id.into()))
     }
 
+    pub fn request_draft(id: RequestDraftId) -> Self {
+        Self::new(ItemKind::Request, Some(ItemId::RequestDraft(id)))
+    }
+
     pub fn settings() -> Self {
         Self::new(ItemKind::Settings, None)
     }
@@ -111,6 +116,7 @@ impl ItemKey {
             ItemId::Folder(id) => id.to_string(),
             ItemId::Environment(id) => id.to_string(),
             ItemId::Request(id) => id.to_string(),
+            ItemId::RequestDraft(id) => id.to_string(),
         });
 
         (self.kind.to_string(), id)
@@ -118,6 +124,12 @@ impl ItemKey {
 
     pub fn from_storage_parts(kind: &str, id: Option<&str>) -> Result<Self> {
         use crate::domain::ids::{CollectionId, EnvironmentId, FolderId, RequestId, WorkspaceId};
+
+        // Handle "request_draft" storage key — maps to ItemKind::Request with RequestDraft id
+        if kind == "request_draft" {
+            let draft_id = id.ok_or_else(|| anyhow!("missing request draft item id"))?;
+            return Ok(Self::request_draft(RequestDraftId::parse(draft_id)?));
+        }
 
         let kind = ItemKind::from_str(kind)?;
         let id = match kind {

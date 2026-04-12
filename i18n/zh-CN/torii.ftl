@@ -153,6 +153,7 @@ menu_language_english = 英文
 menu_language_simplified_chinese = 简体中文
 menu_theme = 主题
 menu_delete = 删除
+menu_new_request = 新建请求
 
 delete_success = 项目已删除。
 delete_failed = 删除失败。
@@ -175,6 +176,7 @@ titlebar_radius_0 = 0 像素
 
 home_get_started_clicked = 已点击“开始使用”！
 request_tab_title = 请求
+request_tab_draft_title = 未命名请求
 request_tab_dirty = 有未保存更改
 request_tab_action_save = 保存
 request_tab_action_duplicate = 复制

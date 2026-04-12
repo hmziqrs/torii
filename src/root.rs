@@ -27,6 +27,7 @@ use crate::{
     },
     session::{
         item_key::{ItemKey, ItemKind, TabKey},
+        request_editor_state::EditorIdentity,
         workspace_session::WorkspaceSession,
     },
     title_bar::AppTitleBar,
@@ -154,10 +155,23 @@ impl AppRoot {
             created_at: now,
             updated_at: now,
         };
+        // Filter out draft tabs — they're ephemeral and not restorable
+        let tabs: Vec<_> = snapshot
+            .tab_manager
+            .tabs()
+            .iter()
+            .filter(|tab| {
+                !matches!(tab.key.item().id, Some(ItemId::RequestDraft(_)))
+            })
+            .cloned()
+            .collect();
+        let active = snapshot.tab_manager.active().filter(|key| {
+            !matches!(key.item().id, Some(ItemId::RequestDraft(_)))
+        });
         if let Err(err) = services.repos.tab_session.save_session(
             snapshot.session_id,
-            snapshot.tab_manager.tabs(),
-            snapshot.tab_manager.active(),
+            &tabs,
+            active,
             &metadata,
         ) {
             tracing::error!("failed to persist tab session: {err}");
@@ -212,10 +226,19 @@ impl AppRoot {
             _ => None,
         };
 
+        let draft_id = match tab_key.item().id {
+            Some(ItemId::RequestDraft(id)) => Some(id),
+            _ => None,
+        };
+
         let should_confirm_dirty = request_id
             .and_then(|id| self.request_pages.get(&id))
-            .map(|page| page.read(cx).has_unsaved_changes())
-            .unwrap_or(false);
+            .map(|page: &Entity<request_tab::RequestTabView>| page.read(cx).has_unsaved_changes())
+            .unwrap_or(false)
+            || draft_id
+                .and_then(|id| self.request_draft_pages.get(&id))
+                .map(|page: &Entity<request_tab::RequestTabView>| page.read(cx).has_unsaved_changes())
+                .unwrap_or(false);
 
         if !should_confirm_dirty {
             self.perform_close_tab(tab_key, cx);
@@ -246,7 +269,12 @@ impl AppRoot {
                                         let mut err_msg = None;
                                         let _ = weak_root_save.update(cx, |this, cx| {
                                             match this.save_request_tab_by_key(tab_key, cx) {
-                                                Ok(()) => {
+                                                Ok(Some(new_key)) => {
+                                                    // Draft was promoted — close using new key
+                                                    this.perform_close_tab(new_key, cx);
+                                                    close_ok = true;
+                                                }
+                                                Ok(None) => {
                                                     this.perform_close_tab(tab_key, cx);
                                                     close_ok = true;
                                                 }
@@ -271,6 +299,12 @@ impl AppRoot {
                                     let weak_root_discard = weak_root_discard.clone();
                                     move |_, window, cx| {
                                         let _ = weak_root_discard.update(cx, |this, cx| {
+                                            // Clean up draft entity if discarding a draft tab
+                                            if let Some(ItemId::RequestDraft(draft_id)) =
+                                                tab_key.item().id
+                                            {
+                                                this.request_draft_pages.remove(&draft_id);
+                                            }
                                             this.perform_close_tab(tab_key, cx);
                                         });
                                         window.close_dialog(cx);
@@ -293,19 +327,40 @@ impl AppRoot {
         &mut self,
         tab_key: TabKey,
         cx: &mut Context<Self>,
-    ) -> Result<(), String> {
-        let request_id = match (tab_key.item().kind, tab_key.item().id) {
-            (ItemKind::Request, Some(ItemId::Request(id))) => id,
-            _ => return Ok(()),
+    ) -> Result<Option<TabKey>, String> {
+        let page = match tab_key.item().id {
+            Some(ItemId::Request(id)) => self.request_pages.get(&id).cloned(),
+            Some(ItemId::RequestDraft(draft_id)) => {
+                self.request_draft_pages.get(&draft_id).cloned()
+            }
+            _ => None,
         };
-        let Some(page) = self.request_pages.get(&request_id).cloned() else {
-            return Ok(());
+        let Some(page) = page else {
+            return Ok(None);
         };
 
         page.update(cx, |tab, cx| tab.save(cx))
             .map_err(|err| format!("failed to update request tab while saving: {err}"))?;
+
+        // After save, the observer may have promoted a draft to persisted.
+        // Detect the current tab key from the editor identity.
+        let current_key = {
+            let identity = page.read(cx).editor().identity().clone();
+            match identity {
+                EditorIdentity::Persisted(request_id) => {
+                    let new_key = TabKey::from(ItemKey::request(request_id));
+                    if new_key != tab_key {
+                        Some(new_key)
+                    } else {
+                        None
+                    }
+                }
+                EditorIdentity::Draft(_) => None,
+            }
+        };
+
         self.refresh_catalog(cx);
-        Ok(())
+        Ok(current_key)
     }
 
     fn reorder_tabs(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
@@ -650,12 +705,63 @@ impl AppRoot {
     ) {
         let draft_id = RequestDraftId::new();
         let page = cx.new(|cx| request_tab::RequestTabView::new_draft(collection_id, window, cx));
+
+        // Observe entity for draft→persisted transition and catalog refresh
+        let services = services(cx);
+        let services_for_refresh = services.clone();
+        let draft_id_for_observer = draft_id;
+        let subscription = cx.observe(&page, move |this, observed_page, cx| {
+            let identity = observed_page.read(cx).editor().identity().clone();
+
+            if let EditorIdentity::Persisted(request_id) = identity {
+                // Check if this draft hasn't been transitioned yet
+                if this.request_draft_pages.contains_key(&draft_id_for_observer) {
+                    let old_key =
+                        crate::session::item_key::TabKey::from(
+                            crate::session::item_key::ItemKey::request_draft(draft_id_for_observer),
+                        );
+                    let new_key =
+                        crate::session::item_key::TabKey::from(
+                            crate::session::item_key::ItemKey::request(request_id),
+                        );
+
+                    this.session.update(cx, |session, cx| {
+                        session.tab_manager.replace_key(old_key, new_key);
+                        cx.notify();
+                    });
+
+                    if let Some(page) = this.request_draft_pages.remove(&draft_id_for_observer) {
+                        this.request_pages.insert(request_id, page);
+                    }
+                }
+            }
+
+            // Always refresh catalog
+            let selected_workspace_id = this.session.read(cx).selected_workspace_id;
+            if let Ok(catalog) = load_workspace_catalog(
+                &services_for_refresh.repos.workspace,
+                &services_for_refresh.repos.collection,
+                &services_for_refresh.repos.folder,
+                &services_for_refresh.repos.request,
+                &services_for_refresh.repos.environment,
+                selected_workspace_id,
+            ) {
+                this.catalog = catalog;
+                cx.notify();
+            }
+        });
+        self._subscriptions.push(subscription);
+
         self.request_draft_pages.insert(draft_id, page);
 
-        // For now, we don't add draft tabs to the tab manager since they lack
-        // an ItemId. A full integration would extend TabManager to support
-        // draft keys. This is a Phase 3 placeholder that allows the draft
-        // creation path to work without a full tab-key refactor.
+        // Register with TabManager so the tab appears in the tab bar
+        let item_key =
+            crate::session::item_key::ItemKey::request_draft(draft_id);
+        self.session.update(cx, |session, cx| {
+            session.open_or_focus(item_key, cx);
+        });
+
+        self.persist_session_state(cx);
     }
 
     fn render_active_tab_content(
@@ -728,6 +834,16 @@ impl AppRoot {
                         es_fluent::localize("tab_missing_body", None).into(),
                     )
                 }),
+            (ItemKind::Request, Some(ItemId::RequestDraft(draft_id))) => self
+                .request_draft_pages
+                .get(&draft_id)
+                .map(|page| page.clone().into_any_element())
+                .unwrap_or_else(|| {
+                    render_empty_state(
+                        es_fluent::localize("tab_missing_title", None).into(),
+                        es_fluent::localize("tab_missing_body", None).into(),
+                    )
+                }),
             (ItemKind::Settings, None) => self.settings_page.clone().into_any_element(),
             (ItemKind::About, None) => self.about_page.clone().into_any_element(),
             _ => render_empty_state(
@@ -757,16 +873,35 @@ impl Render for AppRoot {
                 .tabs()
                 .iter()
                 .enumerate()
-                .map(|(index, tab)| TabPresentation {
-                    index,
-                    key: tab.key,
-                    title: self
-                        .catalog
-                        .find_title(tab.key.item())
-                        .unwrap_or_else(|| es_fluent::localize("tab_missing_short", None))
-                        .into(),
-                    icon: self.catalog.find_icon(tab.key.item()),
-                    selected: active_tab == Some(tab.key),
+                .map(|(index, tab)| {
+                    let title = match tab.key.item().id {
+                        Some(ItemId::RequestDraft(draft_id)) => self
+                            .request_draft_pages
+                            .get(&draft_id)
+                            .map(|p| {
+                                p.read(cx).editor().draft().name.clone()
+                            })
+                            .unwrap_or_else(|| {
+                                es_fluent::localize(
+                                    "request_tab_draft_title",
+                                    None,
+                                )
+                                .to_string()
+                            }),
+                        _ => self
+                            .catalog
+                            .find_title(tab.key.item())
+                            .unwrap_or_else(|| {
+                                es_fluent::localize("tab_missing_short", None)
+                            }),
+                    };
+                    TabPresentation {
+                        index,
+                        key: tab.key,
+                        title: title.into(),
+                        icon: self.catalog.find_icon(tab.key.item()),
+                        selected: active_tab == Some(tab.key),
+                    }
                 })
                 .collect::<Vec<_>>();
 
@@ -895,6 +1030,7 @@ fn render_collection_menu_item(
     cx: &mut Context<AppRoot>,
 ) -> SidebarMenuItem {
     let collection_key = ItemKey::collection(collection.collection.id);
+    let collection_id_for_new = collection.collection.id;
     let weak_root = cx.entity().downgrade();
     SidebarMenuItem::new(collection.collection.name.clone())
         .icon(Icon::new(IconName::BookOpen).small())
@@ -906,7 +1042,17 @@ fn render_collection_menu_item(
         }))
         .context_menu(move |menu, _, _| {
             let weak_root = weak_root.clone();
+            let weak_root_new = weak_root.clone();
             menu.item(
+                PopupMenuItem::new(es_fluent::localize("menu_new_request", None))
+                    .icon(Icon::new(IconName::Plus))
+                    .on_click(move |_, window, cx| {
+                        let _ = weak_root_new.update(cx, |this, cx| {
+                            this.open_draft_request(collection_id_for_new, window, cx);
+                        });
+                    }),
+            )
+            .item(
                 PopupMenuItem::new(es_fluent::localize("menu_delete", None))
                     .icon(Icon::new(IconName::Close))
                     .on_click(move |_, window, cx| {

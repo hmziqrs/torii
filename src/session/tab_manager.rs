@@ -143,6 +143,20 @@ impl TabManager {
     fn index_of(&self, tab_key: TabKey) -> Option<usize> {
         self.tabs.iter().position(|tab| tab.key == tab_key)
     }
+
+    /// Replace one tab key with another in-place (same position, preserves active state).
+    /// Used for draft→persisted tab identity transitions.
+    pub fn replace_key(&mut self, old_key: TabKey, new_key: TabKey) -> bool {
+        if let Some(index) = self.index_of(old_key) {
+            self.tabs[index].key = new_key;
+            if self.active == Some(old_key) {
+                self.active = Some(new_key);
+            }
+            true
+        } else {
+            false
+        }
+    }
 }
 
 #[cfg(test)]
