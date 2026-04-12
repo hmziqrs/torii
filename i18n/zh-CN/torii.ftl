@@ -266,3 +266,5 @@ request_tab_copy_too_large = 响应体过大，无法安全复制
 request_tab_save_unavailable = 响应体不可保存
 request_tab_search_matches = 个匹配
 request_tab_shortcut_no_collection = 请先选择一个集合再创建请求。
+request_tab_kv_add_row = 添加行
+request_tab_kv_remove_row = 移除

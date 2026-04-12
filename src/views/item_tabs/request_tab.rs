@@ -5,6 +5,7 @@ use gpui_component::{
     Disableable as _,
     Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants},
+    checkbox::Checkbox,
     h_flex,
     input::{Input, InputEvent, InputState},
     select::{Select, SelectEvent, SelectState},
@@ -63,20 +64,34 @@ enum ResponseTab {
     Timing,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KvTarget {
+    Params,
+    Headers,
+}
+
+struct KeyValueEditorRow {
+    id: u64,
+    enabled: bool,
+    key_input: Entity<InputState>,
+    value_input: Entity<InputState>,
+}
+
 pub struct RequestTabView {
     editor: RequestEditorState,
     focus_handle: FocusHandle,
     name_input: Entity<InputState>,
     method_select: Entity<SelectState<Vec<&'static str>>>,
     url_input: Entity<InputState>,
-    params_input: Entity<InputState>,
     auth_input: Entity<InputState>,
-    headers_input: Entity<InputState>,
     body_input: Entity<InputState>,
     pre_request_input: Entity<InputState>,
     tests_input: Entity<InputState>,
     timeout_input: Entity<InputState>,
     follow_redirects_input: Entity<InputState>,
+    params_rows: Vec<KeyValueEditorRow>,
+    headers_rows: Vec<KeyValueEditorRow>,
+    next_kv_row_id: u64,
     active_section: RequestSectionTab,
     active_response_tab: ResponseTab,
     loaded_full_body_blob_id: Option<String>,
@@ -174,19 +189,9 @@ impl RequestTabView {
             state.set_value(body_editor_value(&initial.body), window, cx);
             state
         });
-        let params_input = cx.new(|cx| {
-            let mut state = InputState::new(window, cx);
-            state.set_value(key_value_pairs_to_text(&initial.params), window, cx);
-            state
-        });
         let auth_input = cx.new(|cx| {
             let mut state = InputState::new(window, cx);
             state.set_value(auth_to_text(&initial.auth), window, cx);
-            state
-        });
-        let headers_input = cx.new(|cx| {
-            let mut state = InputState::new(window, cx);
-            state.set_value(key_value_pairs_to_text(&initial.headers), window, cx);
             state
         });
         let pre_request_input = cx.new(|cx| {
@@ -268,34 +273,18 @@ impl RequestTabView {
                     let url = state.read(cx).value().to_string();
                     if this.editor.draft().url != url {
                         this.editor.draft_mut().url = url;
-                        let next_params = params_from_url_query(this.editor.draft().url.as_str());
-                        if this.editor.draft().params != next_params {
-                            this.editor.draft_mut().params = next_params;
-                        }
-                        this.editor.refresh_save_status();
-                        cx.notify();
-                    }
-                }
-            },
-        ));
-
-        subscriptions.push(cx.subscribe(
-            &params_input,
-            |this: &mut RequestTabView, state: Entity<InputState>, event: &InputEvent, cx| {
-                if let InputEvent::Change = event {
-                    if this.input_sync_guard.is_active() {
-                        this.input_sync_guard.deferred = true;
-                        return;
-                    }
-                    let next = parse_key_value_pairs(&state.read(cx).value());
-                    if this.editor.draft().params != next {
-                        this.editor.draft_mut().params = next;
-                        let next_url = url_with_params(
-                            this.editor.draft().url.as_str(),
-                            this.editor.draft().params.as_slice(),
+                        let enabled_from_url = params_from_url_query(this.editor.draft().url.as_str());
+                        let mut merged = enabled_from_url;
+                        merged.extend(
+                            this.editor
+                                .draft()
+                                .params
+                                .iter()
+                                .filter(|entry| !entry.enabled)
+                                .cloned(),
                         );
-                        if this.editor.draft().url != next_url {
-                            this.editor.draft_mut().url = next_url;
+                        if this.editor.draft().params != merged {
+                            this.editor.draft_mut().params = merged;
                         }
                         this.editor.refresh_save_status();
                         cx.notify();
@@ -312,20 +301,6 @@ impl RequestTabView {
                     let next = parse_auth_text(&state.read(cx).value(), &current);
                     if current != next {
                         this.editor.draft_mut().auth = next;
-                        this.editor.refresh_save_status();
-                        cx.notify();
-                    }
-                }
-            },
-        ));
-
-        subscriptions.push(cx.subscribe(
-            &headers_input,
-            |this: &mut RequestTabView, state: Entity<InputState>, event: &InputEvent, cx| {
-                if let InputEvent::Change = event {
-                    let next = parse_key_value_pairs(&state.read(cx).value());
-                    if this.editor.draft().headers != next {
-                        this.editor.draft_mut().headers = next;
                         this.editor.refresh_save_status();
                         cx.notify();
                     }
@@ -433,20 +408,21 @@ impl RequestTabView {
             },
         ));
 
-        Self {
+        let mut this = Self {
             editor,
             focus_handle: cx.focus_handle(),
             name_input,
             method_select,
             url_input,
-            params_input,
             auth_input,
-            headers_input,
             body_input,
             pre_request_input,
             tests_input,
             timeout_input,
             follow_redirects_input,
+            params_rows: Vec::new(),
+            headers_rows: Vec::new(),
+            next_kv_row_id: 1,
             active_section: RequestSectionTab::Params,
             active_response_tab: ResponseTab::Body,
             loaded_full_body_blob_id: None,
@@ -455,7 +431,10 @@ impl RequestTabView {
             body_search_visible: false,
             body_search_input,
             _subscriptions: subscriptions,
-        }
+        };
+        this.rebuild_kv_rows(KvTarget::Params, &initial.params, window, cx);
+        this.rebuild_kv_rows(KvTarget::Headers, &initial.headers, window, cx);
+        this
     }
 
     pub fn editor(&self) -> &RequestEditorState {
@@ -1301,17 +1280,13 @@ impl RequestTabView {
         }
 
         let draft = self.editor.draft().clone();
-        let canonical_params_text = key_value_pairs_to_text(&draft.params);
         if self.url_input.read(cx).value().as_ref() != draft.url.as_str() {
             self.url_input.update(cx, |s, cx| {
                 s.set_value(draft.url.clone(), window, cx);
             });
         }
-        if self.params_input.read(cx).value().as_ref() != canonical_params_text.as_str() {
-            self.params_input.update(cx, |s, cx| {
-                s.set_value(canonical_params_text, window, cx);
-            });
-        }
+        self.sync_kv_rows_with_draft(KvTarget::Params, window, cx);
+        self.sync_kv_rows_with_draft(KvTarget::Headers, window, cx);
         self.method_select.update(cx, |select, cx| {
             if let Some(ix) = standard_method_index(draft.method.as_str()) {
                 if select.selected_index(cx).map(|it| it.row) != Some(ix) {
@@ -1337,6 +1312,213 @@ impl RequestTabView {
                 _ => 0,
             },
             _ => 0,
+        }
+    }
+
+    fn kv_rows(&self, target: KvTarget) -> &Vec<KeyValueEditorRow> {
+        match target {
+            KvTarget::Params => &self.params_rows,
+            KvTarget::Headers => &self.headers_rows,
+        }
+    }
+
+    fn kv_rows_mut(&mut self, target: KvTarget) -> &mut Vec<KeyValueEditorRow> {
+        match target {
+            KvTarget::Params => &mut self.params_rows,
+            KvTarget::Headers => &mut self.headers_rows,
+        }
+    }
+
+    fn next_kv_row_id(&mut self) -> u64 {
+        let id = self.next_kv_row_id;
+        self.next_kv_row_id += 1;
+        id
+    }
+
+    fn make_kv_row(
+        &mut self,
+        target: KvTarget,
+        entry: KeyValuePair,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> KeyValueEditorRow {
+        let id = self.next_kv_row_id();
+        let key_input = cx.new(|cx| {
+            let mut state = InputState::new(window, cx);
+            state.set_value(entry.key.clone(), window, cx);
+            state
+        });
+        let value_input = cx.new(|cx| {
+            let mut state = InputState::new(window, cx);
+            state.set_value(entry.value.clone(), window, cx);
+            state
+        });
+
+        self._subscriptions.push(cx.subscribe(
+            &key_input,
+            move |this: &mut RequestTabView, _: Entity<InputState>, event: &InputEvent, cx| {
+                if let InputEvent::Change = event {
+                    this.on_kv_rows_changed(target, cx);
+                }
+            },
+        ));
+        self._subscriptions.push(cx.subscribe(
+            &value_input,
+            move |this: &mut RequestTabView, _: Entity<InputState>, event: &InputEvent, cx| {
+                if let InputEvent::Change = event {
+                    this.on_kv_rows_changed(target, cx);
+                }
+            },
+        ));
+
+        KeyValueEditorRow {
+            id,
+            enabled: entry.enabled,
+            key_input,
+            value_input,
+        }
+    }
+
+    fn rebuild_kv_rows(
+        &mut self,
+        target: KvTarget,
+        entries: &[KeyValuePair],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let normalized = if entries.is_empty() {
+            vec![KeyValuePair {
+                key: String::new(),
+                value: String::new(),
+                enabled: true,
+            }]
+        } else {
+            entries.to_vec()
+        };
+        let mut rows = Vec::with_capacity(normalized.len());
+        for entry in normalized {
+            rows.push(self.make_kv_row(target, entry, window, cx));
+        }
+        *self.kv_rows_mut(target) = rows;
+        self.ensure_trailing_empty_row(target, window, cx);
+    }
+
+    fn sync_kv_rows_with_draft(
+        &mut self,
+        target: KvTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let draft_entries = match target {
+            KvTarget::Params => self.editor.draft().params.clone(),
+            KvTarget::Headers => self.editor.draft().headers.clone(),
+        };
+        let current = self.collect_meaningful_pairs(target, cx);
+        if current != draft_entries {
+            self.rebuild_kv_rows(target, &draft_entries, window, cx);
+        }
+    }
+
+    fn ensure_trailing_empty_row(
+        &mut self,
+        target: KvTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let has_trailing_empty = self
+            .kv_rows(target)
+            .last()
+            .map(|row| {
+                row.key_input.read(cx).value().trim().is_empty()
+                    && row.value_input.read(cx).value().trim().is_empty()
+            })
+            .unwrap_or(false);
+        if !has_trailing_empty {
+            let empty = KeyValuePair {
+                key: String::new(),
+                value: String::new(),
+                enabled: true,
+            };
+            let row = self.make_kv_row(target, empty, window, cx);
+            self.kv_rows_mut(target).push(row);
+        }
+    }
+
+    fn collect_meaningful_pairs(&self, target: KvTarget, cx: &App) -> Vec<KeyValuePair> {
+        self.kv_rows(target)
+            .iter()
+            .filter_map(|row| {
+                let key = row.key_input.read(cx).value().to_string();
+                let value = row.value_input.read(cx).value().to_string();
+                if key.trim().is_empty() && value.trim().is_empty() {
+                    None
+                } else {
+                    Some(KeyValuePair {
+                        key,
+                        value,
+                        enabled: row.enabled,
+                    })
+                }
+            })
+            .collect()
+    }
+
+    fn on_kv_rows_changed(&mut self, target: KvTarget, cx: &mut Context<Self>) {
+        if target == KvTarget::Params && self.input_sync_guard.is_active() {
+            self.input_sync_guard.deferred = true;
+            return;
+        }
+        let next = self.collect_meaningful_pairs(target, cx);
+        match target {
+            KvTarget::Params => {
+                if self.editor.draft().params != next {
+                    self.editor.draft_mut().params = next;
+                }
+                let next_url = url_with_params(
+                    self.editor.draft().url.as_str(),
+                    self.editor.draft().params.as_slice(),
+                );
+                if self.editor.draft().url != next_url {
+                    self.editor.draft_mut().url = next_url;
+                }
+            }
+            KvTarget::Headers => {
+                if self.editor.draft().headers != next {
+                    self.editor.draft_mut().headers = next;
+                }
+            }
+        }
+        self.editor.refresh_save_status();
+        cx.notify();
+    }
+
+    fn add_kv_row(&mut self, target: KvTarget, window: &mut Window, cx: &mut Context<Self>) {
+        let row = self.make_kv_row(
+            target,
+            KeyValuePair {
+                key: String::new(),
+                value: String::new(),
+                enabled: true,
+            },
+            window,
+            cx,
+        );
+        self.kv_rows_mut(target).push(row);
+        cx.notify();
+    }
+
+    fn remove_kv_row(&mut self, target: KvTarget, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(ix) = self.kv_rows(target).iter().position(|row| row.id == id) {
+            self.kv_rows_mut(target).remove(ix);
+        }
+        self.ensure_trailing_empty_row(target, window, cx);
+        self.on_kv_rows_changed(target, cx);
+    }
+
+    fn set_kv_row_enabled(&mut self, target: KvTarget, id: u64, enabled: bool, cx: &mut Context<Self>) {
+        if let Some(row) = self.kv_rows_mut(target).iter_mut().find(|row| row.id == id) {
+            row.enabled = enabled;
+            self.on_kv_rows_changed(target, cx);
         }
     }
 }
@@ -1771,10 +1953,46 @@ impl Render for RequestTabView {
         let latest_run = latest_run_summary(self.editor.exec_status());
 
         let section_content = match self.active_section {
-            RequestSectionTab::Params => v_flex()
-                .gap_2()
-                .child(Input::new(&self.params_input).large())
-                .into_any_element(),
+            RequestSectionTab::Params => {
+                let row_ids = self
+                    .params_rows
+                    .iter()
+                    .map(|row| (row.id, row.enabled, row.key_input.clone(), row.value_input.clone()))
+                    .collect::<Vec<_>>();
+                v_flex()
+                    .gap_2()
+                    .children(row_ids.into_iter().map(|(id, enabled, key_input, value_input)| {
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                Checkbox::new(("params-enabled", id))
+                                    .checked(enabled)
+                                    .on_click(cx.listener(move |this, checked, _, cx| {
+                                        this.set_kv_row_enabled(KvTarget::Params, id, *checked, cx);
+                                    })),
+                            )
+                            .child(div().flex_1().child(Input::new(&key_input).large()))
+                            .child(div().flex_1().child(Input::new(&value_input).large()))
+                            .child(
+                                Button::new(("params-remove", id))
+                                    .ghost()
+                                    .label(es_fluent::localize("request_tab_kv_remove_row", None))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.remove_kv_row(KvTarget::Params, id, window, cx);
+                                    })),
+                            )
+                    }))
+                    .child(
+                        Button::new("params-add-row")
+                            .outline()
+                            .label(es_fluent::localize("request_tab_kv_add_row", None))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.add_kv_row(KvTarget::Params, window, cx);
+                            })),
+                    )
+                    .into_any_element()
+            }
             RequestSectionTab::Auth => v_flex()
                 .gap_2()
                 .child(
@@ -1785,10 +2003,46 @@ impl Render for RequestTabView {
                 )
                 .child(Input::new(&self.auth_input).large())
                 .into_any_element(),
-            RequestSectionTab::Headers => v_flex()
-                .gap_2()
-                .child(Input::new(&self.headers_input).large())
-                .into_any_element(),
+            RequestSectionTab::Headers => {
+                let row_ids = self
+                    .headers_rows
+                    .iter()
+                    .map(|row| (row.id, row.enabled, row.key_input.clone(), row.value_input.clone()))
+                    .collect::<Vec<_>>();
+                v_flex()
+                    .gap_2()
+                    .children(row_ids.into_iter().map(|(id, enabled, key_input, value_input)| {
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                Checkbox::new(("headers-enabled", id))
+                                    .checked(enabled)
+                                    .on_click(cx.listener(move |this, checked, _, cx| {
+                                        this.set_kv_row_enabled(KvTarget::Headers, id, *checked, cx);
+                                    })),
+                            )
+                            .child(div().flex_1().child(Input::new(&key_input).large()))
+                            .child(div().flex_1().child(Input::new(&value_input).large()))
+                            .child(
+                                Button::new(("headers-remove", id))
+                                    .ghost()
+                                    .label(es_fluent::localize("request_tab_kv_remove_row", None))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.remove_kv_row(KvTarget::Headers, id, window, cx);
+                                    })),
+                            )
+                    }))
+                    .child(
+                        Button::new("headers-add-row")
+                            .outline()
+                            .label(es_fluent::localize("request_tab_kv_add_row", None))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.add_kv_row(KvTarget::Headers, window, cx);
+                            })),
+                    )
+                    .into_any_element()
+            }
             RequestSectionTab::Body => v_flex()
                 .gap_2()
                 .child(
@@ -2270,46 +2524,6 @@ fn format_bytes(size: u64) -> String {
     } else {
         format!("{:.2} MB", (size as f64) / MB)
     }
-}
-
-fn key_value_pairs_to_text(entries: &[KeyValuePair]) -> String {
-    entries
-        .iter()
-        .map(|entry| {
-            if entry.enabled {
-                format!("{}={}", entry.key, entry.value)
-            } else {
-                format!("#{}={}", entry.key, entry.value)
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn parse_key_value_pairs(raw: &str) -> Vec<KeyValuePair> {
-    raw.lines()
-        .filter_map(|line| {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                return None;
-            }
-            let (enabled, content) = if let Some(rest) = trimmed.strip_prefix('#') {
-                (false, rest.trim())
-            } else {
-                (true, trimmed)
-            };
-            let (key, value) = content.split_once('=').unwrap_or((content, ""));
-            let key = key.trim();
-            if key.is_empty() {
-                return None;
-            }
-            Some(KeyValuePair {
-                key: key.to_string(),
-                value: value.trim().to_string(),
-                enabled,
-            })
-        })
-        .collect()
 }
 
 fn params_from_url_query(url: &str) -> Vec<KeyValuePair> {
