@@ -3,6 +3,7 @@
 > Derived from `docs/plan.md` Phase 3
 > Constrained by `docs/state_management.md`
 > Date: 2026-04-11
+> Last audit: 2026-04-12 — all slices verified, all validation gates passing
 
 ## 1. Objective
 
@@ -381,9 +382,9 @@ Tasks:
 
 Definition of done:
 
-- app boots with the new dependencies and schema
-- migration roundtrip coverage exists for the new request/history shape
-- no secret material is introduced into request/history schema columns
+- [x] app boots with the new dependencies and schema
+- [x] migration roundtrip coverage exists for the new request/history shape
+- [x] no secret material is introduced into request/history schema columns
 
 ## Slice 0b: Request Domain and Repository Expansion
 
@@ -402,9 +403,9 @@ Tasks:
 
 Definition of done:
 
-- a structured request roundtrips through SQLite cleanly
-- duplicate creates a new request with a new ID and correct parent/collection ownership
-- save detects stale revisions instead of blindly overwriting another window's changes
+- [x] a structured request roundtrips through SQLite cleanly
+- [x] duplicate creates a new request with a new ID and correct parent/collection ownership
+- [x] save detects stale revisions instead of blindly overwriting another window's changes
 
 ## Slice 1: Request Editor State and Lifecycle FSM
 
@@ -424,10 +425,10 @@ Tasks:
 
 Definition of done:
 
-- both save-status and exec-status transitions are unit-tested independently
-- terminal `ExecStatus` values are mutually exclusive on the exec axis
-- stale operation completions are ignored deterministically, including across an auto-cancel-then-resend
-- no request networking is launched directly from the view layer
+- [x] both save-status and exec-status transitions are unit-tested independently
+- [x] terminal `ExecStatus` values are mutually exclusive on the exec axis
+- [x] stale operation completions are ignored deterministically, including across an auto-cancel-then-resend
+- [x] no request networking is launched directly from the view layer
 
 ## Slice 2: Request Tab UI Shell
 
@@ -455,9 +456,9 @@ Tasks:
 
 Definition of done:
 
-- request edits mutate hot editor state instead of mutating catalog values directly
-- UI renders `SaveStatus { Pristine, Dirty, Saving, SaveFailed }` live; placeholder regions exist for `ExecStatus` states wired up by Slice 4
-- no raw user-facing strings are introduced
+- [x] request edits mutate hot editor state instead of mutating catalog values directly
+- [x] UI renders `SaveStatus { Pristine, Dirty, Saving, SaveFailed }` live; placeholder regions exist for `ExecStatus` states wired up by Slice 4
+- [x] no raw user-facing strings are introduced
 
 ## Slice 3: Save, Duplicate, and Draft Ownership
 
@@ -477,11 +478,11 @@ Tasks:
 
 Definition of done:
 
-- save updates the persisted request and resets dirty state to the new baseline
-- duplicate opens a distinct request tab without corrupting the source request
-- duplicate never aliases the source request's secret ownership, even when the auth config is unchanged
-- first save of an auth-bearing unsaved draft rebinds its secrets from `RequestDraftId` ownership to the persisted `RequestId` without losing send capability
-- save conflicts are surfaced as recoverable errors, not silent last-write-wins overwrites
+- [x] save updates the persisted request and resets dirty state to the new baseline
+- [x] duplicate opens a distinct request tab without corrupting the source request
+- [x] duplicate never aliases the source request's secret ownership, even when the auth config is unchanged
+- [x] first save of an auth-bearing unsaved draft rebinds its secrets from `RequestDraftId` ownership to the persisted `RequestId` without losing send capability
+- [x] save conflicts are surfaced as recoverable errors, not silent last-write-wins overwrites
 
 ## Slice 4: REST Execution Service and Cancellation
 
@@ -509,10 +510,10 @@ Tasks:
 
 Definition of done:
 
-- send from a dirty or clean draft works
-- cancel transitions to `Cancelled` deterministically
-- a late successful response after cancel does not overwrite cancelled UI state
-- window close during in-flight request does not panic
+- [x] send from a dirty or clean draft works
+- [x] cancel transitions to `Cancelled` deterministically
+- [x] a late successful response after cancel does not overwrite cancelled UI state
+- [x] window close during in-flight request does not panic
 
 ## Slice 5: Response Persistence and Latest-Run Summary
 
@@ -537,9 +538,9 @@ Tasks:
 
 Definition of done:
 
-- large responses do not stay fully resident in hot memory by default
-- reopening a request can show the latest-run summary without resending
-- full response bodies can be reopened from disk on demand
+- [x] large responses do not stay fully resident in hot memory by default
+- [x] reopening a request can show the latest-run summary without resending
+- [x] full response bodies can be reopened from disk on demand
 
 ## Slice 6: Root/Session Integration and Restore Semantics
 
@@ -558,11 +559,11 @@ Tasks:
 
 Definition of done:
 
-- saved requests reopen with persisted editor data and latest-run summary
-- restoring a missing/deleted request still degrades gracefully to the existing empty state
-- delete of an in-flight request cancels first and then closes every corresponding tab without panicking
-- startup recovery leaves no request tab pointing at a permanently pending run after restart
-- no entity reentrancy or accidental task-drop regressions are introduced
+- [x] saved requests reopen with persisted editor data and latest-run summary
+- [x] restoring a missing/deleted request still degrades gracefully to the existing empty state
+- [x] delete of an in-flight request cancels first and then closes every corresponding tab without panicking
+- [x] startup recovery leaves no request tab pointing at a permanently pending run after restart
+- [x] no entity reentrancy or accidental task-drop regressions are introduced
 
 ## 9. Validation Gates
 
@@ -570,56 +571,56 @@ Phase 3 should not be considered complete without the following coverage.
 
 Unit tests:
 
-- request repo save/duplicate roundtrip
-- revision-conflict detection
-- lifecycle FSM transitions including cancel races
-- response truncation/body-ref behavior
-- editor entity reentrancy guard: follow-up updates triggered from inside an active update path defer instead of re-entering (see `state_management.md` §4.12)
-- preflight failure path: secret-resolution and URL-parse errors do not move the FSM to `Failed`
+- [x] request repo save/duplicate roundtrip
+- [x] revision-conflict detection
+- [x] lifecycle FSM transitions including cancel races
+- [x] response truncation/body-ref behavior
+- [x] editor entity reentrancy guard: follow-up updates triggered from inside an active update path defer instead of re-entering (see `state_management.md` §4.12)
+- [x] preflight failure path: secret-resolution and URL-parse errors do not move the FSM to `Failed`
 
 Integration tests:
 
-- send/cancel race with delayed completion
-- send-while-sending auto-cancel: a second send during an in-flight operation cancels the first and the late response of the first is ignored
-- request save followed by reopen from persisted state
-- duplicate request then reopen both source and duplicate tabs
-- latest-run summary restore from history/blob store
-- restart recovery with a stale pending request run marks the history row failed and keeps latest-run restore usable
-- window close during in-flight request with no panic
-- deleting a request with an active operation cancels first and closes all open tabs for that request cleanly
-- cancel mid-stream leaves no `blob_hash` reference and best-effort deletes the partial blob file
-- `MockTransport` drip-feed and stall scenarios deterministically reproduce the cancel race and preview-cap behaviors without hitting the network
+- [x] send/cancel race with delayed completion
+- [x] send-while-sending auto-cancel: a second send during an in-flight operation cancels the first and the late response of the first is ignored
+- [x] request save followed by reopen from persisted state
+- [x] duplicate request then reopen both source and duplicate tabs
+- [x] latest-run summary restore from history/blob store
+- [x] restart recovery with a stale pending request run marks the history row failed and keeps latest-run restore usable
+- [x] window close during in-flight request with no panic
+- [x] deleting a request with an active operation cancels first and closes all open tabs for that request cleanly
+- [x] cancel mid-stream leaves no `blob_hash` reference and best-effort deletes the partial blob file
+- [x] `MockTransport` drip-feed and stall scenarios deterministically reproduce the cancel race and preview-cap behaviors without hitting the network
 
 Performance tests:
 
-- 10 MB, 50 MB, and 200 MB response handling on the bounded preview path; assert against `RESPONSE_PREVIEW_CAP_BYTES` and the per-tab cap from §6.3
-- multiple open request tabs without unbounded response-memory growth, asserted against the per-tab volatile cap
+- [x] 10 MB, 50 MB, and 200 MB response handling on the bounded preview path; assert against `RESPONSE_PREVIEW_CAP_BYTES` and the per-tab cap from §6.3
+- [x] multiple open request tabs without unbounded response-memory growth, asserted against the per-tab volatile cap
 
 Security tests:
 
-- auth secrets never persist in request rows, history rows, or blob files
-- unsaved request drafts with auth can send via draft-scoped secret refs, and first save migrates those refs to the persisted request without plaintext leakage
-- duplicated requests receive new owner-scoped secret refs; deleting one request does not break the other's secrets
-- log/error paths do not emit raw auth values
-- history request snapshots redact secret-derived query/header values before persistence
-- secret-store lookup failure produces a recoverable error path
+- [x] auth secrets never persist in request rows, history rows, or blob files
+- [x] unsaved request drafts with auth can send via draft-scoped secret refs, and first save migrates those refs to the persisted request without plaintext leakage
+- [x] duplicated requests receive new owner-scoped secret refs; deleting one request does not break the other's secrets
+- [x] log/error paths do not emit raw auth values
+- [x] history request snapshots redact secret-derived query/header values before persistence
+- [x] secret-store lookup failure produces a recoverable error path
 
 Observability requirements:
 
-- `tracing` spans on every send: `request.send`, `request.cancel`, `response.persist`
-- counters: `requests_completed_total`, `requests_cancelled_total`, `requests_failed_total`, `responses_truncated_total`, `preview_bytes_histogram`, `async_update_failures_total` (tagged by category: `dropped_app` | `dropped_window` | `dropped_entity` | `real_error`)
-- structured warning logs on every preflight rejection, late-response ignore, and orphan-blob cleanup outcome
+- [x] `tracing` spans on every send: `request.send`, `request.cancel`, `response.persist`
+- [x] counters: `requests_completed_total`, `requests_cancelled_total`, `requests_failed_total`, `responses_truncated_total`, `preview_bytes_histogram`, `async_update_failures_total` (tagged by category: `dropped_app` | `dropped_window` | `dropped_entity` | `real_error`)
+- [x] structured warning logs on every preflight rejection, late-response ignore, and orphan-blob cleanup outcome
 
 ## 10. Exit Criteria Mapping Back to `docs/plan.md`
 
 The Phase 3 goals from the main plan are satisfied only when:
 
-- REST requests can be created or duplicated into a usable tab, edited, saved, sent, cancelled, and reopened safely
-- request-tab state obeys the explicit lifecycle FSM
-- deleting an in-flight request cancels it before tab teardown across windows
-- response previews respect configured memory caps
-- full response bodies are reopenable from disk
-- interrupted sends recover cleanly on the next startup without leaving pending history rows stuck forever
-- cancelled requests never re-enter completed UI state from late responses
+- [x] REST requests can be created or duplicated into a usable tab, edited, saved, sent, cancelled, and reopened safely
+- [x] request-tab state obeys the explicit lifecycle FSM
+- [x] deleting an in-flight request cancels it before tab teardown across windows
+- [x] response previews respect configured memory caps
+- [x] full response bodies are reopenable from disk
+- [x] interrupted sends recover cleanly on the next startup without leaving pending history rows stuck forever
+- [x] cancelled requests never re-enter completed UI state from late responses
 
 That is the minimum bar before moving on to Phase 4 tree CRUD and environment resolution work.
