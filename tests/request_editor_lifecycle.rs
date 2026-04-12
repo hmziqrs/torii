@@ -47,7 +47,7 @@ fn request_save_roundtrip_persists_expanded_fields() -> Result<()> {
     request.settings.timeout_ms = Some(5000);
 
     let revision = request.meta.revision;
-    request_repo.save(&request, revision)?;
+    let _ = request_repo.save(&request, revision)?;
 
     // Re-fetch and verify
     let loaded = request_repo.get(request.id)?.expect("request should exist");
@@ -81,7 +81,7 @@ fn request_revision_conflict_detected() -> Result<()> {
     // First save succeeds
     let mut modified = request.clone();
     modified.url = "/changed".to_string();
-    request_repo.save(&modified, request.meta.revision)?;
+    let _ = request_repo.save(&modified, request.meta.revision)?;
 
     // Second save with stale revision fails
     let stale_revision = request.meta.revision;
@@ -110,7 +110,7 @@ fn request_duplicate_creates_independent_copy() -> Result<()> {
 
     // Edit source request
     request.headers.push(KeyValuePair::new("X-Custom", "value"));
-    request_repo.save(&request, request.meta.revision)?;
+    let _ = request_repo.save(&request, request.meta.revision)?;
 
     // Duplicate
     let dup = request_repo.duplicate(request.id, "Original (Copy)")?;

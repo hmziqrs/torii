@@ -47,6 +47,7 @@ time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
 bytes = "1"
 keyring = "3"
 blake3 = "1"
+metrics = "0.23"
 
 [package]
 name = "torii"
@@ -91,6 +92,7 @@ time.workspace = true
 bytes.workspace = true
 keyring.workspace = true
 blake3.workspace = true
+metrics.workspace = true
 
 [build-dependencies]
 es-fluent = { workspace = true, features = ["build"] }

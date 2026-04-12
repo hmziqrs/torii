@@ -58,7 +58,11 @@ pub trait RequestRepository: Send + Sync {
     fn delete(&self, id: RequestId) -> RepoResult<()>;
 
     // Phase 3 additions
-    fn save(&self, request: &RequestItem, expected_revision: i64) -> Result<(), RequestRepoError>;
+    fn save(
+        &self,
+        request: &RequestItem,
+        expected_revision: i64,
+    ) -> Result<RequestItem, RequestRepoError>;
     fn duplicate(&self, source_id: RequestId, new_name: &str) -> RepoResult<RequestItem>;
 }
 
@@ -318,7 +322,11 @@ impl RequestRepository for SqliteRequestRepository {
         })
     }
 
-    fn save(&self, request: &RequestItem, expected_revision: i64) -> Result<(), RequestRepoError> {
+    fn save(
+        &self,
+        request: &RequestItem,
+        expected_revision: i64,
+    ) -> Result<RequestItem, RequestRepoError> {
         self.db.block_on(async {
             let storage = |e: sqlx::Error| RequestRepoError::Storage(anyhow::Error::new(e));
             let mut tx = self.db.pool().begin().await.map_err(storage)?;
@@ -380,8 +388,20 @@ impl RequestRepository for SqliteRequestRepository {
             .await
             .map_err(storage)?;
 
+            let row = sqlx::query(
+                "SELECT id, collection_id, parent_folder_id, name, method, url, body_blob_hash,
+                        sort_order, created_at, updated_at, revision,
+                        params_json, headers_json, auth_json, body_json, scripts_json, settings_json
+                 FROM requests WHERE id = ?",
+            )
+            .bind(request.id.to_string())
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(storage)?;
+            let saved = map_request_row(row).map_err(RequestRepoError::Storage)?;
+
             tx.commit().await.map_err(storage)?;
-            Ok(())
+            Ok(saved)
         })
     }
 

@@ -870,7 +870,7 @@ fn secret_ref_not_in_request_sqlite_row() {
     request.body = BodyType::RawJson {
         content: r#"{"data":"value"}"#.to_string(),
     };
-    request_repo.save(&request, request.meta.revision).unwrap();
+    let _ = request_repo.save(&request, request.meta.revision).unwrap();
 
     let loaded = request_repo.get(request.id).unwrap().unwrap();
     match &loaded.auth {

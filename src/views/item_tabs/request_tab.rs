@@ -57,7 +57,36 @@ pub struct RequestTabView {
     active_section: RequestSectionTab,
     loaded_full_body_blob_id: Option<String>,
     loaded_full_body_text: Option<String>,
+    input_sync_guard: ReentrancyGuard,
     _subscriptions: Vec<Subscription>,
+}
+
+#[derive(Debug, Default)]
+struct ReentrancyGuard {
+    active: bool,
+    deferred: bool,
+}
+
+impl ReentrancyGuard {
+    fn enter(&mut self) -> bool {
+        if self.active {
+            self.deferred = true;
+            return false;
+        }
+        self.active = true;
+        true
+    }
+
+    fn leave_and_take_deferred(&mut self) -> bool {
+        self.active = false;
+        let deferred = self.deferred;
+        self.deferred = false;
+        deferred
+    }
+
+    fn is_active(&self) -> bool {
+        self.active
+    }
 }
 
 impl RequestTabView {
@@ -190,6 +219,10 @@ impl RequestTabView {
             &url_input,
             |this: &mut RequestTabView, state: Entity<InputState>, event: &InputEvent, cx| {
                 if let InputEvent::Change = event {
+                    if this.input_sync_guard.is_active() {
+                        this.input_sync_guard.deferred = true;
+                        return;
+                    }
                     let url = state.read(cx).value().to_string();
                     if this.editor.draft().url != url {
                         this.editor.draft_mut().url = url;
@@ -208,6 +241,10 @@ impl RequestTabView {
             &params_input,
             |this: &mut RequestTabView, state: Entity<InputState>, event: &InputEvent, cx| {
                 if let InputEvent::Change = event {
+                    if this.input_sync_guard.is_active() {
+                        this.input_sync_guard.deferred = true;
+                        return;
+                    }
                     let next = parse_key_value_pairs(&state.read(cx).value());
                     if this.editor.draft().params != next {
                         this.editor.draft_mut().params = next;
@@ -371,6 +408,7 @@ impl RequestTabView {
             active_section: RequestSectionTab::Params,
             loaded_full_body_blob_id: None,
             loaded_full_body_text: None,
+            input_sync_guard: ReentrancyGuard::default(),
             _subscriptions: subscriptions,
         }
     }
@@ -425,15 +463,11 @@ impl RequestTabView {
         cx.notify();
 
         match services.repos.request.save(&request, expected_revision) {
-            Ok(()) => {
-                if let Ok(Some(saved)) = services.repos.request.get(request.id) {
-                    self.editor.complete_save(&saved);
-                } else {
-                    self.editor.complete_save(&request);
-                }
+            Ok(saved) => {
+                self.editor.complete_save(&saved);
 
                 if matches!(self.editor.identity(), EditorIdentity::Draft(_)) {
-                    self.editor.transition_to_persisted(request.id, &request);
+                    self.editor.transition_to_persisted(saved.id, &saved);
                 }
 
                 cx.notify();
@@ -511,7 +545,7 @@ impl RequestTabView {
             return Err(err);
         }
 
-        if let Err(err) = services
+        duplicate = match services
             .repos
             .request
             .save(&duplicate, duplicate.meta.revision)
@@ -520,23 +554,15 @@ impl RequestTabView {
                     "{}: {e}",
                     es_fluent::localize("request_tab_duplicate_failed", None)
                 )
-            })
-        {
-            let _ = services.repos.request.delete(duplicate.id);
-            return Err(err);
-        }
+            }) {
+            Ok(saved) => saved,
+            Err(err) => {
+                let _ = services.repos.request.delete(duplicate.id);
+                return Err(err);
+            }
+        };
 
-        services
-            .repos
-            .request
-            .get(duplicate.id)
-            .map_err(|e| {
-                format!(
-                    "{}: {e}",
-                    es_fluent::localize("request_tab_duplicate_failed", None)
-                )
-            })?
-            .ok_or_else(|| es_fluent::localize("request_tab_duplicate_failed", None).to_string())
+        Ok(duplicate)
     }
 
     // -----------------------------------------------------------------------
@@ -737,7 +763,9 @@ impl RequestTabView {
             )
         })?;
 
-        let (capped, was_truncated) = truncate_for_tab_cap(bytes);
+        let preview_bytes = self.current_preview_bytes();
+        let available_for_full_body = ResponseBudgets::PER_TAB_CAP_BYTES.saturating_sub(preview_bytes);
+        let (capped, was_truncated) = truncate_for_tab_cap(bytes, available_for_full_body);
         let mut text = render_preview_text(&capped, media_type.as_deref());
         if was_truncated {
             text.push('\n');
@@ -1049,16 +1077,12 @@ impl RequestTabView {
                 )
         });
     }
-}
 
-impl Focusable for RequestTabView {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
-    }
-}
+    fn sync_inputs_from_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.input_sync_guard.enter() {
+            return;
+        }
 
-impl Render for RequestTabView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let draft = self.editor.draft().clone();
         let canonical_params_text = key_value_pairs_to_text(&draft.params);
         if self.url_input.read(cx).value().as_ref() != draft.url.as_str() {
@@ -1071,6 +1095,36 @@ impl Render for RequestTabView {
                 s.set_value(canonical_params_text, window, cx);
             });
         }
+
+        if self.input_sync_guard.leave_and_take_deferred() {
+            cx.notify();
+        }
+    }
+
+    fn current_preview_bytes(&self) -> usize {
+        match self.editor.exec_status() {
+            ExecStatus::Completed { response } => match &response.body_ref {
+                BodyRef::InMemoryPreview { bytes, .. } => bytes.len(),
+                BodyRef::DiskBlob {
+                    preview: Some(bytes), ..
+                } => bytes.len(),
+                _ => 0,
+            },
+            _ => 0,
+        }
+    }
+}
+
+impl Focusable for RequestTabView {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Render for RequestTabView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_inputs_from_draft(window, cx);
+        let draft = self.editor.draft().clone();
         let request = &draft;
         let save_status = self.editor.save_status().clone();
         let is_dirty = matches!(
@@ -1790,13 +1844,31 @@ fn render_preview_text(bytes: &[u8], media_type: Option<&str>) -> String {
     }
 }
 
-fn truncate_for_tab_cap(bytes: Vec<u8>) -> (Vec<u8>, bool) {
-    if bytes.len() > ResponseBudgets::PER_TAB_CAP_BYTES {
-        (
-            bytes[..ResponseBudgets::PER_TAB_CAP_BYTES].to_vec(),
-            true,
-        )
+fn truncate_for_tab_cap(bytes: Vec<u8>, max_bytes: usize) -> (Vec<u8>, bool) {
+    if bytes.len() > max_bytes {
+        (bytes[..max_bytes].to_vec(), true)
     } else {
         (bytes, false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ReentrancyGuard, truncate_for_tab_cap};
+
+    #[test]
+    fn reentrancy_guard_defers_nested_entry() {
+        let mut guard = ReentrancyGuard::default();
+        assert!(guard.enter());
+        assert!(!guard.enter());
+        assert!(guard.leave_and_take_deferred());
+    }
+
+    #[test]
+    fn truncate_respects_custom_max_bytes() {
+        let bytes = vec![1_u8; 16];
+        let (truncated, was_truncated) = truncate_for_tab_cap(bytes, 8);
+        assert!(was_truncated);
+        assert_eq!(truncated.len(), 8);
     }
 }

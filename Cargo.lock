@@ -4377,6 +4377,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "metrics"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3045b4193fbdc5b5681f32f11070da9be3609f189a79f3390706d42587f46bb5"
+dependencies = [
+ "ahash",
+ "portable-atomic",
+]
+
+[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7686,6 +7696,7 @@ dependencies = [
  "keyring",
  "koruma",
  "koruma-collection",
+ "metrics",
  "regex",
  "reqwest",
  "rust-i18n",
