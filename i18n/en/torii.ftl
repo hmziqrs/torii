@@ -301,4 +301,6 @@ request_tab_save_unavailable = Response body is not available to save
 request_tab_search_matches = matches
 request_tab_shortcut_no_collection = Select a collection first to create a new request.
 request_tab_kv_add_row = Add Row
+request_tab_kv_col_key = Key
+request_tab_kv_col_value = Value
 request_tab_kv_remove_row = Remove

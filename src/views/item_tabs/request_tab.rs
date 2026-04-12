@@ -36,7 +36,6 @@ mod response_panel;
 mod state;
 
 use helpers::*;
-use kv_editor::render_kv_rows;
 
 // ---------------------------------------------------------------------------
 // Actions for request tab keyboard shortcuts
@@ -131,6 +130,10 @@ pub struct RequestTabView {
     headers_table: Entity<TableState<response_panel::HeadersTableDelegate>>,
     cookies_table: Entity<TableState<response_panel::CookiesTableDelegate>>,
     timing_table: Entity<TableState<response_panel::TimingTableDelegate>>,
+    params_kv_table: Entity<TableState<kv_editor::KvTableDelegate>>,
+    headers_kv_table: Entity<TableState<kv_editor::KvTableDelegate>>,
+    body_urlencoded_kv_table: Entity<TableState<kv_editor::KvTableDelegate>>,
+    body_form_text_kv_table: Entity<TableState<kv_editor::KvTableDelegate>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -701,6 +704,54 @@ impl RequestTabView {
                     .col_resizable(false)
                     .col_movable(false)
                     .sortable(false)
+            }),
+            params_kv_table: cx.new(|cx| {
+                TableState::new(
+                    kv_editor::KvTableDelegate::new(cx.entity(), KvTarget::Params, "params"),
+                    window,
+                    cx,
+                )
+                .row_selectable(false)
+                .col_selectable(false)
+                .col_resizable(true)
+                .col_movable(false)
+                .sortable(false)
+            }),
+            headers_kv_table: cx.new(|cx| {
+                TableState::new(
+                    kv_editor::KvTableDelegate::new(cx.entity(), KvTarget::Headers, "headers"),
+                    window,
+                    cx,
+                )
+                .row_selectable(false)
+                .col_selectable(false)
+                .col_resizable(true)
+                .col_movable(false)
+                .sortable(false)
+            }),
+            body_urlencoded_kv_table: cx.new(|cx| {
+                TableState::new(
+                    kv_editor::KvTableDelegate::new(cx.entity(), KvTarget::BodyUrlEncoded, "body-urlencoded"),
+                    window,
+                    cx,
+                )
+                .row_selectable(false)
+                .col_selectable(false)
+                .col_resizable(true)
+                .col_movable(false)
+                .sortable(false)
+            }),
+            body_form_text_kv_table: cx.new(|cx| {
+                TableState::new(
+                    kv_editor::KvTableDelegate::new(cx.entity(), KvTarget::BodyFormDataText, "body-form-text"),
+                    window,
+                    cx,
+                )
+                .row_selectable(false)
+                .col_selectable(false)
+                .col_resizable(true)
+                .col_movable(false)
+                .sortable(false)
             }),
             _subscriptions: subscriptions,
         };
@@ -1944,18 +1995,20 @@ impl Render for RequestTabView {
 
 
         let section_content = match self.active_section {
-            RequestSectionTab::Params => render_kv_rows(
-                &self.params_rows,
+            RequestSectionTab::Params => kv_editor::render_kv_table(
+                &self.params_kv_table,
                 KvTarget::Params,
                 "params",
+                &self.params_rows,
                 cx,
             ).into_any_element(),
             RequestSectionTab::Auth => auth_editor::render_auth_editor(self, &draft, cx)
                 .into_any_element(),
-            RequestSectionTab::Headers => render_kv_rows(
-                &self.headers_rows,
+            RequestSectionTab::Headers => kv_editor::render_kv_table(
+                &self.headers_kv_table,
                 KvTarget::Headers,
                 "headers",
+                &self.headers_rows,
                 cx,
             ).into_any_element(),
             RequestSectionTab::Body => body_editor::render_body_editor(

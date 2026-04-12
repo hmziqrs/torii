@@ -301,4 +301,6 @@ request_tab_save_unavailable = 响应体不可保存
 request_tab_search_matches = 个匹配
 request_tab_shortcut_no_collection = 请先选择一个集合再创建请求。
 request_tab_kv_add_row = 添加行
+request_tab_kv_col_key = 键
+request_tab_kv_col_value = 值
 request_tab_kv_remove_row = 移除

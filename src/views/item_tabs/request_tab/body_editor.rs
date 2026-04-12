@@ -1,5 +1,5 @@
 use super::*;
-use super::kv_editor::render_kv_rows;
+use super::kv_editor::render_kv_table;
 
 // ---------------------------------------------------------------------------
 // Body editor rendering — extracted from RequestTabView::render
@@ -11,16 +11,18 @@ pub(super) fn render_body_editor(
     _window: &mut Window,
     cx: &mut Context<RequestTabView>,
 ) -> gpui::Div {
-    let urlencoded_rows = render_kv_rows(
-        &view.body_urlencoded_rows,
+    let urlencoded_table = render_kv_table(
+        &view.body_urlencoded_kv_table,
         KvTarget::BodyUrlEncoded,
         "body-urlencoded",
+        &view.body_urlencoded_rows,
         cx,
     );
-    let form_text_rows = render_kv_rows(
-        &view.body_form_text_rows,
+    let form_text_table = render_kv_table(
+        &view.body_form_text_kv_table,
         KvTarget::BodyFormDataText,
         "body-form-text",
+        &view.body_form_text_rows,
         cx,
     );
 
@@ -49,7 +51,7 @@ pub(super) fn render_body_editor(
                 .w_full()
                 .child(Input::new(&view.body_raw_json_input).w_full().h(px(220.)))
                 .into_any_element(),
-            BodyType::UrlEncoded { .. } => urlencoded_rows.into_any_element(),
+            BodyType::UrlEncoded { .. } => urlencoded_table.into_any_element(),
             BodyType::FormData { file_fields, .. } => v_flex()
                 .gap_3()
                 .child(
@@ -58,7 +60,7 @@ pub(super) fn render_body_editor(
                         .text_color(gpui::hsla(0., 0., 0.45, 1.))
                         .child(es_fluent::localize("request_tab_body_form_text_fields", None)),
                 )
-                .child(form_text_rows)
+                .child(form_text_table)
                 .child(
                     div()
                         .text_xs()
