@@ -2,22 +2,12 @@ use anyhow::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClassifiedError {
-    DnsFailure {
-        host: String,
-    },
-    ConnectionRefused {
-        host: String,
-        port: u16,
-    },
+    DnsFailure { host: String },
+    ConnectionRefused { host: String, port: u16 },
     ConnectionTimeout,
-    TlsError {
-        reason: String,
-    },
+    TlsError { reason: String },
     RequestTimeout,
-    TransportError {
-        summary: String,
-        detail: String,
-    },
+    TransportError { summary: String, detail: String },
 }
 
 pub fn classify_transport_error(error: &Error) -> ClassifiedError {
@@ -43,10 +33,7 @@ pub fn classify_transport_error(error: &Error) -> ClassifiedError {
 
         if reqwest_error.is_connect() {
             if has_io_kind(error, std::io::ErrorKind::ConnectionRefused) {
-                return ClassifiedError::ConnectionRefused {
-                    host,
-                    port,
-                };
+                return ClassifiedError::ConnectionRefused { host, port };
             }
 
             let lowered = detail.to_ascii_lowercase();

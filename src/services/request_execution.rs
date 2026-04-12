@@ -20,8 +20,9 @@ use crate::{
     },
     infra::{blobs::BlobStore, secrets::SecretStoreRef},
     repos::history_repo::{HistoryRepoRef, build_request_snapshot},
-    services::telemetry,
     services::error_classifier::{ClassifiedError, classify_transport_error},
+    services::request_body_payload::{RequestBodyPayload, build_request_body_payload},
+    services::telemetry,
 };
 
 #[async_trait::async_trait]
@@ -31,7 +32,7 @@ pub trait HttpTransport: Send + Sync {
         method: http::Method,
         url: url::Url,
         headers: http::HeaderMap,
-        body: Option<bytes::Bytes>,
+        body: RequestBodyPayload,
         cancel: CancellationToken,
     ) -> Result<TransportResponse>;
 }
@@ -69,15 +70,21 @@ impl HttpTransport for ReqwestTransport {
         method: http::Method,
         url: url::Url,
         headers: http::HeaderMap,
-        body: Option<bytes::Bytes>,
+        body: RequestBodyPayload,
         cancel: CancellationToken,
     ) -> Result<TransportResponse> {
         let mut builder = self.client.request(method, url.as_str());
         for (name, value) in &headers {
             builder = builder.header(name, value);
         }
-        if let Some(body) = body {
-            builder = builder.body(reqwest::Body::from(body));
+        match body {
+            RequestBodyPayload::None => {}
+            RequestBodyPayload::Bytes(body) => {
+                builder = builder.body(reqwest::Body::from(body));
+            }
+            RequestBodyPayload::Stream(stream) => {
+                builder = builder.body(reqwest::Body::wrap_stream(stream));
+            }
         }
 
         let send_fut = builder.send();
@@ -140,7 +147,9 @@ pub enum ExecOutcome {
         summary: String,
         classified: Option<ClassifiedError>,
     },
-    Cancelled { partial_size: Option<u64> },
+    Cancelled {
+        partial_size: Option<u64>,
+    },
     PreflightFailed(String),
 }
 
@@ -189,7 +198,10 @@ impl RequestExecutionService {
                         ..
                     } => (Some(blob_id.clone()), Some(*size_bytes as i64)),
                     BodyRef::InMemoryPreview { bytes, .. } => {
-                        match self.blob_store.write_bytes(bytes, summary.media_type.as_deref()) {
+                        match self
+                            .blob_store
+                            .write_bytes(bytes, summary.media_type.as_deref())
+                        {
                             Ok(meta) => (Some(meta.hash), Some(meta.size_bytes as i64)),
                             Err(_) => (None, None),
                         }
@@ -326,14 +338,36 @@ impl RequestExecutionService {
             );
         }
 
-        let body = self.build_request_body(request, &mut header_map)?;
+        let built_body = match build_request_body_payload(&request.body, &self.blob_store) {
+            Ok(payload) => payload,
+            Err(e) => {
+                tracing::warn!(error = %e, "preflight rejected: request body invalid");
+                return Ok(ExecOutcome::PreflightFailed(format!(
+                    "request body invalid: {e}"
+                )));
+            }
+        };
+        if let Some(content_type) = built_body.content_type.as_deref() {
+            if let Err(e) = ensure_content_type(&mut header_map, content_type) {
+                tracing::warn!(error = %e, "preflight rejected: invalid content-type");
+                return Ok(ExecOutcome::PreflightFailed(format!(
+                    "invalid content-type: {e}"
+                )));
+            }
+        }
 
         let dispatched_at = Instant::now();
         let dispatched_at_unix_ms = now_unix_ms();
         tracing::info!(method = %request.method, "request dispatched");
         let transport_response = match self
             .transport
-            .send(method, parsed_url, header_map, body, cancel.clone())
+            .send(
+                method,
+                parsed_url,
+                header_map,
+                built_body.payload,
+                cancel.clone(),
+            )
             .await
         {
             Ok(r) => r,
@@ -385,83 +419,6 @@ impl RequestExecutionService {
         }))
     }
 
-    fn build_request_body(
-        &self,
-        request: &RequestItem,
-        headers: &mut http::HeaderMap,
-    ) -> Result<Option<Bytes>> {
-        match &request.body {
-            BodyType::None => Ok(None),
-            BodyType::RawText { content } => {
-                ensure_content_type(headers, "text/plain")?;
-                Ok(Some(Bytes::from(content.clone())))
-            }
-            BodyType::RawJson { content } => {
-                ensure_content_type(headers, "application/json")?;
-                Ok(Some(Bytes::from(content.clone())))
-            }
-            BodyType::UrlEncoded { entries } => {
-                let pairs: Vec<(String, String)> = entries
-                    .iter()
-                    .filter(|e| e.enabled)
-                    .map(|e| (e.key.clone(), e.value.clone()))
-                    .collect();
-                let encoded =
-                    serde_urlencoded::to_string(&pairs).context("failed to encode url-form body")?;
-                ensure_content_type(headers, "application/x-www-form-urlencoded")?;
-                Ok(Some(Bytes::from(encoded)))
-            }
-            BodyType::FormData {
-                text_fields,
-                file_fields,
-            } => {
-                let boundary = format!("torii-{}", uuid::Uuid::now_v7());
-                let mut body = Vec::new();
-
-                for field in text_fields.iter().filter(|f| f.enabled) {
-                    body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
-                    body.extend_from_slice(
-                        format!("Content-Disposition: form-data; name=\"{}\"\r\n\r\n", field.key)
-                            .as_bytes(),
-                    );
-                    body.extend_from_slice(field.value.as_bytes());
-                    body.extend_from_slice(b"\r\n");
-                }
-
-                for field in file_fields.iter().filter(|f| f.enabled) {
-                    let bytes = self
-                        .blob_store
-                        .read_all(&field.blob_hash)
-                        .context("failed to read form-data file blob")?;
-                    body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
-                    body.extend_from_slice(
-                        format!(
-                            "Content-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\n",
-                            field.key,
-                            field.file_name.clone().unwrap_or_else(|| "file.bin".to_string())
-                        )
-                        .as_bytes(),
-                    );
-                    body.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
-                    body.extend_from_slice(&bytes);
-                    body.extend_from_slice(b"\r\n");
-                }
-
-                body.extend_from_slice(format!("--{}--\r\n", boundary).as_bytes());
-                ensure_content_type(headers, &format!("multipart/form-data; boundary={boundary}"))?;
-                Ok(Some(Bytes::from(body)))
-            }
-            BodyType::BinaryFile { blob_hash, .. } => {
-                let bytes = self
-                    .blob_store
-                    .read_all(blob_hash)
-                    .context("failed to read binary body blob")?;
-                ensure_content_type(headers, "application/octet-stream")?;
-                Ok(Some(Bytes::from(bytes)))
-            }
-        }
-    }
-
     async fn stream_response_body(
         &self,
         mut stream: Pin<Box<dyn futures::Stream<Item = Result<Bytes>> + Send>>,
@@ -488,7 +445,9 @@ impl RequestExecutionService {
                 drop(temp_file);
                 match tokio::fs::remove_file(&temp_path).await {
                     Ok(()) => tracing::debug!("cleaned up partial response blob"),
-                    Err(e) => tracing::warn!(error = %e, "failed to clean up partial response blob"),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "failed to clean up partial response blob")
+                    }
                 }
                 return Ok(BodyRef::Empty);
             }

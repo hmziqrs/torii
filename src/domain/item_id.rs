@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use crate::domain::ids::{CollectionId, EnvironmentId, FolderId, RequestDraftId, RequestId, WorkspaceId};
+use crate::domain::ids::{
+    CollectionId, EnvironmentId, FolderId, RequestDraftId, RequestId, WorkspaceId,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ItemId {

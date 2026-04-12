@@ -2,8 +2,7 @@ use std::sync::Arc;
 
 use gpui::{prelude::*, *};
 use gpui_component::{
-    Disableable as _,
-    Sizable as _, WindowExt as _,
+    Disableable as _, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
     h_flex,
@@ -16,9 +15,7 @@ use crate::{
     domain::{
         ids::WorkspaceId,
         request::{ApiKeyLocation, AuthType, BodyType, KeyValuePair, RequestItem},
-        response::{
-            BodyRef, HeaderJsonFormat, ResponseBudgets, parse_response_header_rows,
-        },
+        response::{BodyRef, HeaderJsonFormat, ResponseBudgets, parse_response_header_rows},
     },
     repos::request_repo::RequestRepoError,
     services::{
@@ -65,10 +62,17 @@ enum ResponseTab {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BodyFileTarget {
+    Binary,
+    FormDataIndex(usize),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum KvTarget {
     Params,
     Headers,
     BodyUrlEncoded,
+    BodyFormDataText,
 }
 
 struct KeyValueEditorRow {
@@ -77,6 +81,8 @@ struct KeyValueEditorRow {
     key_input: Entity<InputState>,
     value_input: Entity<InputState>,
 }
+
+const LARGE_BODY_FILE_CONFIRM_BYTES: u64 = 100 * 1024 * 1024;
 
 pub struct RequestTabView {
     editor: RequestEditorState,
@@ -101,6 +107,7 @@ pub struct RequestTabView {
     params_rows: Vec<KeyValueEditorRow>,
     headers_rows: Vec<KeyValueEditorRow>,
     body_urlencoded_rows: Vec<KeyValueEditorRow>,
+    body_form_text_rows: Vec<KeyValueEditorRow>,
     next_kv_row_id: u64,
     active_section: RequestSectionTab,
     active_response_tab: ResponseTab,
@@ -183,7 +190,11 @@ impl RequestTabView {
                 cx,
             );
             if let Some(ix) = standard_method_index(initial.method.as_str()) {
-                select.set_selected_index(Some(gpui_component::IndexPath::default().row(ix)), window, cx);
+                select.set_selected_index(
+                    Some(gpui_component::IndexPath::default().row(ix)),
+                    window,
+                    cx,
+                );
             } else {
                 select.set_selected_index(None, window, cx);
             }
@@ -261,7 +272,11 @@ impl RequestTabView {
                 AuthType::ApiKey { location, .. } => api_key_location_index(*location),
                 _ => 0,
             };
-            select.set_selected_index(Some(gpui_component::IndexPath::default().row(row)), window, cx);
+            select.set_selected_index(
+                Some(gpui_component::IndexPath::default().row(row)),
+                window,
+                cx,
+            );
             select
         });
         let body_type_select = cx.new(|cx| {
@@ -375,7 +390,7 @@ impl RequestTabView {
         subscriptions.push(cx.subscribe_in(
             &method_select,
             window,
-             |this: &mut RequestTabView,
+            |this: &mut RequestTabView,
              _: &Entity<SelectState<Vec<&'static str>>>,
              event: &SelectEvent<Vec<&'static str>>,
              _window: &mut Window,
@@ -403,7 +418,8 @@ impl RequestTabView {
                     let url = state.read(cx).value().to_string();
                     if this.editor.draft().url != url {
                         this.editor.draft_mut().url = url;
-                        let enabled_from_url = params_from_url_query(this.editor.draft().url.as_str());
+                        let enabled_from_url =
+                            params_from_url_query(this.editor.draft().url.as_str());
                         let mut merged = enabled_from_url;
                         merged.extend(
                             this.editor
@@ -512,7 +528,9 @@ impl RequestTabView {
             |this: &mut RequestTabView, state: Entity<InputState>, event: &InputEvent, cx| {
                 if let InputEvent::Change = event {
                     let content = state.read(cx).value().to_string();
-                    if let BodyType::RawText { content: existing } = &mut this.editor.draft_mut().body {
+                    if let BodyType::RawText { content: existing } =
+                        &mut this.editor.draft_mut().body
+                    {
                         if *existing != content {
                             *existing = content;
                             this.editor.refresh_save_status();
@@ -527,7 +545,9 @@ impl RequestTabView {
             |this: &mut RequestTabView, state: Entity<InputState>, event: &InputEvent, cx| {
                 if let InputEvent::Change = event {
                     let content = state.read(cx).value().to_string();
-                    if let BodyType::RawJson { content: existing } = &mut this.editor.draft_mut().body {
+                    if let BodyType::RawJson { content: existing } =
+                        &mut this.editor.draft_mut().body
+                    {
                         if *existing != content {
                             *existing = content;
                             this.editor.refresh_save_status();
@@ -633,6 +653,7 @@ impl RequestTabView {
             params_rows: Vec::new(),
             headers_rows: Vec::new(),
             body_urlencoded_rows: Vec::new(),
+            body_form_text_rows: Vec::new(),
             next_kv_row_id: 1,
             active_section: RequestSectionTab::Params,
             active_response_tab: ResponseTab::Body,
@@ -650,6 +671,11 @@ impl RequestTabView {
             _ => Vec::new(),
         };
         this.rebuild_kv_rows(KvTarget::BodyUrlEncoded, &urlencoded_entries, window, cx);
+        let form_text_entries = match &initial.body {
+            BodyType::FormData { text_fields, .. } => text_fields.clone(),
+            _ => Vec::new(),
+        };
+        this.rebuild_kv_rows(KvTarget::BodyFormDataText, &form_text_entries, window, cx);
         this
     }
 
@@ -661,7 +687,12 @@ impl RequestTabView {
         &mut self.editor
     }
 
-    fn handle_save_request(&mut self, _action: &SaveRequest, window: &mut Window, cx: &mut Context<Self>) {
+    fn handle_save_request(
+        &mut self,
+        _action: &SaveRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match self.save(cx) {
             Ok(()) => {
                 window.push_notification(es_fluent::localize("request_tab_save_ok", None), cx);
@@ -672,11 +703,21 @@ impl RequestTabView {
         }
     }
 
-    fn handle_send_request(&mut self, _action: &SendRequest, _window: &mut Window, cx: &mut Context<Self>) {
+    fn handle_send_request(
+        &mut self,
+        _action: &SendRequest,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.send(cx);
     }
 
-    fn handle_cancel_request(&mut self, _action: &CancelRequest, _window: &mut Window, cx: &mut Context<Self>) {
+    fn handle_cancel_request(
+        &mut self,
+        _action: &CancelRequest,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.cancel_send(cx);
     }
 
@@ -687,7 +728,9 @@ impl RequestTabView {
         cx: &mut Context<Self>,
     ) {
         match self.duplicate(cx) {
-            Ok(_) => window.push_notification(es_fluent::localize("request_tab_duplicate_ok", None), cx),
+            Ok(_) => {
+                window.push_notification(es_fluent::localize("request_tab_duplicate_ok", None), cx)
+            }
             Err(err) => window.push_notification(err, cx),
         }
     }
@@ -866,10 +909,11 @@ impl RequestTabView {
 
         // Create pending history row with secret-safe snapshot
         let draft = self.editor.draft().clone();
-        let history_entry = match services
-            .request_execution
-            .create_pending_history(workspace_id, self.editor.request_id(), &draft)
-        {
+        let history_entry = match services.request_execution.create_pending_history(
+            workspace_id,
+            self.editor.request_id(),
+            &draft,
+        ) {
             Ok(entry) => entry,
             Err(e) => {
                 self.editor.set_preflight_error(format!(
@@ -1044,7 +1088,8 @@ impl RequestTabView {
         })?;
 
         let preview_bytes = self.current_preview_bytes();
-        let available_for_full_body = ResponseBudgets::PER_TAB_CAP_BYTES.saturating_sub(preview_bytes);
+        let available_for_full_body =
+            ResponseBudgets::PER_TAB_CAP_BYTES.saturating_sub(preview_bytes);
         let (capped, was_truncated) = truncate_for_tab_cap(bytes, available_for_full_body);
         let mut text = render_preview_text(&capped, media_type.as_deref());
         if was_truncated {
@@ -1093,13 +1138,18 @@ impl RequestTabView {
             }
         };
 
-        let receiver = cx.prompt_for_new_path(&std::env::current_dir().unwrap_or_default(), Some(&suggested_name));
+        let receiver = cx.prompt_for_new_path(
+            &std::env::current_dir().unwrap_or_default(),
+            Some(&suggested_name),
+        );
         cx.spawn_in(window, async move |_, _| {
             let Some(path) = receiver.await.ok().into_iter().flatten().flatten().next() else {
                 return;
             };
             let result = match source {
-                SaveSource::InMemory(bytes) => std::fs::write(&path, bytes).map_err(anyhow::Error::from),
+                SaveSource::InMemory(bytes) => {
+                    std::fs::write(&path, bytes).map_err(anyhow::Error::from)
+                }
                 SaveSource::Blob(blob_id) => {
                     let mut reader = match services.blob_store.open_read(&blob_id) {
                         Ok(file) => file,
@@ -1159,10 +1209,12 @@ impl RequestTabView {
                         .0
                         .blob_store
                         .read_all(blob_id)
-                        .map_err(|e| format!(
-                            "{}: {e}",
-                            es_fluent::localize("request_tab_full_body_load_failed", None)
-                        ))?
+                        .map_err(|e| {
+                            format!(
+                                "{}: {e}",
+                                es_fluent::localize("request_tab_full_body_load_failed", None)
+                            )
+                        })?
                 } else if let Some(preview) = preview {
                     preview.to_vec()
                 } else {
@@ -1170,10 +1222,12 @@ impl RequestTabView {
                         .0
                         .blob_store
                         .read_preview(blob_id, ResponseBudgets::PREVIEW_CAP_BYTES)
-                        .map_err(|e| format!(
-                            "{}: {e}",
-                            es_fluent::localize("request_tab_full_body_load_failed", None)
-                        ))?
+                        .map_err(|e| {
+                            format!(
+                                "{}: {e}",
+                                es_fluent::localize("request_tab_full_body_load_failed", None)
+                            )
+                        })?
                 };
                 render_preview_text(&bytes, media_type.as_deref())
             }
@@ -1456,7 +1510,10 @@ impl RequestTabView {
                                     div()
                                         .text_xs()
                                         .text_color(gpui::hsla(0., 0., 0.45, 1.))
-                                        .child(es_fluent::localize("request_tab_timeout_label", None)),
+                                        .child(es_fluent::localize(
+                                            "request_tab_timeout_label",
+                                            None,
+                                        )),
                                 )
                                 .child(Input::new(&timeout_input).large()),
                         )
@@ -1476,16 +1533,14 @@ impl RequestTabView {
                         ),
                 )
                 .footer(
-                    h_flex()
-                        .justify_end()
-                        .child(
-                            Button::new("request-settings-close")
-                                .primary()
-                                .label(es_fluent::localize("request_tab_dirty_close_cancel", None))
-                                .on_click(move |_, window, cx| {
-                                    window.close_dialog(cx);
-                                }),
-                        ),
+                    h_flex().justify_end().child(
+                        Button::new("request-settings-close")
+                            .primary()
+                            .label(es_fluent::localize("request_tab_dirty_close_cancel", None))
+                            .on_click(move |_, window, cx| {
+                                window.close_dialog(cx);
+                            }),
+                    ),
                 )
         });
     }
@@ -1593,13 +1648,28 @@ impl RequestTabView {
             BodyKind::UrlEncoded => BodyType::UrlEncoded {
                 entries: self.collect_meaningful_pairs(KvTarget::BodyUrlEncoded, cx),
             },
-            BodyKind::FormData => BodyType::FormData {
-                text_fields: Vec::new(),
-                file_fields: Vec::new(),
-            },
-            BodyKind::BinaryFile => BodyType::BinaryFile {
-                blob_hash: String::new(),
-                file_name: None,
+            BodyKind::FormData => {
+                let file_fields = match &self.editor.draft().body {
+                    BodyType::FormData { file_fields, .. } => file_fields.clone(),
+                    _ => Vec::new(),
+                };
+                BodyType::FormData {
+                    text_fields: self.collect_meaningful_pairs(KvTarget::BodyFormDataText, cx),
+                    file_fields,
+                }
+            }
+            BodyKind::BinaryFile => match &self.editor.draft().body {
+                BodyType::BinaryFile {
+                    blob_hash,
+                    file_name,
+                } => BodyType::BinaryFile {
+                    blob_hash: blob_hash.clone(),
+                    file_name: file_name.clone(),
+                },
+                _ => BodyType::BinaryFile {
+                    blob_hash: String::new(),
+                    file_name: None,
+                },
             },
         };
         if self.editor.draft().body != next {
@@ -1623,10 +1693,15 @@ impl RequestTabView {
         self.sync_kv_rows_with_draft(KvTarget::Params, window, cx);
         self.sync_kv_rows_with_draft(KvTarget::Headers, window, cx);
         self.sync_kv_rows_with_draft(KvTarget::BodyUrlEncoded, window, cx);
+        self.sync_kv_rows_with_draft(KvTarget::BodyFormDataText, window, cx);
         self.method_select.update(cx, |select, cx| {
             if let Some(ix) = standard_method_index(draft.method.as_str()) {
                 if select.selected_index(cx).map(|it| it.row) != Some(ix) {
-                    select.set_selected_index(Some(gpui_component::IndexPath::default().row(ix)), window, cx);
+                    select.set_selected_index(
+                        Some(gpui_component::IndexPath::default().row(ix)),
+                        window,
+                        cx,
+                    );
                 }
             } else if select.selected_value().is_some() {
                 select.set_selected_index(None, window, cx);
@@ -1635,13 +1710,21 @@ impl RequestTabView {
         self.auth_type_select.update(cx, |select, cx| {
             let ix = auth_type_index(&draft.auth);
             if select.selected_index(cx).map(|it| it.row) != Some(ix) {
-                select.set_selected_index(Some(gpui_component::IndexPath::default().row(ix)), window, cx);
+                select.set_selected_index(
+                    Some(gpui_component::IndexPath::default().row(ix)),
+                    window,
+                    cx,
+                );
             }
         });
         self.body_type_select.update(cx, |select, cx| {
             let ix = body_type_index(&draft.body);
             if select.selected_index(cx).map(|it| it.row) != Some(ix) {
-                select.set_selected_index(Some(gpui_component::IndexPath::default().row(ix)), window, cx);
+                select.set_selected_index(
+                    Some(gpui_component::IndexPath::default().row(ix)),
+                    window,
+                    cx,
+                );
             }
         });
 
@@ -1656,11 +1739,7 @@ impl RequestTabView {
                     });
                 }
                 let password_ref = password_secret_ref.clone().unwrap_or_default();
-                if self
-                    .auth_basic_password_ref_input
-                    .read(cx)
-                    .value()
-                    .as_ref()
+                if self.auth_basic_password_ref_input.read(cx).value().as_ref()
                     != password_ref.as_str()
                 {
                     self.auth_basic_password_ref_input.update(cx, |s, cx| {
@@ -1670,12 +1749,7 @@ impl RequestTabView {
             }
             AuthType::Bearer { token_secret_ref } => {
                 let token_ref = token_secret_ref.clone().unwrap_or_default();
-                if self
-                    .auth_bearer_token_ref_input
-                    .read(cx)
-                    .value()
-                    .as_ref()
-                    != token_ref.as_str()
+                if self.auth_bearer_token_ref_input.read(cx).value().as_ref() != token_ref.as_str()
                 {
                     self.auth_bearer_token_ref_input.update(cx, |s, cx| {
                         s.set_value(token_ref.clone(), window, cx);
@@ -1693,12 +1767,7 @@ impl RequestTabView {
                     });
                 }
                 let value_ref = value_secret_ref.clone().unwrap_or_default();
-                if self
-                    .auth_api_key_value_ref_input
-                    .read(cx)
-                    .value()
-                    .as_ref()
-                    != value_ref.as_str()
+                if self.auth_api_key_value_ref_input.read(cx).value().as_ref() != value_ref.as_str()
                 {
                     self.auth_api_key_value_ref_input.update(cx, |s, cx| {
                         s.set_value(value_ref.clone(), window, cx);
@@ -1746,7 +1815,8 @@ impl RequestTabView {
             ExecStatus::Completed { response } => match &response.body_ref {
                 BodyRef::InMemoryPreview { bytes, .. } => bytes.len(),
                 BodyRef::DiskBlob {
-                    preview: Some(bytes), ..
+                    preview: Some(bytes),
+                    ..
                 } => bytes.len(),
                 _ => 0,
             },
@@ -1759,6 +1829,7 @@ impl RequestTabView {
             KvTarget::Params => &self.params_rows,
             KvTarget::Headers => &self.headers_rows,
             KvTarget::BodyUrlEncoded => &self.body_urlencoded_rows,
+            KvTarget::BodyFormDataText => &self.body_form_text_rows,
         }
     }
 
@@ -1767,6 +1838,7 @@ impl RequestTabView {
             KvTarget::Params => &mut self.params_rows,
             KvTarget::Headers => &mut self.headers_rows,
             KvTarget::BodyUrlEncoded => &mut self.body_urlencoded_rows,
+            KvTarget::BodyFormDataText => &mut self.body_form_text_rows,
         }
     }
 
@@ -1855,11 +1927,20 @@ impl RequestTabView {
         {
             return;
         }
+        if target == KvTarget::BodyFormDataText
+            && !matches!(self.editor.draft().body, BodyType::FormData { .. })
+        {
+            return;
+        }
         let draft_entries = match target {
             KvTarget::Params => self.editor.draft().params.clone(),
             KvTarget::Headers => self.editor.draft().headers.clone(),
             KvTarget::BodyUrlEncoded => match &self.editor.draft().body {
                 BodyType::UrlEncoded { entries } => entries.clone(),
+                _ => Vec::new(),
+            },
+            KvTarget::BodyFormDataText => match &self.editor.draft().body {
+                BodyType::FormData { text_fields, .. } => text_fields.clone(),
                 _ => Vec::new(),
             },
         };
@@ -1946,6 +2027,22 @@ impl RequestTabView {
                     self.editor.draft_mut().body = next_body;
                 }
             }
+            KvTarget::BodyFormDataText => {
+                if self.selected_body_kind(cx) != BodyKind::FormData {
+                    return;
+                }
+                let file_fields = match &self.editor.draft().body {
+                    BodyType::FormData { file_fields, .. } => file_fields.clone(),
+                    _ => Vec::new(),
+                };
+                let next_body = BodyType::FormData {
+                    text_fields: next,
+                    file_fields,
+                };
+                if self.editor.draft().body != next_body {
+                    self.editor.draft_mut().body = next_body;
+                }
+            }
         }
         self.editor.refresh_save_status();
         cx.notify();
@@ -1966,7 +2063,13 @@ impl RequestTabView {
         cx.notify();
     }
 
-    fn remove_kv_row(&mut self, target: KvTarget, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+    fn remove_kv_row(
+        &mut self,
+        target: KvTarget,
+        id: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(ix) = self.kv_rows(target).iter().position(|row| row.id == id) {
             self.kv_rows_mut(target).remove(ix);
         }
@@ -1974,10 +2077,267 @@ impl RequestTabView {
         self.on_kv_rows_changed(target, cx);
     }
 
-    fn set_kv_row_enabled(&mut self, target: KvTarget, id: u64, enabled: bool, cx: &mut Context<Self>) {
+    fn set_kv_row_enabled(
+        &mut self,
+        target: KvTarget,
+        id: u64,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(row) = self.kv_rows_mut(target).iter_mut().find(|row| row.id == id) {
             row.enabled = enabled;
             self.on_kv_rows_changed(target, cx);
+        }
+    }
+
+    fn add_form_data_file_field(&mut self, cx: &mut Context<Self>) {
+        let BodyType::FormData {
+            text_fields,
+            mut file_fields,
+        } = self.editor.draft().body.clone()
+        else {
+            return;
+        };
+        file_fields.push(crate::domain::request::FileField {
+            key: format!("file{}", file_fields.len() + 1),
+            blob_hash: String::new(),
+            file_name: None,
+            enabled: true,
+        });
+        self.editor.draft_mut().body = BodyType::FormData {
+            text_fields,
+            file_fields,
+        };
+        self.editor.refresh_save_status();
+        cx.notify();
+    }
+
+    fn remove_form_data_file_field(&mut self, index: usize, cx: &mut Context<Self>) {
+        let BodyType::FormData {
+            text_fields,
+            mut file_fields,
+        } = self.editor.draft().body.clone()
+        else {
+            return;
+        };
+        if index < file_fields.len() {
+            file_fields.remove(index);
+            self.editor.draft_mut().body = BodyType::FormData {
+                text_fields,
+                file_fields,
+            };
+            self.editor.refresh_save_status();
+            cx.notify();
+        }
+    }
+
+    fn set_form_data_file_field_enabled(
+        &mut self,
+        index: usize,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let BodyType::FormData {
+            text_fields,
+            mut file_fields,
+        } = self.editor.draft().body.clone()
+        else {
+            return;
+        };
+        if let Some(field) = file_fields.get_mut(index) {
+            field.enabled = enabled;
+            self.editor.draft_mut().body = BodyType::FormData {
+                text_fields,
+                file_fields,
+            };
+            self.editor.refresh_save_status();
+            cx.notify();
+        }
+    }
+
+    fn clear_form_data_file_field(&mut self, index: usize, cx: &mut Context<Self>) {
+        let BodyType::FormData {
+            text_fields,
+            mut file_fields,
+        } = self.editor.draft().body.clone()
+        else {
+            return;
+        };
+        if let Some(field) = file_fields.get_mut(index) {
+            field.blob_hash.clear();
+            field.file_name = None;
+            self.editor.draft_mut().body = BodyType::FormData {
+                text_fields,
+                file_fields,
+            };
+            self.editor.refresh_save_status();
+            cx.notify();
+        }
+    }
+
+    fn clear_binary_body_file(&mut self, cx: &mut Context<Self>) {
+        if let BodyType::BinaryFile {
+            blob_hash,
+            file_name,
+        } = &mut self.editor.draft_mut().body
+        {
+            blob_hash.clear();
+            *file_name = None;
+            self.editor.refresh_save_status();
+            cx.notify();
+        }
+    }
+
+    fn pick_binary_body_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.pick_body_file_for_target(BodyFileTarget::Binary, window, cx);
+    }
+
+    fn pick_form_data_file_field(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.pick_body_file_for_target(BodyFileTarget::FormDataIndex(index), window, cx);
+    }
+
+    fn pick_body_file_for_target(
+        &mut self,
+        target: BodyFileTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some(
+                es_fluent::localize("request_tab_body_pick_file", None)
+                    .to_string()
+                    .into(),
+            ),
+        });
+        let services = cx.global::<AppServicesGlobal>().0.clone();
+
+        cx.spawn_in(window, async move |this, cx| {
+            let picked_path = match receiver.await {
+                Ok(Ok(Some(paths))) => paths.into_iter().next(),
+                _ => None,
+            };
+            let Some(path) = picked_path else {
+                return;
+            };
+
+            let size_bytes = std::fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
+            if size_bytes > LARGE_BODY_FILE_CONFIRM_BYTES {
+                let detail = format!(
+                    "{} {}",
+                    es_fluent::localize("request_tab_body_large_file_detail", None),
+                    format_bytes(size_bytes)
+                );
+                let answers = vec![
+                    gpui::PromptButton::ok(es_fluent::localize(
+                        "request_tab_body_large_file_continue",
+                        None,
+                    )),
+                    gpui::PromptButton::cancel(es_fluent::localize(
+                        "request_tab_body_large_file_cancel",
+                        None,
+                    )),
+                ];
+                let response = cx
+                    .prompt(
+                        gpui::PromptLevel::Warning,
+                        &es_fluent::localize("request_tab_body_large_file_title", None),
+                        Some(&detail),
+                        &answers,
+                    )
+                    .await
+                    .unwrap_or(1);
+                if response != 0 {
+                    return;
+                }
+            }
+
+            let path_for_import = path.clone();
+            let services_for_import = services.clone();
+            let imported =
+                tokio::task::spawn_blocking(move || -> Result<(String, Option<String>), String> {
+                    let file = std::fs::File::open(&path_for_import).map_err(|e| {
+                        format!(
+                            "{}: {e}",
+                            es_fluent::localize("request_tab_body_file_load_failed", None)
+                        )
+                    })?;
+                    let blob = services_for_import
+                        .blob_store
+                        .write_from_reader(file, None)
+                        .map_err(|e| {
+                            format!(
+                                "{}: {e}",
+                                es_fluent::localize("request_tab_body_file_load_failed", None)
+                            )
+                        })?;
+                    let file_name = path_for_import
+                        .file_name()
+                        .map(|name| name.to_string_lossy().to_string());
+                    Ok((blob.hash, file_name))
+                })
+                .await;
+
+            let (blob_hash, file_name) = match imported {
+                Ok(Ok(value)) => value,
+                Ok(Err(err)) => {
+                    let _ = this.update(cx, |this, cx| {
+                        this.editor.set_preflight_error(err);
+                        cx.notify();
+                    });
+                    return;
+                }
+                Err(err) => {
+                    let _ = this.update(cx, |this, cx| {
+                        this.editor
+                            .set_preflight_error(format!("file import task failed: {err}"));
+                        cx.notify();
+                    });
+                    return;
+                }
+            };
+
+            let _ = this.update(cx, |this, cx| {
+                this.apply_body_file_selection(target, blob_hash.clone(), file_name.clone());
+                this.editor.refresh_save_status();
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn apply_body_file_selection(
+        &mut self,
+        target: BodyFileTarget,
+        blob_hash: String,
+        file_name: Option<String>,
+    ) {
+        match target {
+            BodyFileTarget::Binary => {
+                if let BodyType::BinaryFile {
+                    blob_hash: current_hash,
+                    file_name: current_name,
+                } = &mut self.editor.draft_mut().body
+                {
+                    *current_hash = blob_hash;
+                    *current_name = file_name;
+                }
+            }
+            BodyFileTarget::FormDataIndex(index) => {
+                if let BodyType::FormData { file_fields, .. } = &mut self.editor.draft_mut().body
+                    && let Some(field) = file_fields.get_mut(index)
+                {
+                    field.blob_hash = blob_hash;
+                    field.file_name = file_name;
+                }
+            }
         }
     }
 }
@@ -2033,7 +2393,8 @@ impl Render for RequestTabView {
                 let status_color = status_code_color(resp.status_code);
                 let status_size = format_bytes(resp.body_ref.size_bytes());
 
-                let mut body_preview = response_body_preview_text(resp, &self.loaded_full_body_text);
+                let mut body_preview =
+                    response_body_preview_text(resp, &self.loaded_full_body_text);
                 let (header_rows, header_format) =
                     parse_response_header_rows(resp.headers_json.as_deref());
                 let cookies = parse_set_cookie_rows(&header_rows);
@@ -2071,7 +2432,10 @@ impl Render for RequestTabView {
                     div()
                         .text_sm()
                         .text_color(gpui::hsla(0., 0., 0.5, 1.))
-                        .child(es_fluent::localize("request_tab_response_image_preview_todo", None))
+                        .child(es_fluent::localize(
+                            "request_tab_response_image_preview_todo",
+                            None,
+                        ))
                 } else if !body_preview.is_empty() {
                     div()
                         .mt_2()
@@ -2118,7 +2482,10 @@ impl Render for RequestTabView {
                     div()
                         .text_sm()
                         .text_color(gpui::hsla(0., 0., 0.5, 1.))
-                        .child(es_fluent::localize("request_tab_response_headers_empty", None))
+                        .child(es_fluent::localize(
+                            "request_tab_response_headers_empty",
+                            None,
+                        ))
                 } else {
                     v_flex()
                         .gap_1()
@@ -2161,7 +2528,10 @@ impl Render for RequestTabView {
                     div()
                         .text_sm()
                         .text_color(gpui::hsla(0., 0., 0.5, 1.))
-                        .child(es_fluent::localize("request_tab_response_cookies_empty", None))
+                        .child(es_fluent::localize(
+                            "request_tab_response_cookies_empty",
+                            None,
+                        ))
                 } else {
                     v_flex().gap_1().children(cookies.iter().enumerate().map(|(idx, cookie)| {
                         let same_site = cookie.same_site.clone().unwrap_or_else(|| "—".to_string());
@@ -2213,27 +2583,18 @@ impl Render for RequestTabView {
                             .unwrap_or_else(|| "—".to_string()),
                     ))
                     .child(timing_row(
-                        es_fluent::localize(
-                            "request_tab_response_timing_dispatched_at",
-                            None,
-                        )
-                        .to_string(),
+                        es_fluent::localize("request_tab_response_timing_dispatched_at", None)
+                            .to_string(),
                         format_unix_ms(resp.dispatched_at_unix_ms),
                     ))
                     .child(timing_row(
-                        es_fluent::localize(
-                            "request_tab_response_timing_first_byte_at",
-                            None,
-                        )
-                        .to_string(),
+                        es_fluent::localize("request_tab_response_timing_first_byte_at", None)
+                            .to_string(),
                         format_unix_ms(resp.first_byte_at_unix_ms),
                     ))
                     .child(timing_row(
-                        es_fluent::localize(
-                            "request_tab_response_timing_completed_at",
-                            None,
-                        )
-                        .to_string(),
+                        es_fluent::localize("request_tab_response_timing_completed_at", None)
+                            .to_string(),
                         format_unix_ms(resp.completed_at_unix_ms),
                     ))
                     .child(timing_row(
@@ -2255,7 +2616,10 @@ impl Render for RequestTabView {
                         Button::new("request-response-copy")
                             .outline()
                             .disabled(!is_text_like_media_type(resp.media_type.as_deref()))
-                            .label(es_fluent::localize("request_tab_response_action_copy", None))
+                            .label(es_fluent::localize(
+                                "request_tab_response_action_copy",
+                                None,
+                            ))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 if let Err(err) = this.copy_response_body(cx) {
                                     window.push_notification(err, cx);
@@ -2270,7 +2634,10 @@ impl Render for RequestTabView {
                     .child(
                         Button::new("request-response-save")
                             .outline()
-                            .label(es_fluent::localize("request_tab_response_action_save", None))
+                            .label(es_fluent::localize(
+                                "request_tab_response_action_save",
+                                None,
+                            ))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 if let Err(err) = this.save_response_body_to_file(window, cx) {
                                     window.push_notification(err, cx);
@@ -2357,9 +2724,10 @@ impl Render for RequestTabView {
                                 }),
                             )),
                     )
-                    .when(self.active_response_tab == ResponseTab::Body, |el: gpui::Div| {
-                        el.child(body_actions)
-                    })
+                    .when(
+                        self.active_response_tab == ResponseTab::Body,
+                        |el: gpui::Div| el.child(body_actions),
+                    )
                     .child(active_content)
                     .child(load_full_button)
             }
@@ -2368,19 +2736,22 @@ impl Render for RequestTabView {
                 classified,
             } => {
                 let (title, detail) = classified_error_display(classified.as_ref(), summary);
-                div().gap_2().child(
-                    div()
-                        .text_sm()
-                        .font_weight(gpui::FontWeight::MEDIUM)
-                        .text_color(gpui::red())
-                        .child(title),
-                ).child(
-                    div()
-                        .text_xs()
-                        .font_family("monospace")
-                        .text_color(gpui::hsla(0., 0., 0.45, 1.))
-                        .child(detail),
-                )
+                div()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(gpui::red())
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_family("monospace")
+                            .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                            .child(detail),
+                    )
             }
             ExecStatus::Cancelled { partial_size } => {
                 let msg = match partial_size {
@@ -2415,32 +2786,56 @@ impl Render for RequestTabView {
                 let row_ids = self
                     .params_rows
                     .iter()
-                    .map(|row| (row.id, row.enabled, row.key_input.clone(), row.value_input.clone()))
+                    .map(|row| {
+                        (
+                            row.id,
+                            row.enabled,
+                            row.key_input.clone(),
+                            row.value_input.clone(),
+                        )
+                    })
                     .collect::<Vec<_>>();
                 v_flex()
                     .gap_2()
-                    .children(row_ids.into_iter().map(|(id, enabled, key_input, value_input)| {
-                        h_flex()
-                            .gap_2()
-                            .items_center()
-                            .child(
-                                Checkbox::new(("params-enabled", id))
-                                    .checked(enabled)
-                                    .on_click(cx.listener(move |this, checked, _, cx| {
-                                        this.set_kv_row_enabled(KvTarget::Params, id, *checked, cx);
-                                    })),
-                            )
-                            .child(div().flex_1().child(Input::new(&key_input).large()))
-                            .child(div().flex_1().child(Input::new(&value_input).large()))
-                            .child(
-                                Button::new(("params-remove", id))
-                                    .ghost()
-                                    .label(es_fluent::localize("request_tab_kv_remove_row", None))
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.remove_kv_row(KvTarget::Params, id, window, cx);
-                                    })),
-                            )
-                    }))
+                    .children(
+                        row_ids
+                            .into_iter()
+                            .map(|(id, enabled, key_input, value_input)| {
+                                h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    .child(
+                                        Checkbox::new(("params-enabled", id))
+                                            .checked(enabled)
+                                            .on_click(cx.listener(move |this, checked, _, cx| {
+                                                this.set_kv_row_enabled(
+                                                    KvTarget::Params,
+                                                    id,
+                                                    *checked,
+                                                    cx,
+                                                );
+                                            })),
+                                    )
+                                    .child(div().flex_1().child(Input::new(&key_input).large()))
+                                    .child(div().flex_1().child(Input::new(&value_input).large()))
+                                    .child(
+                                        Button::new(("params-remove", id))
+                                            .ghost()
+                                            .label(es_fluent::localize(
+                                                "request_tab_kv_remove_row",
+                                                None,
+                                            ))
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                this.remove_kv_row(
+                                                    KvTarget::Params,
+                                                    id,
+                                                    window,
+                                                    cx,
+                                                );
+                                            })),
+                                    )
+                            }),
+                    )
                     .child(
                         Button::new("params-add-row")
                             .outline()
@@ -2472,7 +2867,10 @@ impl Render for RequestTabView {
                             div()
                                 .text_xs()
                                 .text_color(gpui::hsla(0., 0., 0.45, 1.))
-                                .child(es_fluent::localize("request_tab_auth_basic_username", None)),
+                                .child(es_fluent::localize(
+                                    "request_tab_auth_basic_username",
+                                    None,
+                                )),
                         )
                         .child(Input::new(&self.auth_basic_username_input).large())
                         .child(
@@ -2492,7 +2890,10 @@ impl Render for RequestTabView {
                             div()
                                 .text_xs()
                                 .text_color(gpui::hsla(0., 0., 0.45, 1.))
-                                .child(es_fluent::localize("request_tab_auth_bearer_token_ref", None)),
+                                .child(es_fluent::localize(
+                                    "request_tab_auth_bearer_token_ref",
+                                    None,
+                                )),
                         )
                         .child(Input::new(&self.auth_bearer_token_ref_input).large())
                         .into_any_element(),
@@ -2524,7 +2925,11 @@ impl Render for RequestTabView {
                                     None,
                                 )),
                         )
-                        .child(div().w_56().child(Select::new(&self.auth_api_key_location_select)))
+                        .child(
+                            div()
+                                .w_56()
+                                .child(Select::new(&self.auth_api_key_location_select)),
+                        )
                         .into_any_element(),
                 })
                 .into_any_element(),
@@ -2532,32 +2937,56 @@ impl Render for RequestTabView {
                 let row_ids = self
                     .headers_rows
                     .iter()
-                    .map(|row| (row.id, row.enabled, row.key_input.clone(), row.value_input.clone()))
+                    .map(|row| {
+                        (
+                            row.id,
+                            row.enabled,
+                            row.key_input.clone(),
+                            row.value_input.clone(),
+                        )
+                    })
                     .collect::<Vec<_>>();
                 v_flex()
                     .gap_2()
-                    .children(row_ids.into_iter().map(|(id, enabled, key_input, value_input)| {
-                        h_flex()
-                            .gap_2()
-                            .items_center()
-                            .child(
-                                Checkbox::new(("headers-enabled", id))
-                                    .checked(enabled)
-                                    .on_click(cx.listener(move |this, checked, _, cx| {
-                                        this.set_kv_row_enabled(KvTarget::Headers, id, *checked, cx);
-                                    })),
-                            )
-                            .child(div().flex_1().child(Input::new(&key_input).large()))
-                            .child(div().flex_1().child(Input::new(&value_input).large()))
-                            .child(
-                                Button::new(("headers-remove", id))
-                                    .ghost()
-                                    .label(es_fluent::localize("request_tab_kv_remove_row", None))
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.remove_kv_row(KvTarget::Headers, id, window, cx);
-                                    })),
-                            )
-                    }))
+                    .children(
+                        row_ids
+                            .into_iter()
+                            .map(|(id, enabled, key_input, value_input)| {
+                                h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    .child(
+                                        Checkbox::new(("headers-enabled", id))
+                                            .checked(enabled)
+                                            .on_click(cx.listener(move |this, checked, _, cx| {
+                                                this.set_kv_row_enabled(
+                                                    KvTarget::Headers,
+                                                    id,
+                                                    *checked,
+                                                    cx,
+                                                );
+                                            })),
+                                    )
+                                    .child(div().flex_1().child(Input::new(&key_input).large()))
+                                    .child(div().flex_1().child(Input::new(&value_input).large()))
+                                    .child(
+                                        Button::new(("headers-remove", id))
+                                            .ghost()
+                                            .label(es_fluent::localize(
+                                                "request_tab_kv_remove_row",
+                                                None,
+                                            ))
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                this.remove_kv_row(
+                                                    KvTarget::Headers,
+                                                    id,
+                                                    window,
+                                                    cx,
+                                                );
+                                            })),
+                                    )
+                            }),
+                    )
                     .child(
                         Button::new("headers-add-row")
                             .outline()
@@ -2572,7 +3001,26 @@ impl Render for RequestTabView {
                 let urlencoded_row_ids = self
                     .body_urlencoded_rows
                     .iter()
-                    .map(|row| (row.id, row.enabled, row.key_input.clone(), row.value_input.clone()))
+                    .map(|row| {
+                        (
+                            row.id,
+                            row.enabled,
+                            row.key_input.clone(),
+                            row.value_input.clone(),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let form_text_row_ids = self
+                    .body_form_text_rows
+                    .iter()
+                    .map(|row| {
+                        (
+                            row.id,
+                            row.enabled,
+                            row.key_input.clone(),
+                            row.value_input.clone(),
+                        )
+                    })
                     .collect::<Vec<_>>();
                 v_flex()
                     .w_full()
@@ -2601,45 +3049,49 @@ impl Render for RequestTabView {
                             .into_any_element(),
                         BodyType::UrlEncoded { .. } => v_flex()
                             .gap_2()
-                            .children(
-                                urlencoded_row_ids.into_iter().map(
-                                    |(id, enabled, key_input, value_input)| {
-                                        h_flex()
-                                            .gap_2()
-                                            .items_center()
-                                            .child(
-                                                Checkbox::new(("body-urlencoded-enabled", id))
-                                                    .checked(enabled)
-                                                    .on_click(cx.listener(move |this, checked, _, cx| {
+                            .children(urlencoded_row_ids.into_iter().map(
+                                |(id, enabled, key_input, value_input)| {
+                                    h_flex()
+                                        .gap_2()
+                                        .items_center()
+                                        .child(
+                                            Checkbox::new(("body-urlencoded-enabled", id))
+                                                .checked(enabled)
+                                                .on_click(cx.listener(
+                                                    move |this, checked, _, cx| {
                                                         this.set_kv_row_enabled(
                                                             KvTarget::BodyUrlEncoded,
                                                             id,
                                                             *checked,
                                                             cx,
                                                         );
-                                                    })),
-                                            )
-                                            .child(div().flex_1().child(Input::new(&key_input).large()))
-                                            .child(div().flex_1().child(Input::new(&value_input).large()))
-                                            .child(
-                                                Button::new(("body-urlencoded-remove", id))
-                                                    .ghost()
-                                                    .label(es_fluent::localize(
-                                                        "request_tab_kv_remove_row",
-                                                        None,
-                                                    ))
-                                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                                    },
+                                                )),
+                                        )
+                                        .child(div().flex_1().child(Input::new(&key_input).large()))
+                                        .child(
+                                            div().flex_1().child(Input::new(&value_input).large()),
+                                        )
+                                        .child(
+                                            Button::new(("body-urlencoded-remove", id))
+                                                .ghost()
+                                                .label(es_fluent::localize(
+                                                    "request_tab_kv_remove_row",
+                                                    None,
+                                                ))
+                                                .on_click(cx.listener(
+                                                    move |this, _, window, cx| {
                                                         this.remove_kv_row(
                                                             KvTarget::BodyUrlEncoded,
                                                             id,
                                                             window,
                                                             cx,
                                                         );
-                                                    })),
-                                            )
-                                    },
-                                ),
-                            )
+                                                    },
+                                                )),
+                                        )
+                                },
+                            ))
                             .child(
                                 Button::new("body-urlencoded-add-row")
                                     .outline()
@@ -2649,13 +3101,208 @@ impl Render for RequestTabView {
                                     })),
                             )
                             .into_any_element(),
-                        BodyType::FormData { .. } | BodyType::BinaryFile { .. } => div()
-                            .text_xs()
-                            .text_color(gpui::hsla(0., 0., 0.45, 1.))
-                            .child(es_fluent::localize(
-                                "request_tab_body_not_implemented_hint",
-                                None,
+                        BodyType::FormData { file_fields, .. } => v_flex()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                                    .child(es_fluent::localize(
+                                        "request_tab_body_form_text_fields",
+                                        None,
+                                    )),
+                            )
+                            .children(form_text_row_ids.into_iter().map(
+                                |(id, enabled, key_input, value_input)| {
+                                    h_flex()
+                                        .gap_2()
+                                        .items_center()
+                                        .child(
+                                            Checkbox::new(("body-form-text-enabled", id))
+                                                .checked(enabled)
+                                                .on_click(cx.listener(
+                                                    move |this, checked, _, cx| {
+                                                        this.set_kv_row_enabled(
+                                                            KvTarget::BodyFormDataText,
+                                                            id,
+                                                            *checked,
+                                                            cx,
+                                                        );
+                                                    },
+                                                )),
+                                        )
+                                        .child(div().flex_1().child(Input::new(&key_input).large()))
+                                        .child(
+                                            div().flex_1().child(Input::new(&value_input).large()),
+                                        )
+                                        .child(
+                                            Button::new(("body-form-text-remove", id))
+                                                .ghost()
+                                                .label(es_fluent::localize(
+                                                    "request_tab_kv_remove_row",
+                                                    None,
+                                                ))
+                                                .on_click(cx.listener(
+                                                    move |this, _, window, cx| {
+                                                        this.remove_kv_row(
+                                                            KvTarget::BodyFormDataText,
+                                                            id,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    },
+                                                )),
+                                        )
+                                },
                             ))
+                            .child(
+                                Button::new("body-form-text-add-row")
+                                    .outline()
+                                    .label(es_fluent::localize("request_tab_kv_add_row", None))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.add_kv_row(KvTarget::BodyFormDataText, window, cx);
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                                    .child(es_fluent::localize(
+                                        "request_tab_body_form_file_fields",
+                                        None,
+                                    )),
+                            )
+                            .children(file_fields.iter().enumerate().map(|(index, field)| {
+                                let file_label = field
+                                    .file_name
+                                    .clone()
+                                    .filter(|name| !name.trim().is_empty())
+                                    .unwrap_or_else(|| {
+                                        es_fluent::localize(
+                                            "request_tab_body_no_file_selected",
+                                            None,
+                                        )
+                                        .to_string()
+                                    });
+                                h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    .child(
+                                        Checkbox::new(("body-form-file-enabled", index))
+                                            .checked(field.enabled)
+                                            .on_click(cx.listener(move |this, checked, _, cx| {
+                                                this.set_form_data_file_field_enabled(
+                                                    index, *checked, cx,
+                                                );
+                                            })),
+                                    )
+                                    .child(div().w_32().child(field.key.clone()))
+                                    .child(div().flex_1().child(file_label))
+                                    .child(
+                                        Button::new(("body-form-file-pick", index))
+                                            .outline()
+                                            .label(if field.blob_hash.trim().is_empty() {
+                                                es_fluent::localize(
+                                                    "request_tab_body_pick_file",
+                                                    None,
+                                                )
+                                            } else {
+                                                es_fluent::localize(
+                                                    "request_tab_body_replace_file",
+                                                    None,
+                                                )
+                                            })
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                this.pick_form_data_file_field(index, window, cx);
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new(("body-form-file-clear", index))
+                                            .ghost()
+                                            .label(es_fluent::localize(
+                                                "request_tab_body_clear_file",
+                                                None,
+                                            ))
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.clear_form_data_file_field(index, cx);
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new(("body-form-file-remove", index))
+                                            .ghost()
+                                            .label(es_fluent::localize(
+                                                "request_tab_body_remove_file_field",
+                                                None,
+                                            ))
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.remove_form_data_file_field(index, cx);
+                                            })),
+                                    )
+                            }))
+                            .child(
+                                Button::new("body-form-file-add")
+                                    .outline()
+                                    .label(es_fluent::localize(
+                                        "request_tab_body_add_file_field",
+                                        None,
+                                    ))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.add_form_data_file_field(cx);
+                                    })),
+                            )
+                            .into_any_element(),
+                        BodyType::BinaryFile {
+                            blob_hash,
+                            file_name,
+                        } => v_flex()
+                            .gap_2()
+                            .child(
+                                div().text_sm().child(
+                                    file_name
+                                        .clone()
+                                        .filter(|name| !name.trim().is_empty())
+                                        .unwrap_or_else(|| {
+                                            es_fluent::localize(
+                                                "request_tab_body_no_file_selected",
+                                                None,
+                                            )
+                                            .to_string()
+                                        }),
+                                ),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        Button::new("body-binary-pick")
+                                            .outline()
+                                            .label(if blob_hash.trim().is_empty() {
+                                                es_fluent::localize(
+                                                    "request_tab_body_pick_file",
+                                                    None,
+                                                )
+                                            } else {
+                                                es_fluent::localize(
+                                                    "request_tab_body_replace_file",
+                                                    None,
+                                                )
+                                            })
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.pick_binary_body_file(window, cx);
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("body-binary-clear")
+                                            .ghost()
+                                            .label(es_fluent::localize(
+                                                "request_tab_body_clear_file",
+                                                None,
+                                            ))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.clear_binary_body_file(cx);
+                                            })),
+                                    ),
+                            )
                             .into_any_element(),
                     })
                     .into_any_element()
@@ -2785,11 +3432,14 @@ impl Render for RequestTabView {
                     .justify_between()
                     .items_center()
                     .child(
-                        div().text_xs().text_color(gpui::hsla(0., 0., 0.45, 1.)).child(format!(
-                            "{}: {}",
-                            es_fluent::localize("request_tab_latest_run_label", None),
-                            latest_run
-                        )),
+                        div()
+                            .text_xs()
+                            .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                            .child(format!(
+                                "{}: {}",
+                                es_fluent::localize("request_tab_latest_run_label", None),
+                                latest_run
+                            )),
                     )
                     .child(
                         Button::new("request-settings-open")
@@ -2804,66 +3454,54 @@ impl Render for RequestTabView {
                 h_flex()
                     .gap_1()
                     .flex_wrap()
-                    .child(
-                        section_tab_button(
-                            "request-tab-params",
-                            es_fluent::localize("request_tab_params_label", None).to_string(),
-                            self.active_section == RequestSectionTab::Params,
-                            cx.listener(|this, _, _, cx| {
-                                this.set_active_section(RequestSectionTab::Params, cx);
-                            }),
-                        ),
-                    )
-                    .child(
-                        section_tab_button(
-                            "request-tab-auth",
-                            es_fluent::localize("request_tab_auth_label", None).to_string(),
-                            self.active_section == RequestSectionTab::Auth,
-                            cx.listener(|this, _, _, cx| {
-                                this.set_active_section(RequestSectionTab::Auth, cx);
-                            }),
-                        ),
-                    )
-                    .child(
-                        section_tab_button(
-                            "request-tab-headers",
-                            es_fluent::localize("request_tab_headers_label", None).to_string(),
-                            self.active_section == RequestSectionTab::Headers,
-                            cx.listener(|this, _, _, cx| {
-                                this.set_active_section(RequestSectionTab::Headers, cx);
-                            }),
-                        ),
-                    )
-                    .child(
-                        section_tab_button(
-                            "request-tab-body",
-                            es_fluent::localize("request_tab_body_label", None).to_string(),
-                            self.active_section == RequestSectionTab::Body,
-                            cx.listener(|this, _, _, cx| {
-                                this.set_active_section(RequestSectionTab::Body, cx);
-                            }),
-                        ),
-                    )
-                    .child(
-                        section_tab_button(
-                            "request-tab-scripts",
-                            es_fluent::localize("request_tab_scripts_label", None).to_string(),
-                            self.active_section == RequestSectionTab::Scripts,
-                            cx.listener(|this, _, _, cx| {
-                                this.set_active_section(RequestSectionTab::Scripts, cx);
-                            }),
-                        ),
-                    )
-                    .child(
-                        section_tab_button(
-                            "request-tab-tests",
-                            es_fluent::localize("request_tab_tests_label", None).to_string(),
-                            self.active_section == RequestSectionTab::Tests,
-                            cx.listener(|this, _, _, cx| {
-                                this.set_active_section(RequestSectionTab::Tests, cx);
-                            }),
-                        ),
-                    ),
+                    .child(section_tab_button(
+                        "request-tab-params",
+                        es_fluent::localize("request_tab_params_label", None).to_string(),
+                        self.active_section == RequestSectionTab::Params,
+                        cx.listener(|this, _, _, cx| {
+                            this.set_active_section(RequestSectionTab::Params, cx);
+                        }),
+                    ))
+                    .child(section_tab_button(
+                        "request-tab-auth",
+                        es_fluent::localize("request_tab_auth_label", None).to_string(),
+                        self.active_section == RequestSectionTab::Auth,
+                        cx.listener(|this, _, _, cx| {
+                            this.set_active_section(RequestSectionTab::Auth, cx);
+                        }),
+                    ))
+                    .child(section_tab_button(
+                        "request-tab-headers",
+                        es_fluent::localize("request_tab_headers_label", None).to_string(),
+                        self.active_section == RequestSectionTab::Headers,
+                        cx.listener(|this, _, _, cx| {
+                            this.set_active_section(RequestSectionTab::Headers, cx);
+                        }),
+                    ))
+                    .child(section_tab_button(
+                        "request-tab-body",
+                        es_fluent::localize("request_tab_body_label", None).to_string(),
+                        self.active_section == RequestSectionTab::Body,
+                        cx.listener(|this, _, _, cx| {
+                            this.set_active_section(RequestSectionTab::Body, cx);
+                        }),
+                    ))
+                    .child(section_tab_button(
+                        "request-tab-scripts",
+                        es_fluent::localize("request_tab_scripts_label", None).to_string(),
+                        self.active_section == RequestSectionTab::Scripts,
+                        cx.listener(|this, _, _, cx| {
+                            this.set_active_section(RequestSectionTab::Scripts, cx);
+                        }),
+                    ))
+                    .child(section_tab_button(
+                        "request-tab-tests",
+                        es_fluent::localize("request_tab_tests_label", None).to_string(),
+                        self.active_section == RequestSectionTab::Tests,
+                        cx.listener(|this, _, _, cx| {
+                            this.set_active_section(RequestSectionTab::Tests, cx);
+                        }),
+                    )),
             )
             .child(
                 v_flex()
@@ -3072,8 +3710,10 @@ fn parse_set_cookie_rows(rows: &[crate::domain::response::ResponseHeaderRow]) ->
         } else {
             raw_value
         };
-        let expires_or_max_age = cookie.max_age().map(|d| format!("{}s", d.whole_seconds())).or_else(
-            || {
+        let expires_or_max_age = cookie
+            .max_age()
+            .map(|d| format!("{}s", d.whole_seconds()))
+            .or_else(|| {
                 cookie.expires().and_then(|v| {
                     v.datetime().and_then(|dt| {
                         time::format_description::parse(
@@ -3083,8 +3723,7 @@ fn parse_set_cookie_rows(rows: &[crate::domain::response::ResponseHeaderRow]) ->
                         .and_then(|fmt| dt.format(&fmt).ok())
                     })
                 })
-            },
-        );
+            });
         let same_site = cookie.same_site().map(|s| format!("{s:?}"));
 
         parsed.push(CookieRow {
@@ -3302,7 +3941,10 @@ fn latest_run_summary(exec_status: &ExecStatus) -> String {
     }
 }
 
-fn classified_error_display(classified: Option<&ClassifiedError>, summary: &str) -> (String, String) {
+fn classified_error_display(
+    classified: Option<&ClassifiedError>,
+    summary: &str,
+) -> (String, String) {
     match classified {
         Some(ClassifiedError::DnsFailure { host }) => (
             es_fluent::localize("request_tab_error_dns_failure", None).to_string(),
@@ -3324,7 +3966,9 @@ fn classified_error_display(classified: Option<&ClassifiedError>, summary: &str)
             es_fluent::localize("request_tab_error_tls_failure", None).to_string(),
             reason.clone(),
         ),
-        Some(ClassifiedError::TransportError { summary, detail }) => (summary.clone(), detail.clone()),
+        Some(ClassifiedError::TransportError { summary, detail }) => {
+            (summary.clone(), detail.clone())
+        }
         None => (
             es_fluent::localize("request_tab_error_transport_generic", None).to_string(),
             summary.to_string(),

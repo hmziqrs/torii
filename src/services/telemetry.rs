@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicU64, Ordering};
 use metrics::{counter, histogram};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 static REQUESTS_COMPLETED_TOTAL: AtomicU64 = AtomicU64::new(0);
 static REQUESTS_CANCELLED_TOTAL: AtomicU64 = AtomicU64::new(0);
@@ -33,7 +33,10 @@ pub fn inc_responses_truncated() {
 
 pub fn observe_preview_bytes(preview_len: usize) {
     histogram!("preview_bytes_histogram").record(preview_len as f64);
-    tracing::info!(preview_bytes_histogram = preview_len, "preview bytes observation");
+    tracing::info!(
+        preview_bytes_histogram = preview_len,
+        "preview bytes observation"
+    );
 }
 
 pub fn inc_async_update_failures(category: &'static str) {

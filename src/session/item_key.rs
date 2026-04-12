@@ -3,8 +3,8 @@ use std::{fmt, str::FromStr};
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 
-use crate::domain::item_id::ItemId;
 use crate::domain::ids::RequestDraftId;
+use crate::domain::item_id::ItemId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ItemKind {

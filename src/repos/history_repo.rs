@@ -422,10 +422,17 @@ pub fn build_request_snapshot(request: &crate::domain::request::RequestItem) -> 
         BodyType::UrlEncoded { entries } => {
             serde_json::json!({"kind": "urlencoded", "entries": entries.len()})
         }
-        BodyType::FormData { text_fields, file_fields } => {
+        BodyType::FormData {
+            text_fields,
+            file_fields,
+        } => {
             serde_json::json!({"kind": "form_data", "text_fields": text_fields.len(), "file_fields": file_fields.len()})
         }
-        BodyType::BinaryFile { blob_hash, file_name, .. } => {
+        BodyType::BinaryFile {
+            blob_hash,
+            file_name,
+            ..
+        } => {
             serde_json::json!({"kind": "binary_file", "has_blob": !blob_hash.is_empty(), "file_name": file_name})
         }
     };
@@ -444,13 +451,11 @@ fn redact_url_query_values(raw_url: &str) -> String {
     if let Ok(mut absolute) = url::Url::parse(raw_url) {
         let has_query = absolute.query().is_some();
         if has_query {
-            let keys: Vec<String> = absolute
-                .query_pairs()
-                .map(|(k, _)| k.to_string())
-                .collect();
-            absolute.query_pairs_mut().clear().extend_pairs(
-                keys.iter().map(|k| (k.as_str(), "[REDACTED]")),
-            );
+            let keys: Vec<String> = absolute.query_pairs().map(|(k, _)| k.to_string()).collect();
+            absolute
+                .query_pairs_mut()
+                .clear()
+                .extend_pairs(keys.iter().map(|k| (k.as_str(), "[REDACTED]")));
         }
         return absolute.to_string();
     }

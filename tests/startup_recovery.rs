@@ -27,7 +27,8 @@ fn startup_recovery_reconciles_pending_history_and_orphans() -> Result<()> {
     let pending =
         history_repo.create_pending(workspace.id, None, "GET", "https://pending.local", None)?;
     let referenced_blob = blob_store.write_bytes(b"referenced-blob", Some("text/plain"))?;
-    let completed = history_repo.create_pending(workspace.id, None, "GET", "https://ok.local", None)?;
+    let completed =
+        history_repo.create_pending(workspace.id, None, "GET", "https://ok.local", None)?;
     history_repo.finalize_completed(
         completed.id,
         200,
@@ -156,16 +157,7 @@ fn startup_recovery_marks_stale_pending_for_request_as_failed() -> Result<()> {
         "https://api.test/slow",
         None,
     )?;
-    history_repo.finalize_completed(
-        completed.id,
-        200,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-    )?;
+    history_repo.finalize_completed(completed.id, 200, None, None, None, None, None, None)?;
 
     // Run recovery
     let recovery = RecoveryCoordinator::new(db.clone(), history_repo.clone(), blob_store)
@@ -190,7 +182,10 @@ fn startup_recovery_marks_stale_pending_for_request_as_failed() -> Result<()> {
 
     // get_latest_for_request should still return a usable entry
     let latest = history_repo.get_latest_for_request(request.id)?;
-    assert!(latest.is_some(), "latest-for-request should return an entry");
+    assert!(
+        latest.is_some(),
+        "latest-for-request should return an entry"
+    );
 
     Ok(())
 }

@@ -160,20 +160,19 @@ impl AppRoot {
             .tab_manager
             .tabs()
             .iter()
-            .filter(|tab| {
-                !matches!(tab.key.item().id, Some(ItemId::RequestDraft(_)))
-            })
+            .filter(|tab| !matches!(tab.key.item().id, Some(ItemId::RequestDraft(_))))
             .cloned()
             .collect();
-        let active = snapshot.tab_manager.active().filter(|key| {
-            !matches!(key.item().id, Some(ItemId::RequestDraft(_)))
-        });
-        if let Err(err) = services.repos.tab_session.save_session(
-            snapshot.session_id,
-            &tabs,
-            active,
-            &metadata,
-        ) {
+        let active = snapshot
+            .tab_manager
+            .active()
+            .filter(|key| !matches!(key.item().id, Some(ItemId::RequestDraft(_))));
+        if let Err(err) =
+            services
+                .repos
+                .tab_session
+                .save_session(snapshot.session_id, &tabs, active, &metadata)
+        {
             tracing::error!("failed to persist tab session: {err}");
         }
     }
@@ -219,14 +218,16 @@ impl AppRoot {
         cx: &mut Context<Self>,
     ) {
         let selected = self.session.read(cx).sidebar_selection;
-        let collection_id = selected.and_then(|item| match item.id {
-            Some(ItemId::Collection(id)) => Some(id),
-            _ => None,
-        }).or_else(|| {
-            self.catalog
-                .selected_workspace()
-                .and_then(|ws| ws.collections.first().map(|c| c.collection.id))
-        });
+        let collection_id = selected
+            .and_then(|item| match item.id {
+                Some(ItemId::Collection(id)) => Some(id),
+                _ => None,
+            })
+            .or_else(|| {
+                self.catalog
+                    .selected_workspace()
+                    .and_then(|ws| ws.collections.first().map(|c| c.collection.id))
+            });
 
         if let Some(collection_id) = collection_id {
             self.open_draft_request(collection_id, window, cx);
@@ -293,7 +294,9 @@ impl AppRoot {
             .unwrap_or(false)
             || draft_id
                 .and_then(|id| self.request_draft_pages.get(&id))
-                .map(|page: &Entity<request_tab::RequestTabView>| page.read(cx).has_unsaved_changes())
+                .map(|page: &Entity<request_tab::RequestTabView>| {
+                    page.read(cx).has_unsaved_changes()
+                })
                 .unwrap_or(false);
 
         if !should_confirm_dirty {
@@ -776,15 +779,16 @@ impl AppRoot {
 
             if let EditorIdentity::Persisted(request_id) = identity {
                 // Check if this draft hasn't been transitioned yet
-                if this.request_draft_pages.contains_key(&draft_id_for_observer) {
-                    let old_key =
-                        crate::session::item_key::TabKey::from(
-                            crate::session::item_key::ItemKey::request_draft(draft_id_for_observer),
-                        );
-                    let new_key =
-                        crate::session::item_key::TabKey::from(
-                            crate::session::item_key::ItemKey::request(request_id),
-                        );
+                if this
+                    .request_draft_pages
+                    .contains_key(&draft_id_for_observer)
+                {
+                    let old_key = crate::session::item_key::TabKey::from(
+                        crate::session::item_key::ItemKey::request_draft(draft_id_for_observer),
+                    );
+                    let new_key = crate::session::item_key::TabKey::from(
+                        crate::session::item_key::ItemKey::request(request_id),
+                    );
 
                     this.session.update(cx, |session, cx| {
                         session.tab_manager.replace_key(old_key, new_key);
@@ -816,8 +820,7 @@ impl AppRoot {
         self.request_draft_pages.insert(draft_id, page);
 
         // Register with TabManager so the tab appears in the tab bar
-        let item_key =
-            crate::session::item_key::ItemKey::request_draft(draft_id);
+        let item_key = crate::session::item_key::ItemKey::request_draft(draft_id);
         self.session.update(cx, |session, cx| {
             session.open_or_focus(item_key, cx);
         });
@@ -941,15 +944,15 @@ impl Render for AppRoot {
                             .get(&draft_id)
                             .map(|p| {
                                 let page = p.read(cx);
-                                (page.editor().draft().name.clone(), page.has_unsaved_changes())
+                                (
+                                    page.editor().draft().name.clone(),
+                                    page.has_unsaved_changes(),
+                                )
                             })
                             .unwrap_or_else(|| {
                                 (
-                                    es_fluent::localize(
-                                        "request_tab_draft_title",
-                                        None,
-                                    )
-                                    .to_string(),
+                                    es_fluent::localize("request_tab_draft_title", None)
+                                        .to_string(),
                                     false,
                                 )
                             }),
@@ -957,9 +960,7 @@ impl Render for AppRoot {
                             let base = self
                                 .catalog
                                 .find_title(tab.key.item())
-                                .unwrap_or_else(|| {
-                                    es_fluent::localize("tab_missing_short", None)
-                                });
+                                .unwrap_or_else(|| es_fluent::localize("tab_missing_short", None));
                             let dirty = self
                                 .request_pages
                                 .get(&request_id)
@@ -970,17 +971,11 @@ impl Render for AppRoot {
                         _ => (
                             self.catalog
                                 .find_title(tab.key.item())
-                                .unwrap_or_else(|| {
-                                    es_fluent::localize("tab_missing_short", None)
-                                }),
+                                .unwrap_or_else(|| es_fluent::localize("tab_missing_short", None)),
                             false,
                         ),
                     };
-                    let title = if dirty {
-                        format!("* {title}")
-                    } else {
-                        title
-                    };
+                    let title = if dirty { format!("* {title}") } else { title };
                     TabPresentation {
                         index,
                         key: tab.key,

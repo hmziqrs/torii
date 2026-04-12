@@ -26,7 +26,7 @@ Status legend: `done` / `partial` / `pending`
   - pending: image preview render path from preview bytes, full-content blob scan search with snippets/highlights/navigation, explicit copy-disabled tooltip UX.
 - Slice 4 (Key-value editor): `partial`
   - done: params/headers moved to row-based structured editor (add/remove/enable/disable), URL↔params sync preserved with disabled-row retention.
-  - partial: URL-encoded body now reuses the same row model in `request_tab.rs`.
+  - partial: URL-encoded body and form-data text fields now reuse the same row model in `request_tab.rs`.
   - pending: extract standalone reusable `key_value_editor.rs` component + table column header/empty-state polish.
 - Slice 5 (Auth structured editor): `partial`
   - done: replaced text DSL input with auth type dropdown + per-type structured panels (None/Basic/Bearer/API Key), including API key location dropdown.
@@ -36,7 +36,9 @@ Status legend: `done` / `partial` / `pending`
   - done: method dropdown replacing freeform method-only editing.
   - done: body type dropdown + per-type panels for None/Raw Text/Raw JSON/URL Encoded; removed `body_input` and `body_editor_value()`.
   - done: Raw JSON now uses `InputState::code_editor` (line numbers + searchable), and Raw Text/Scripts/Tests use multiline editor-mode input with fixed editor heights.
-  - pending: Form Data/Binary file picker UX (pick/replace/clear), >100 MB confirmation, streamed outbound request payload abstraction for large binary/form-data, extract `body_editor.rs`.
+  - done: Form Data file fields + Binary file now support pick/replace/clear, including >100 MB confirmation prompt.
+  - done: added `services/request_body_payload.rs` and switched request execution transport to stream-capable payloads for binary/form-data (no single giant `Bytes` allocation path).
+  - pending: richer form-data file row UX (editable field key + stronger "no file selected" domain representation), extract `body_editor.rs`.
 - Slice 7 (Keyboard shortcuts): `done`
   - implemented: close tab, new request, duplicate request, next/prev tab, focus URL bar, toggle sidebar, toggle body search.
 - Slice 8 (File decomposition): `pending`

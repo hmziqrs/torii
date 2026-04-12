@@ -28,6 +28,7 @@ use torii::{
         request_repo::{RequestRepository, SqliteRequestRepository},
         workspace_repo::{SqliteWorkspaceRepository, WorkspaceRepository},
     },
+    services::request_body_payload::RequestBodyPayload,
     services::request_execution::{
         ExecOutcome, HttpTransport, RequestExecutionService, TransportResponse,
     },
@@ -175,9 +176,20 @@ impl HttpTransport for MockTransport {
         method: http::Method,
         url: url::Url,
         headers: http::HeaderMap,
-        body: Option<bytes::Bytes>,
+        body: RequestBodyPayload,
         cancel: CancellationToken,
     ) -> Result<TransportResponse> {
+        let captured_body = match body {
+            RequestBodyPayload::None => None,
+            RequestBodyPayload::Bytes(bytes) => Some(bytes.to_vec()),
+            RequestBodyPayload::Stream(mut stream) => {
+                let mut merged = Vec::new();
+                while let Some(chunk) = stream.next().await {
+                    merged.extend_from_slice(&chunk?);
+                }
+                Some(merged)
+            }
+        };
         let (response, captured) = {
             let mut inner = self.inner.lock().unwrap();
             let captured = CapturedRequest {
@@ -187,7 +199,7 @@ impl HttpTransport for MockTransport {
                     .iter()
                     .map(|(n, v)| (n.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
                     .collect(),
-                body: body.map(|b| b.to_vec()),
+                body: captured_body,
             };
             inner.captured.push(captured);
             (
@@ -200,7 +212,10 @@ impl HttpTransport for MockTransport {
         if let Some(delay) = response.fail_after {
             if delay.is_zero() {
                 if cancel.is_cancelled() {
-                    return Err(anyhow::anyhow!("mock transport cancelled for {}", captured.url));
+                    return Err(anyhow::anyhow!(
+                        "mock transport cancelled for {}",
+                        captured.url
+                    ));
                 }
             } else {
                 tokio::select! {
@@ -630,7 +645,9 @@ fn auth_secrets_never_appear_in_request_domain_model() {
     let (ws_repo, col_repo, _req_repo, _hist_repo, _blob, secrets, exec) =
         build_test_services(mock.clone());
 
-    secrets.put_secret("bearer-token-123", "super-secret-value").unwrap();
+    secrets
+        .put_secret("bearer-token-123", "super-secret-value")
+        .unwrap();
 
     let ws = ws_repo.create("WS").unwrap();
     let col = col_repo.create(ws.id, "Col").unwrap();
@@ -701,9 +718,7 @@ fn cancel_before_response_yields_cancelled_outcome() {
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let outcome = rt.block_on(async {
-        let exec_handle = tokio::spawn(async move {
-            exec.execute(&request, ws.id, cancel).await
-        });
+        let exec_handle = tokio::spawn(async move { exec.execute(&request, ws.id, cancel).await });
         tokio::time::sleep(Duration::from_millis(10)).await;
         cancel_clone.cancel();
         exec_handle.await.unwrap().unwrap()
@@ -743,9 +758,7 @@ fn cancel_mid_stream_clears_blob_hash() {
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let outcome = rt.block_on(async {
-        let exec_handle = tokio::spawn(async move {
-            exec.execute(&request, ws.id, cancel).await
-        });
+        let exec_handle = tokio::spawn(async move { exec.execute(&request, ws.id, cancel).await });
         tokio::time::sleep(Duration::from_millis(250)).await;
         cancel_clone.cancel();
         exec_handle.await.unwrap().unwrap()
@@ -765,7 +778,9 @@ fn history_snapshot_redacts_auth_headers() {
     let (ws_repo, col_repo, _req_repo, _hist_repo, _blob, secrets, _exec) =
         build_test_services(mock);
 
-    secrets.put_secret("my-api-key", "secret-key-value").unwrap();
+    secrets
+        .put_secret("my-api-key", "secret-key-value")
+        .unwrap();
 
     let ws = ws_repo.create("WS").unwrap();
     let col = col_repo.create(ws.id, "Col").unwrap();
@@ -777,8 +792,12 @@ fn history_snapshot_redacts_auth_headers() {
     request.auth = AuthType::Bearer {
         token_secret_ref: Some("my-api-key".to_string()),
     };
-    request.headers.push(KeyValuePair::new("Authorization", "will-be-replaced"));
-    request.headers.push(KeyValuePair::new("X-Custom", "visible"));
+    request
+        .headers
+        .push(KeyValuePair::new("Authorization", "will-be-replaced"));
+    request
+        .headers
+        .push(KeyValuePair::new("X-Custom", "visible"));
 
     let snapshot = torii::repos::history_repo::build_request_snapshot(&request);
 
@@ -814,7 +833,10 @@ fn large_response_bounded_by_preview_cap() {
     mock.respond_with(MockResponse {
         status_code: 200,
         status_text: "OK".to_string(),
-        headers: vec![("content-type".to_string(), "application/octet-stream".to_string())],
+        headers: vec![(
+            "content-type".to_string(),
+            "application/octet-stream".to_string(),
+        )],
         body_chunks: vec![large_body],
         ..Default::default()
     });
@@ -830,24 +852,24 @@ fn large_response_bounded_by_preview_cap() {
     let outcome = run_async(exec.execute(&request, ws.id, cancel)).unwrap();
 
     match outcome {
-        ExecOutcome::Completed(summary) => {
-            match &summary.body_ref {
-                torii::domain::response::BodyRef::DiskBlob {
-                    blob_id, preview, size_bytes,
-                } => {
-                    assert_eq!(*size_bytes, 10 * 1024 * 1024 as u64);
-                    let preview_len = preview.as_ref().map(|p| p.len()).unwrap_or(0);
-                    assert!(
-                        preview_len <= torii::domain::response::ResponseBudgets::PREVIEW_CAP_BYTES,
-                        "preview {preview_len} exceeds cap"
-                    );
-                    assert!(blob_store.exists(blob_id));
-                    let full = blob_store.read_all(blob_id).unwrap();
-                    assert_eq!(full.len(), 10 * 1024 * 1024);
-                }
-                other => panic!("expected DiskBlob, got {other:?}"),
+        ExecOutcome::Completed(summary) => match &summary.body_ref {
+            torii::domain::response::BodyRef::DiskBlob {
+                blob_id,
+                preview,
+                size_bytes,
+            } => {
+                assert_eq!(*size_bytes, 10 * 1024 * 1024 as u64);
+                let preview_len = preview.as_ref().map(|p| p.len()).unwrap_or(0);
+                assert!(
+                    preview_len <= torii::domain::response::ResponseBudgets::PREVIEW_CAP_BYTES,
+                    "preview {preview_len} exceeds cap"
+                );
+                assert!(blob_store.exists(blob_id));
+                let full = blob_store.read_all(blob_id).unwrap();
+                assert_eq!(full.len(), 10 * 1024 * 1024);
             }
-        }
+            other => panic!("expected DiskBlob, got {other:?}"),
+        },
         other => panic!("expected Completed, got {other:?}"),
     }
 }
@@ -862,7 +884,9 @@ fn secret_ref_not_in_request_sqlite_row() {
 
     let ws = workspace_repo.create("WS").unwrap();
     let col = collection_repo.create(ws.id, "Col").unwrap();
-    let mut request = request_repo.create(col.id, None, "Test", "POST", "https://api.test").unwrap();
+    let mut request = request_repo
+        .create(col.id, None, "Test", "POST", "https://api.test")
+        .unwrap();
 
     request.auth = AuthType::Bearer {
         token_secret_ref: Some("secret-ref-key".to_string()),
@@ -904,7 +928,10 @@ fn response_50mb_bounded_by_preview_cap() {
     mock.respond_with(MockResponse {
         status_code: 200,
         status_text: "OK".to_string(),
-        headers: vec![("content-type".to_string(), "application/octet-stream".to_string())],
+        headers: vec![(
+            "content-type".to_string(),
+            "application/octet-stream".to_string(),
+        )],
         body_chunks: vec![large_body],
         ..Default::default()
     });
@@ -920,24 +947,24 @@ fn response_50mb_bounded_by_preview_cap() {
     let outcome = run_async(exec.execute(&request, ws.id, cancel)).unwrap();
 
     match outcome {
-        ExecOutcome::Completed(summary) => {
-            match &summary.body_ref {
-                torii::domain::response::BodyRef::DiskBlob {
-                    blob_id, preview, size_bytes,
-                } => {
-                    assert_eq!(*size_bytes, 50u64 * 1024 * 1024);
-                    let preview_len = preview.as_ref().map(|p| p.len()).unwrap_or(0);
-                    assert!(
-                        preview_len <= torii::domain::response::ResponseBudgets::PREVIEW_CAP_BYTES,
-                        "preview {preview_len} exceeds cap"
-                    );
-                    assert!(blob_store.exists(blob_id));
-                    let full = blob_store.read_all(blob_id).unwrap();
-                    assert_eq!(full.len(), 50 * 1024 * 1024);
-                }
-                other => panic!("expected DiskBlob, got {other:?}"),
+        ExecOutcome::Completed(summary) => match &summary.body_ref {
+            torii::domain::response::BodyRef::DiskBlob {
+                blob_id,
+                preview,
+                size_bytes,
+            } => {
+                assert_eq!(*size_bytes, 50u64 * 1024 * 1024);
+                let preview_len = preview.as_ref().map(|p| p.len()).unwrap_or(0);
+                assert!(
+                    preview_len <= torii::domain::response::ResponseBudgets::PREVIEW_CAP_BYTES,
+                    "preview {preview_len} exceeds cap"
+                );
+                assert!(blob_store.exists(blob_id));
+                let full = blob_store.read_all(blob_id).unwrap();
+                assert_eq!(full.len(), 50 * 1024 * 1024);
             }
-        }
+            other => panic!("expected DiskBlob, got {other:?}"),
+        },
         other => panic!("expected Completed, got {other:?}"),
     }
 }
@@ -949,7 +976,10 @@ fn response_200mb_bounded_by_preview_cap() {
     mock.respond_with(MockResponse {
         status_code: 200,
         status_text: "OK".to_string(),
-        headers: vec![("content-type".to_string(), "application/octet-stream".to_string())],
+        headers: vec![(
+            "content-type".to_string(),
+            "application/octet-stream".to_string(),
+        )],
         body_chunks: vec![large_body],
         ..Default::default()
     });
@@ -965,22 +995,22 @@ fn response_200mb_bounded_by_preview_cap() {
     let outcome = run_async(exec.execute(&request, ws.id, cancel)).unwrap();
 
     match outcome {
-        ExecOutcome::Completed(summary) => {
-            match &summary.body_ref {
-                torii::domain::response::BodyRef::DiskBlob {
-                    blob_id, preview, size_bytes,
-                } => {
-                    assert_eq!(*size_bytes, 200u64 * 1024 * 1024);
-                    let preview_len = preview.as_ref().map(|p| p.len()).unwrap_or(0);
-                    assert!(
-                        preview_len <= torii::domain::response::ResponseBudgets::PREVIEW_CAP_BYTES,
-                        "preview {preview_len} exceeds cap"
-                    );
-                    assert!(blob_store.exists(blob_id));
-                }
-                other => panic!("expected DiskBlob, got {other:?}"),
+        ExecOutcome::Completed(summary) => match &summary.body_ref {
+            torii::domain::response::BodyRef::DiskBlob {
+                blob_id,
+                preview,
+                size_bytes,
+            } => {
+                assert_eq!(*size_bytes, 200u64 * 1024 * 1024);
+                let preview_len = preview.as_ref().map(|p| p.len()).unwrap_or(0);
+                assert!(
+                    preview_len <= torii::domain::response::ResponseBudgets::PREVIEW_CAP_BYTES,
+                    "preview {preview_len} exceeds cap"
+                );
+                assert!(blob_store.exists(blob_id));
             }
-        }
+            other => panic!("expected DiskBlob, got {other:?}"),
+        },
         other => panic!("expected Completed, got {other:?}"),
     }
 }
@@ -1016,9 +1046,7 @@ fn drip_feed_cancel_race_with_preview_cap() {
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let outcome = rt.block_on(async {
-        let exec_handle = tokio::spawn(async move {
-            exec.execute(&request, ws.id, cancel).await
-        });
+        let exec_handle = tokio::spawn(async move { exec.execute(&request, ws.id, cancel).await });
         tokio::time::sleep(Duration::from_millis(300)).await;
         cancel_clone.cancel();
         exec_handle.await.unwrap().unwrap()

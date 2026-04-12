@@ -10,11 +10,7 @@ use std::{
 
 use tokio_util::sync::CancellationToken;
 use torii::{
-    domain::{
-        ids::HistoryEntryId,
-        request::RequestItem,
-        response::BodyRef,
-    },
+    domain::{ids::HistoryEntryId, request::RequestItem, response::BodyRef},
     infra::blobs::BlobStore,
     infra::secrets::InMemorySecretStore,
     repos::{
@@ -23,6 +19,7 @@ use torii::{
         request_repo::SqliteRequestRepository,
         workspace_repo::{SqliteWorkspaceRepository, WorkspaceRepository},
     },
+    services::request_body_payload::RequestBodyPayload,
     services::request_execution::{
         ExecOutcome, HttpTransport, RequestExecutionService, TransportResponse,
     },
@@ -71,7 +68,7 @@ impl HttpTransport for HoldReleaseTransport {
         _method: http::Method,
         url: url::Url,
         _headers: http::HeaderMap,
-        _body: Option<Bytes>,
+        _body: RequestBodyPayload,
         cancel: CancellationToken,
     ) -> Result<TransportResponse> {
         {
@@ -98,7 +95,8 @@ impl HttpTransport for HoldReleaseTransport {
         };
 
         let items: Vec<Result<Bytes>> = vec![Ok(Bytes::from(body))];
-        let stream: Pin<Box<dyn Stream<Item = Result<Bytes>> + Send>> = Box::pin(stream::iter(items));
+        let stream: Pin<Box<dyn Stream<Item = Result<Bytes>> + Send>> =
+            Box::pin(stream::iter(items));
 
         Ok(TransportResponse {
             status_code: 200,
@@ -177,9 +175,7 @@ fn send_while_sending_auto_cancel_first_request() {
         let exec1 = exec.clone();
         let request1 = simple_request("GET", "https://api.test/first", col.id);
         let ws_id = ws.id;
-        let handle1 = tokio::spawn(async move {
-            exec1.execute(&request1, ws_id, cancel1).await
-        });
+        let handle1 = tokio::spawn(async move { exec1.execute(&request1, ws_id, cancel1).await });
 
         // Give the first request time to reach the transport
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -188,9 +184,7 @@ fn send_while_sending_auto_cancel_first_request() {
         let request2 = simple_request("GET", "https://api.test/second", col.id);
         let cancel2 = CancellationToken::new();
         let exec2 = exec.clone();
-        let handle2 = tokio::spawn(async move {
-            exec2.execute(&request2, ws_id, cancel2).await
-        });
+        let handle2 = tokio::spawn(async move { exec2.execute(&request2, ws_id, cancel2).await });
 
         // Release the first request's hold
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -236,13 +230,18 @@ fn send_while_sending_auto_cancel_first_request() {
 fn late_response_after_cancel_is_ignored() {
     // Verify the FSM's late-response guard: after cancelling an operation,
     // a late completion for that operation ID is ignored.
-    use torii::session::request_editor_state::{ExecStatus, RequestEditorState};
     use torii::domain::ids::CollectionId;
+    use torii::session::request_editor_state::{ExecStatus, RequestEditorState};
 
     let collection_id = CollectionId::new();
-    let mut editor = RequestEditorState::from_persisted(
-        RequestItem::new(collection_id, None, "Test", "GET", "/api", 0),
-    );
+    let mut editor = RequestEditorState::from_persisted(RequestItem::new(
+        collection_id,
+        None,
+        "Test",
+        "GET",
+        "/api",
+        0,
+    ));
 
     // Start op1
     let op1 = HistoryEntryId::new();

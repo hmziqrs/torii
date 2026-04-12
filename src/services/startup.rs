@@ -24,8 +24,8 @@ use crate::{
 
 use super::{
     app_services::{AppServices, Repositories},
-    request_execution::{RequestExecutionService, ReqwestTransport},
     recovery::RecoveryCoordinator,
+    request_execution::{RequestExecutionService, ReqwestTransport},
     secret_manager::SecretManager,
     session_restore::SessionRestoreService,
     tokio_runtime::TokioRuntime,

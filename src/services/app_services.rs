@@ -14,10 +14,9 @@ use crate::{
 };
 
 use super::{
-    request_execution::RequestExecutionService,
-    recovery::RecoveryCoordinator, secret_manager::SecretManager,
-    session_restore::SessionRestoreService, tokio_runtime::TokioRuntime,
-    ui_preferences::UiPreferencesStoreRef,
+    recovery::RecoveryCoordinator, request_execution::RequestExecutionService,
+    secret_manager::SecretManager, session_restore::SessionRestoreService,
+    tokio_runtime::TokioRuntime, ui_preferences::UiPreferencesStoreRef,
 };
 
 #[derive(Clone)]

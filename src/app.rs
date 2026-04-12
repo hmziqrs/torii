@@ -10,8 +10,7 @@ use gpui_component::{ActiveTheme, Root, Theme, ThemeMode, TitleBar};
 
 use crate::services::{
     app_services::AppServicesGlobal, startup::bootstrap_app_services,
-    tokio_runtime::TokioRuntimeGlobal,
-    ui_preferences::UiPreferencesSnapshot,
+    tokio_runtime::TokioRuntimeGlobal, ui_preferences::UiPreferencesSnapshot,
 };
 
 // ---------------------------------------------------------------------------
@@ -20,7 +19,16 @@ use crate::services::{
 
 actions!(
     app,
-    [About, Quit, ToggleSearch, CloseTab, NewRequest, NextTab, PrevTab, ToggleSidebar]
+    [
+        About,
+        Quit,
+        ToggleSearch,
+        CloseTab,
+        NewRequest,
+        NextTab,
+        PrevTab,
+        ToggleSidebar
+    ]
 );
 
 #[derive(Action, Clone, PartialEq, Eq, serde::Deserialize)]
