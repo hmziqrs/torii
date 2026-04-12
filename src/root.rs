@@ -470,22 +470,22 @@ impl AppRoot {
             .w(relative(1.))
             .border_0()
             .collapsed(self.session.read(cx).window_layout.sidebar_collapsed)
-            .header(
-                v_flex().w_full().gap_4().child(
-                    SidebarHeader::new().w_full().child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded(cx.theme().radius_lg)
-                            .bg(cx.theme().primary)
-                            .text_color(cx.theme().primary_foreground)
-                            .size_8()
-                            .flex_shrink_0()
-                            .child(Icon::new(IconName::Star)),
-                    ),
-                ),
-            )
+            // .header(
+            //     v_flex().w_full().gap_4().child(
+            //         SidebarHeader::new().w_full().child(
+            //             div()
+            //                 .flex()
+            //                 .items_center()
+            //                 .justify_center()
+            //                 .rounded(cx.theme().radius_lg)
+            //                 .bg(cx.theme().primary)
+            //                 .text_color(cx.theme().primary_foreground)
+            //                 .size_8()
+            //                 .flex_shrink_0()
+            //                 .child(Icon::new(IconName::Star)),
+            //         ),
+            //     ),
+            // )
             .child(
                 SidebarGroup::new(es_fluent::localize("sidebar_workspaces", None)).child(
                     SidebarMenu::new().children(self.catalog.workspaces.iter().map(|workspace| {
