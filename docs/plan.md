@@ -439,8 +439,6 @@ Exit criteria:
 
 ## Phase 4 (P1): Collections, Folders, Environments, and Drag/Drop
 
-## Phase 4 (P1): Collections, Folders, Environments, and Drag/Drop
-
 Goal: complete the core Postman information architecture.
 
 Scope:
@@ -608,10 +606,10 @@ Every phase should ship with the relevant tests, not as a later cleanup item.
 5. Build response presentation and request editor usability
 6. Build tree CRUD + drag/drop + environments
 7. Add history surfaces
-7. Add GraphQL, WS, and gRPC
-8. Add local folder mode
-9. Add Git integration
-10. Run parity and hardening pass
+8. Add GraphQL, WS, and gRPC
+9. Add local folder mode
+10. Add Git integration
+11. Run parity and hardening pass
 
 ## 9. Deliberate Scope Boundary
 
