@@ -67,7 +67,6 @@ pub struct RequestTabView {
     editor: RequestEditorState,
     focus_handle: FocusHandle,
     name_input: Entity<InputState>,
-    method_input: Entity<InputState>,
     method_select: Entity<SelectState<Vec<&'static str>>>,
     url_input: Entity<InputState>,
     params_input: Entity<InputState>,
@@ -149,11 +148,6 @@ impl RequestTabView {
         let name_input = cx.new(|cx| {
             let mut state = InputState::new(window, cx);
             state.set_value(initial.name.clone(), window, cx);
-            state
-        });
-        let method_input = cx.new(|cx| {
-            let mut state = InputState::new(window, cx);
-            state.set_value(initial.method.clone(), window, cx);
             state
         });
         let method_select = cx.new(|cx| {
@@ -243,27 +237,13 @@ impl RequestTabView {
             },
         ));
 
-        subscriptions.push(cx.subscribe(
-            &method_input,
-            |this: &mut RequestTabView, state: Entity<InputState>, event: &InputEvent, cx| {
-                if let InputEvent::Change = event {
-                    let method = state.read(cx).value().to_string();
-                    if this.editor.draft().method != method {
-                        this.editor.draft_mut().method = method;
-                        this.editor.refresh_save_status();
-                        cx.notify();
-                    }
-                }
-            },
-        ));
-
         subscriptions.push(cx.subscribe_in(
             &method_select,
             window,
-            |this: &mut RequestTabView,
+             |this: &mut RequestTabView,
              _: &Entity<SelectState<Vec<&'static str>>>,
              event: &SelectEvent<Vec<&'static str>>,
-             window: &mut Window,
+             _window: &mut Window,
              cx| {
                 let SelectEvent::Confirm(method) = event;
                 let Some(method) = method.clone() else {
@@ -271,9 +251,6 @@ impl RequestTabView {
                 };
                 if this.editor.draft().method != method {
                     this.editor.draft_mut().method = method.to_string();
-                    this.method_input.update(cx, |input, cx| {
-                        input.set_value(method.to_string(), window, cx);
-                    });
                     this.editor.refresh_save_status();
                     cx.notify();
                 }
@@ -460,7 +437,6 @@ impl RequestTabView {
             editor,
             focus_handle: cx.focus_handle(),
             name_input,
-            method_input,
             method_select,
             url_input,
             params_input,
@@ -1874,7 +1850,6 @@ impl Render for RequestTabView {
                     .gap_2()
                     .items_end()
                     .child(div().w_40().child(Select::new(&self.method_select)))
-                    .child(div().w_32().child(Input::new(&self.method_input).large()))
                     .child(div().flex_1().child(Input::new(&self.url_input).large()))
                     .child(
                         Button::new("request-send")

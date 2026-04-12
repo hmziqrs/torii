@@ -11,6 +11,35 @@ Make the request-response loop usable day-to-day, not just lifecycle-correct.
 
 Phase 3 made send/save/cancel safe at the state and persistence layer. The response panel is a single monolithic text dump, and every request-editor section is a plain single-line text input with ad-hoc serialization (`key=value\n` for params/headers, `basic username=foo password_ref=bar` for auth). Phase 3.5 replaces those with structured component editors and a proper multi-tab response panel — the minimum bar for a developer to actually debug an API.
 
+## 1.1 Current Progress Snapshot (as of 2026-04-12)
+
+Status legend: `done` / `partial` / `pending`
+
+- Slice 1 (Response tabs + metadata): `partial`
+  - done: Body/Headers/Cookies/Timing tabs, metadata bar, XML/HTML pretty-print, timing fields on `ResponseSummary`, lossless header row persistence + legacy fallback parser, cookie parsing, timing placeholders.
+  - pending: extract to `request_tab/response_panel.rs` + `response_metadata_bar.rs`; Headers/Cookies currently render as structured text rows, not `gpui-component::Table`.
+- Slice 2 (Classified error display): `partial`
+  - done: `services/error_classifier.rs`, `ExecOutcome::Failed { summary, classified }`, `ExecStatus::Failed { summary, classified }`, fallback for restored history failures.
+  - pending: dedicated `error_display.rs` submodule; expandable full-chain details UI; deeper DNS/TLS classification coverage.
+- Slice 3 (Body actions): `partial`
+  - done: copy (text-like types), save-to-file (blob streaming path), body-search toggle + match counting, XML/HTML fallback behavior.
+  - pending: image preview render path from preview bytes, full-content blob scan search with snippets/highlights/navigation, explicit copy-disabled tooltip UX.
+- Slice 4 (Key-value editor): `pending`
+  - params/headers still use text serialization and parsing.
+- Slice 5 (Auth structured editor): `pending`
+  - auth still uses text DSL input.
+- Slice 6 (Body structured editor + streamed request payload): `partial`
+  - done: method dropdown replacing freeform method-only editing.
+  - pending: body type selector/editor, file pick/replace/clear UX, >100 MB confirmation, outbound streamed request payload abstraction for large binary/form-data.
+- Slice 7 (Keyboard shortcuts): `done`
+  - implemented: close tab, new request, duplicate request, next/prev tab, focus URL bar, toggle sidebar, toggle body search.
+- Slice 8 (File decomposition): `pending`
+  - `request_tab.rs` is still monolithic.
+
+Outstanding validation gates:
+
+- Missing targeted/new tests for key-value editor, body full-content search, image preview behavior, and streamed large outbound request-body paths.
+
 ## 2. Non-Negotiable Rules Carried Forward
 
 These Phase 3 / V2 rules remain mandatory:
