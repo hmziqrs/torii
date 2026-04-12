@@ -68,6 +68,7 @@ enum ResponseTab {
 enum KvTarget {
     Params,
     Headers,
+    BodyUrlEncoded,
 }
 
 struct KeyValueEditorRow {
@@ -83,14 +84,23 @@ pub struct RequestTabView {
     name_input: Entity<InputState>,
     method_select: Entity<SelectState<Vec<&'static str>>>,
     url_input: Entity<InputState>,
-    auth_input: Entity<InputState>,
-    body_input: Entity<InputState>,
+    auth_type_select: Entity<SelectState<Vec<&'static str>>>,
+    auth_basic_username_input: Entity<InputState>,
+    auth_basic_password_ref_input: Entity<InputState>,
+    auth_bearer_token_ref_input: Entity<InputState>,
+    auth_api_key_name_input: Entity<InputState>,
+    auth_api_key_value_ref_input: Entity<InputState>,
+    auth_api_key_location_select: Entity<SelectState<Vec<&'static str>>>,
+    body_type_select: Entity<SelectState<Vec<&'static str>>>,
+    body_raw_text_input: Entity<InputState>,
+    body_raw_json_input: Entity<InputState>,
     pre_request_input: Entity<InputState>,
     tests_input: Entity<InputState>,
     timeout_input: Entity<InputState>,
     follow_redirects_input: Entity<InputState>,
     params_rows: Vec<KeyValueEditorRow>,
     headers_rows: Vec<KeyValueEditorRow>,
+    body_urlencoded_rows: Vec<KeyValueEditorRow>,
     next_kv_row_id: u64,
     active_section: RequestSectionTab,
     active_response_tab: ResponseTab,
@@ -184,14 +194,109 @@ impl RequestTabView {
             state.set_value(initial.url.clone(), window, cx);
             state
         });
-        let body_input = cx.new(|cx| {
+        let auth_type_select = cx.new(|cx| {
+            let mut select = SelectState::new(
+                vec!["None", "Basic", "Bearer", "API Key"],
+                Some(gpui_component::IndexPath::default()),
+                window,
+                cx,
+            );
+            select.set_selected_index(
+                Some(gpui_component::IndexPath::default().row(auth_type_index(&initial.auth))),
+                window,
+                cx,
+            );
+            select
+        });
+        let auth_basic_username_input = cx.new(|cx| {
             let mut state = InputState::new(window, cx);
-            state.set_value(body_editor_value(&initial.body), window, cx);
+            if let AuthType::Basic { username, .. } = &initial.auth {
+                state.set_value(username.clone(), window, cx);
+            }
             state
         });
-        let auth_input = cx.new(|cx| {
+        let auth_basic_password_ref_input = cx.new(|cx| {
             let mut state = InputState::new(window, cx);
-            state.set_value(auth_to_text(&initial.auth), window, cx);
+            if let AuthType::Basic {
+                password_secret_ref,
+                ..
+            } = &initial.auth
+            {
+                state.set_value(password_secret_ref.clone().unwrap_or_default(), window, cx);
+            }
+            state
+        });
+        let auth_bearer_token_ref_input = cx.new(|cx| {
+            let mut state = InputState::new(window, cx);
+            if let AuthType::Bearer { token_secret_ref } = &initial.auth {
+                state.set_value(token_secret_ref.clone().unwrap_or_default(), window, cx);
+            }
+            state
+        });
+        let auth_api_key_name_input = cx.new(|cx| {
+            let mut state = InputState::new(window, cx);
+            if let AuthType::ApiKey { key_name, .. } = &initial.auth {
+                state.set_value(key_name.clone(), window, cx);
+            }
+            state
+        });
+        let auth_api_key_value_ref_input = cx.new(|cx| {
+            let mut state = InputState::new(window, cx);
+            if let AuthType::ApiKey {
+                value_secret_ref, ..
+            } = &initial.auth
+            {
+                state.set_value(value_secret_ref.clone().unwrap_or_default(), window, cx);
+            }
+            state
+        });
+        let auth_api_key_location_select = cx.new(|cx| {
+            let mut select = SelectState::new(
+                vec!["Header", "Query"],
+                Some(gpui_component::IndexPath::default()),
+                window,
+                cx,
+            );
+            let row = match &initial.auth {
+                AuthType::ApiKey { location, .. } => api_key_location_index(*location),
+                _ => 0,
+            };
+            select.set_selected_index(Some(gpui_component::IndexPath::default().row(row)), window, cx);
+            select
+        });
+        let body_type_select = cx.new(|cx| {
+            let mut select = SelectState::new(
+                vec![
+                    "None",
+                    "Raw Text",
+                    "Raw JSON",
+                    "URL Encoded",
+                    "Form Data",
+                    "Binary File",
+                ],
+                Some(gpui_component::IndexPath::default()),
+                window,
+                cx,
+            );
+            select.set_selected_index(
+                Some(gpui_component::IndexPath::default().row(body_type_index(&initial.body))),
+                window,
+                cx,
+            );
+            select
+        });
+        let body_raw_text_input = cx.new(|cx| {
+            let mut state = InputState::new(window, cx);
+            if let BodyType::RawText { content } = &initial.body {
+                state.set_value(content.clone(), window, cx);
+            }
+            state
+        });
+        let body_raw_json_input = cx.new(|cx| {
+            let mut state = InputState::new(window, cx);
+            if let BodyType::RawJson { content } = &initial.body {
+                state.set_value(content.clone(), window, cx);
+            }
             state
         });
         let pre_request_input = cx.new(|cx| {
@@ -293,44 +398,116 @@ impl RequestTabView {
             },
         ));
 
-        subscriptions.push(cx.subscribe(
-            &auth_input,
-            |this: &mut RequestTabView, state: Entity<InputState>, event: &InputEvent, cx| {
-                if let InputEvent::Change = event {
-                    let current = this.editor.draft().auth.clone();
-                    let next = parse_auth_text(&state.read(cx).value(), &current);
-                    if current != next {
-                        this.editor.draft_mut().auth = next;
-                        this.editor.refresh_save_status();
-                        cx.notify();
-                    }
-                }
+        subscriptions.push(cx.subscribe_in(
+            &auth_type_select,
+            window,
+            |this: &mut RequestTabView,
+             _: &Entity<SelectState<Vec<&'static str>>>,
+             event: &SelectEvent<Vec<&'static str>>,
+             _window: &mut Window,
+             cx| {
+                let SelectEvent::Confirm(kind) = event;
+                let Some(kind) = kind.clone() else {
+                    return;
+                };
+                this.set_auth_kind(auth_kind_from_label(kind), cx);
             },
         ));
 
         subscriptions.push(cx.subscribe(
-            &body_input,
+            &auth_basic_username_input,
+            |this: &mut RequestTabView, _: Entity<InputState>, event: &InputEvent, cx| {
+                if let InputEvent::Change = event {
+                    this.sync_auth_from_inputs(cx);
+                }
+            },
+        ));
+        subscriptions.push(cx.subscribe(
+            &auth_basic_password_ref_input,
+            |this: &mut RequestTabView, _: Entity<InputState>, event: &InputEvent, cx| {
+                if let InputEvent::Change = event {
+                    this.sync_auth_from_inputs(cx);
+                }
+            },
+        ));
+        subscriptions.push(cx.subscribe(
+            &auth_bearer_token_ref_input,
+            |this: &mut RequestTabView, _: Entity<InputState>, event: &InputEvent, cx| {
+                if let InputEvent::Change = event {
+                    this.sync_auth_from_inputs(cx);
+                }
+            },
+        ));
+        subscriptions.push(cx.subscribe(
+            &auth_api_key_name_input,
+            |this: &mut RequestTabView, _: Entity<InputState>, event: &InputEvent, cx| {
+                if let InputEvent::Change = event {
+                    this.sync_auth_from_inputs(cx);
+                }
+            },
+        ));
+        subscriptions.push(cx.subscribe(
+            &auth_api_key_value_ref_input,
+            |this: &mut RequestTabView, _: Entity<InputState>, event: &InputEvent, cx| {
+                if let InputEvent::Change = event {
+                    this.sync_auth_from_inputs(cx);
+                }
+            },
+        ));
+        subscriptions.push(cx.subscribe_in(
+            &auth_api_key_location_select,
+            window,
+            |this: &mut RequestTabView,
+             _: &Entity<SelectState<Vec<&'static str>>>,
+             _: &SelectEvent<Vec<&'static str>>,
+             _window: &mut Window,
+             cx| {
+                this.sync_auth_from_inputs(cx);
+            },
+        ));
+
+        subscriptions.push(cx.subscribe_in(
+            &body_type_select,
+            window,
+            |this: &mut RequestTabView,
+             _: &Entity<SelectState<Vec<&'static str>>>,
+             event: &SelectEvent<Vec<&'static str>>,
+             _window: &mut Window,
+             cx| {
+                let SelectEvent::Confirm(kind) = event;
+                let Some(kind) = kind.clone() else {
+                    return;
+                };
+                this.set_body_kind(body_kind_from_label(kind), cx);
+            },
+        ));
+
+        subscriptions.push(cx.subscribe(
+            &body_raw_text_input,
             |this: &mut RequestTabView, state: Entity<InputState>, event: &InputEvent, cx| {
                 if let InputEvent::Change = event {
                     let content = state.read(cx).value().to_string();
-                    let draft = this.editor.draft_mut();
-                    match &mut draft.body {
-                        BodyType::RawText { content: body }
-                        | BodyType::RawJson { content: body } => {
-                            if *body != content {
-                                *body = content;
-                                this.editor.refresh_save_status();
-                                cx.notify();
-                            }
+                    if let BodyType::RawText { content: existing } = &mut this.editor.draft_mut().body {
+                        if *existing != content {
+                            *existing = content;
+                            this.editor.refresh_save_status();
+                            cx.notify();
                         }
-                        BodyType::None => {
-                            if !content.is_empty() {
-                                draft.body = BodyType::RawText { content };
-                                this.editor.refresh_save_status();
-                                cx.notify();
-                            }
+                    }
+                }
+            },
+        ));
+        subscriptions.push(cx.subscribe(
+            &body_raw_json_input,
+            |this: &mut RequestTabView, state: Entity<InputState>, event: &InputEvent, cx| {
+                if let InputEvent::Change = event {
+                    let content = state.read(cx).value().to_string();
+                    if let BodyType::RawJson { content: existing } = &mut this.editor.draft_mut().body {
+                        if *existing != content {
+                            *existing = content;
+                            this.editor.refresh_save_status();
+                            cx.notify();
                         }
-                        _ => {}
                     }
                 }
             },
@@ -414,14 +591,23 @@ impl RequestTabView {
             name_input,
             method_select,
             url_input,
-            auth_input,
-            body_input,
+            auth_type_select,
+            auth_basic_username_input,
+            auth_basic_password_ref_input,
+            auth_bearer_token_ref_input,
+            auth_api_key_name_input,
+            auth_api_key_value_ref_input,
+            auth_api_key_location_select,
+            body_type_select,
+            body_raw_text_input,
+            body_raw_json_input,
             pre_request_input,
             tests_input,
             timeout_input,
             follow_redirects_input,
             params_rows: Vec::new(),
             headers_rows: Vec::new(),
+            body_urlencoded_rows: Vec::new(),
             next_kv_row_id: 1,
             active_section: RequestSectionTab::Params,
             active_response_tab: ResponseTab::Body,
@@ -434,6 +620,11 @@ impl RequestTabView {
         };
         this.rebuild_kv_rows(KvTarget::Params, &initial.params, window, cx);
         this.rebuild_kv_rows(KvTarget::Headers, &initial.headers, window, cx);
+        let urlencoded_entries = match &initial.body {
+            BodyType::UrlEncoded { entries } => entries.clone(),
+            _ => Vec::new(),
+        };
+        this.rebuild_kv_rows(KvTarget::BodyUrlEncoded, &urlencoded_entries, window, cx);
         this
     }
 
@@ -1274,6 +1465,125 @@ impl RequestTabView {
         });
     }
 
+    fn selected_auth_kind(&self, cx: &App) -> AuthKind {
+        self.auth_type_select
+            .read(cx)
+            .selected_value()
+            .map(|label| auth_kind_from_label(label))
+            .unwrap_or(AuthKind::None)
+    }
+
+    fn auth_from_cached_inputs(&self, kind: AuthKind, cx: &App) -> AuthType {
+        match kind {
+            AuthKind::None => AuthType::None,
+            AuthKind::Basic => {
+                let username = self.auth_basic_username_input.read(cx).value().to_string();
+                let password_ref = self
+                    .auth_basic_password_ref_input
+                    .read(cx)
+                    .value()
+                    .trim()
+                    .to_string();
+                AuthType::Basic {
+                    username,
+                    password_secret_ref: if password_ref.is_empty() {
+                        None
+                    } else {
+                        Some(password_ref)
+                    },
+                }
+            }
+            AuthKind::Bearer => {
+                let token_ref = self
+                    .auth_bearer_token_ref_input
+                    .read(cx)
+                    .value()
+                    .trim()
+                    .to_string();
+                AuthType::Bearer {
+                    token_secret_ref: if token_ref.is_empty() {
+                        None
+                    } else {
+                        Some(token_ref)
+                    },
+                }
+            }
+            AuthKind::ApiKey => {
+                let key_name = self.auth_api_key_name_input.read(cx).value().to_string();
+                let value_ref = self
+                    .auth_api_key_value_ref_input
+                    .read(cx)
+                    .value()
+                    .trim()
+                    .to_string();
+                let location_ix = self
+                    .auth_api_key_location_select
+                    .read(cx)
+                    .selected_index(cx)
+                    .map(|ix| ix.row)
+                    .unwrap_or(0);
+                AuthType::ApiKey {
+                    key_name,
+                    value_secret_ref: if value_ref.is_empty() {
+                        None
+                    } else {
+                        Some(value_ref)
+                    },
+                    location: api_key_location_from_index(location_ix),
+                }
+            }
+        }
+    }
+
+    fn set_auth_kind(&mut self, kind: AuthKind, cx: &mut Context<Self>) {
+        let next = self.auth_from_cached_inputs(kind, cx);
+        if self.editor.draft().auth != next {
+            self.editor.draft_mut().auth = next;
+            self.editor.refresh_save_status();
+            cx.notify();
+        }
+    }
+
+    fn sync_auth_from_inputs(&mut self, cx: &mut Context<Self>) {
+        self.set_auth_kind(self.selected_auth_kind(cx), cx);
+    }
+
+    fn selected_body_kind(&self, cx: &App) -> BodyKind {
+        self.body_type_select
+            .read(cx)
+            .selected_value()
+            .map(|label| body_kind_from_label(label))
+            .unwrap_or(BodyKind::None)
+    }
+
+    fn set_body_kind(&mut self, kind: BodyKind, cx: &mut Context<Self>) {
+        let next = match kind {
+            BodyKind::None => BodyType::None,
+            BodyKind::RawText => BodyType::RawText {
+                content: self.body_raw_text_input.read(cx).value().to_string(),
+            },
+            BodyKind::RawJson => BodyType::RawJson {
+                content: self.body_raw_json_input.read(cx).value().to_string(),
+            },
+            BodyKind::UrlEncoded => BodyType::UrlEncoded {
+                entries: self.collect_meaningful_pairs(KvTarget::BodyUrlEncoded, cx),
+            },
+            BodyKind::FormData => BodyType::FormData {
+                text_fields: Vec::new(),
+                file_fields: Vec::new(),
+            },
+            BodyKind::BinaryFile => BodyType::BinaryFile {
+                blob_hash: String::new(),
+                file_name: None,
+            },
+        };
+        if self.editor.draft().body != next {
+            self.editor.draft_mut().body = next;
+            self.editor.refresh_save_status();
+            cx.notify();
+        }
+    }
+
     fn sync_inputs_from_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.input_sync_guard.enter() {
             return;
@@ -1287,6 +1597,7 @@ impl RequestTabView {
         }
         self.sync_kv_rows_with_draft(KvTarget::Params, window, cx);
         self.sync_kv_rows_with_draft(KvTarget::Headers, window, cx);
+        self.sync_kv_rows_with_draft(KvTarget::BodyUrlEncoded, window, cx);
         self.method_select.update(cx, |select, cx| {
             if let Some(ix) = standard_method_index(draft.method.as_str()) {
                 if select.selected_index(cx).map(|it| it.row) != Some(ix) {
@@ -1296,6 +1607,109 @@ impl RequestTabView {
                 select.set_selected_index(None, window, cx);
             }
         });
+        self.auth_type_select.update(cx, |select, cx| {
+            let ix = auth_type_index(&draft.auth);
+            if select.selected_index(cx).map(|it| it.row) != Some(ix) {
+                select.set_selected_index(Some(gpui_component::IndexPath::default().row(ix)), window, cx);
+            }
+        });
+        self.body_type_select.update(cx, |select, cx| {
+            let ix = body_type_index(&draft.body);
+            if select.selected_index(cx).map(|it| it.row) != Some(ix) {
+                select.set_selected_index(Some(gpui_component::IndexPath::default().row(ix)), window, cx);
+            }
+        });
+
+        match &draft.auth {
+            AuthType::Basic {
+                username,
+                password_secret_ref,
+            } => {
+                if self.auth_basic_username_input.read(cx).value().as_ref() != username.as_str() {
+                    self.auth_basic_username_input.update(cx, |s, cx| {
+                        s.set_value(username.clone(), window, cx);
+                    });
+                }
+                let password_ref = password_secret_ref.clone().unwrap_or_default();
+                if self
+                    .auth_basic_password_ref_input
+                    .read(cx)
+                    .value()
+                    .as_ref()
+                    != password_ref.as_str()
+                {
+                    self.auth_basic_password_ref_input.update(cx, |s, cx| {
+                        s.set_value(password_ref.clone(), window, cx);
+                    });
+                }
+            }
+            AuthType::Bearer { token_secret_ref } => {
+                let token_ref = token_secret_ref.clone().unwrap_or_default();
+                if self
+                    .auth_bearer_token_ref_input
+                    .read(cx)
+                    .value()
+                    .as_ref()
+                    != token_ref.as_str()
+                {
+                    self.auth_bearer_token_ref_input.update(cx, |s, cx| {
+                        s.set_value(token_ref.clone(), window, cx);
+                    });
+                }
+            }
+            AuthType::ApiKey {
+                key_name,
+                value_secret_ref,
+                location,
+            } => {
+                if self.auth_api_key_name_input.read(cx).value().as_ref() != key_name.as_str() {
+                    self.auth_api_key_name_input.update(cx, |s, cx| {
+                        s.set_value(key_name.clone(), window, cx);
+                    });
+                }
+                let value_ref = value_secret_ref.clone().unwrap_or_default();
+                if self
+                    .auth_api_key_value_ref_input
+                    .read(cx)
+                    .value()
+                    .as_ref()
+                    != value_ref.as_str()
+                {
+                    self.auth_api_key_value_ref_input.update(cx, |s, cx| {
+                        s.set_value(value_ref.clone(), window, cx);
+                    });
+                }
+                self.auth_api_key_location_select.update(cx, |select, cx| {
+                    let row = api_key_location_index(*location);
+                    if select.selected_index(cx).map(|it| it.row) != Some(row) {
+                        select.set_selected_index(
+                            Some(gpui_component::IndexPath::default().row(row)),
+                            window,
+                            cx,
+                        );
+                    }
+                });
+            }
+            AuthType::None => {}
+        }
+
+        match &draft.body {
+            BodyType::RawText { content } => {
+                if self.body_raw_text_input.read(cx).value().as_ref() != content.as_str() {
+                    self.body_raw_text_input.update(cx, |s, cx| {
+                        s.set_value(content.clone(), window, cx);
+                    });
+                }
+            }
+            BodyType::RawJson { content } => {
+                if self.body_raw_json_input.read(cx).value().as_ref() != content.as_str() {
+                    self.body_raw_json_input.update(cx, |s, cx| {
+                        s.set_value(content.clone(), window, cx);
+                    });
+                }
+            }
+            _ => {}
+        }
 
         if self.input_sync_guard.leave_and_take_deferred() {
             cx.notify();
@@ -1319,6 +1733,7 @@ impl RequestTabView {
         match target {
             KvTarget::Params => &self.params_rows,
             KvTarget::Headers => &self.headers_rows,
+            KvTarget::BodyUrlEncoded => &self.body_urlencoded_rows,
         }
     }
 
@@ -1326,6 +1741,7 @@ impl RequestTabView {
         match target {
             KvTarget::Params => &mut self.params_rows,
             KvTarget::Headers => &mut self.headers_rows,
+            KvTarget::BodyUrlEncoded => &mut self.body_urlencoded_rows,
         }
     }
 
@@ -1409,9 +1825,18 @@ impl RequestTabView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if target == KvTarget::BodyUrlEncoded
+            && !matches!(self.editor.draft().body, BodyType::UrlEncoded { .. })
+        {
+            return;
+        }
         let draft_entries = match target {
             KvTarget::Params => self.editor.draft().params.clone(),
             KvTarget::Headers => self.editor.draft().headers.clone(),
+            KvTarget::BodyUrlEncoded => match &self.editor.draft().body {
+                BodyType::UrlEncoded { entries } => entries.clone(),
+                _ => Vec::new(),
+            },
         };
         let current = self.collect_meaningful_pairs(target, cx);
         if current != draft_entries {
@@ -1485,6 +1910,15 @@ impl RequestTabView {
             KvTarget::Headers => {
                 if self.editor.draft().headers != next {
                     self.editor.draft_mut().headers = next;
+                }
+            }
+            KvTarget::BodyUrlEncoded => {
+                if self.selected_body_kind(cx) != BodyKind::UrlEncoded {
+                    return;
+                }
+                let next_body = BodyType::UrlEncoded { entries: next };
+                if self.editor.draft().body != next_body {
+                    self.editor.draft_mut().body = next_body;
                 }
             }
         }
@@ -1949,7 +2383,6 @@ impl Render for RequestTabView {
             None => div(),
         };
 
-        let auth_label = auth_type_label(&request.auth);
         let latest_run = latest_run_summary(self.editor.exec_status());
 
         let section_content = match self.active_section {
@@ -1999,9 +2432,76 @@ impl Render for RequestTabView {
                     div()
                         .text_xs()
                         .text_color(gpui::hsla(0., 0., 0.45, 1.))
-                        .child(auth_label),
+                        .child(es_fluent::localize("request_tab_auth_type_label", None)),
                 )
-                .child(Input::new(&self.auth_input).large())
+                .child(div().w_56().child(Select::new(&self.auth_type_select)))
+                .child(match &request.auth {
+                    AuthType::None => div()
+                        .text_xs()
+                        .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                        .child(es_fluent::localize("request_tab_auth_none_hint", None))
+                        .into_any_element(),
+                    AuthType::Basic { .. } => v_flex()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                                .child(es_fluent::localize("request_tab_auth_basic_username", None)),
+                        )
+                        .child(Input::new(&self.auth_basic_username_input).large())
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                                .child(es_fluent::localize(
+                                    "request_tab_auth_basic_password_ref",
+                                    None,
+                                )),
+                        )
+                        .child(Input::new(&self.auth_basic_password_ref_input).large())
+                        .into_any_element(),
+                    AuthType::Bearer { .. } => v_flex()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                                .child(es_fluent::localize("request_tab_auth_bearer_token_ref", None)),
+                        )
+                        .child(Input::new(&self.auth_bearer_token_ref_input).large())
+                        .into_any_element(),
+                    AuthType::ApiKey { .. } => v_flex()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                                .child(es_fluent::localize("request_tab_auth_api_key_name", None)),
+                        )
+                        .child(Input::new(&self.auth_api_key_name_input).large())
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                                .child(es_fluent::localize(
+                                    "request_tab_auth_api_key_value_ref",
+                                    None,
+                                )),
+                        )
+                        .child(Input::new(&self.auth_api_key_value_ref_input).large())
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                                .child(es_fluent::localize(
+                                    "request_tab_auth_api_key_location",
+                                    None,
+                                )),
+                        )
+                        .child(div().w_56().child(Select::new(&self.auth_api_key_location_select)))
+                        .into_any_element(),
+                })
                 .into_any_element(),
             RequestSectionTab::Headers => {
                 let row_ids = self
@@ -2043,16 +2543,94 @@ impl Render for RequestTabView {
                     )
                     .into_any_element()
             }
-            RequestSectionTab::Body => v_flex()
-                .gap_2()
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(gpui::hsla(0., 0., 0.45, 1.))
-                        .child(body_kind_label(&request.body)),
-                )
-                .child(Input::new(&self.body_input).large())
-                .into_any_element(),
+            RequestSectionTab::Body => {
+                let urlencoded_row_ids = self
+                    .body_urlencoded_rows
+                    .iter()
+                    .map(|row| (row.id, row.enabled, row.key_input.clone(), row.value_input.clone()))
+                    .collect::<Vec<_>>();
+                v_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                            .child(es_fluent::localize("request_tab_body_type_label", None)),
+                    )
+                    .child(div().w_56().child(Select::new(&self.body_type_select)))
+                    .child(match &request.body {
+                        BodyType::None => div()
+                            .text_xs()
+                            .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                            .child(es_fluent::localize("request_tab_body_none_hint", None))
+                            .into_any_element(),
+                        BodyType::RawText { .. } => Input::new(&self.body_raw_text_input)
+                            .large()
+                            .into_any_element(),
+                        BodyType::RawJson { .. } => Input::new(&self.body_raw_json_input)
+                            .large()
+                            .into_any_element(),
+                        BodyType::UrlEncoded { .. } => v_flex()
+                            .gap_2()
+                            .children(
+                                urlencoded_row_ids.into_iter().map(
+                                    |(id, enabled, key_input, value_input)| {
+                                        h_flex()
+                                            .gap_2()
+                                            .items_center()
+                                            .child(
+                                                Checkbox::new(("body-urlencoded-enabled", id))
+                                                    .checked(enabled)
+                                                    .on_click(cx.listener(move |this, checked, _, cx| {
+                                                        this.set_kv_row_enabled(
+                                                            KvTarget::BodyUrlEncoded,
+                                                            id,
+                                                            *checked,
+                                                            cx,
+                                                        );
+                                                    })),
+                                            )
+                                            .child(div().flex_1().child(Input::new(&key_input).large()))
+                                            .child(div().flex_1().child(Input::new(&value_input).large()))
+                                            .child(
+                                                Button::new(("body-urlencoded-remove", id))
+                                                    .ghost()
+                                                    .label(es_fluent::localize(
+                                                        "request_tab_kv_remove_row",
+                                                        None,
+                                                    ))
+                                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                                        this.remove_kv_row(
+                                                            KvTarget::BodyUrlEncoded,
+                                                            id,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    })),
+                                            )
+                                    },
+                                ),
+                            )
+                            .child(
+                                Button::new("body-urlencoded-add-row")
+                                    .outline()
+                                    .label(es_fluent::localize("request_tab_kv_add_row", None))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.add_kv_row(KvTarget::BodyUrlEncoded, window, cx);
+                                    })),
+                            )
+                            .into_any_element(),
+                        BodyType::FormData { .. } | BodyType::BinaryFile { .. } => div()
+                            .text_xs()
+                            .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                            .child(es_fluent::localize(
+                                "request_tab_body_not_implemented_hint",
+                                None,
+                            ))
+                            .into_any_element(),
+                    })
+                    .into_any_element()
+            }
             RequestSectionTab::Scripts => v_flex()
                 .gap_2()
                 .child(
@@ -2585,130 +3163,75 @@ fn url_with_params(base_url: &str, params: &[KeyValuePair]) -> String {
     }
 }
 
-fn auth_to_text(auth: &AuthType) -> String {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AuthKind {
+    None,
+    Basic,
+    Bearer,
+    ApiKey,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BodyKind {
+    None,
+    RawText,
+    RawJson,
+    UrlEncoded,
+    FormData,
+    BinaryFile,
+}
+
+fn auth_kind_from_label(label: &str) -> AuthKind {
+    match label {
+        "Basic" => AuthKind::Basic,
+        "Bearer" => AuthKind::Bearer,
+        "API Key" => AuthKind::ApiKey,
+        _ => AuthKind::None,
+    }
+}
+
+fn auth_type_index(auth: &AuthType) -> usize {
     match auth {
-        AuthType::None => "none".to_string(),
-        AuthType::Basic {
-            username,
-            password_secret_ref,
-        } => format!(
-            "basic username={} password_ref={}",
-            username,
-            password_secret_ref.clone().unwrap_or_default()
-        ),
-        AuthType::Bearer { token_secret_ref } => format!(
-            "bearer token_ref={}",
-            token_secret_ref.clone().unwrap_or_default()
-        ),
-        AuthType::ApiKey {
-            key_name,
-            value_secret_ref,
-            location,
-        } => format!(
-            "api_key key={} value_ref={} location={}",
-            key_name,
-            value_secret_ref.clone().unwrap_or_default(),
-            match location {
-                ApiKeyLocation::Header => "header",
-                ApiKeyLocation::Query => "query",
-            }
-        ),
+        AuthType::None => 0,
+        AuthType::Basic { .. } => 1,
+        AuthType::Bearer { .. } => 2,
+        AuthType::ApiKey { .. } => 3,
     }
 }
 
-fn parse_auth_text(raw: &str, current: &AuthType) -> AuthType {
-    let line = raw.lines().next().unwrap_or("").trim();
-    if line.is_empty() {
-        return AuthType::None;
-    }
-    if line.eq_ignore_ascii_case("none") {
-        return AuthType::None;
-    }
-
-    let mut parts = line.split_whitespace();
-    let Some(kind) = parts.next() else {
-        return current.clone();
-    };
-
-    let mut map = std::collections::HashMap::new();
-    for part in parts {
-        if let Some((key, value)) = part.split_once('=') {
-            map.insert(key.to_ascii_lowercase(), value.to_string());
-        }
-    }
-
-    match kind.to_ascii_lowercase().as_str() {
-        "basic" => AuthType::Basic {
-            username: map.get("username").cloned().unwrap_or_default(),
-            password_secret_ref: map
-                .get("password_ref")
-                .cloned()
-                .and_then(|v| if v.is_empty() { None } else { Some(v) }),
-        },
-        "bearer" => AuthType::Bearer {
-            token_secret_ref: map
-                .get("token_ref")
-                .cloned()
-                .and_then(|v| if v.is_empty() { None } else { Some(v) }),
-        },
-        "api_key" => {
-            let location = match map
-                .get("location")
-                .map(|v| v.to_ascii_lowercase())
-                .as_deref()
-            {
-                Some("query") => ApiKeyLocation::Query,
-                _ => ApiKeyLocation::Header,
-            };
-            AuthType::ApiKey {
-                key_name: map.get("key").cloned().unwrap_or_default(),
-                value_secret_ref: map
-                    .get("value_ref")
-                    .cloned()
-                    .and_then(|v| if v.is_empty() { None } else { Some(v) }),
-                location,
-            }
-        }
-        _ => current.clone(),
+fn api_key_location_index(location: ApiKeyLocation) -> usize {
+    match location {
+        ApiKeyLocation::Header => 0,
+        ApiKeyLocation::Query => 1,
     }
 }
 
-fn body_editor_value(body: &BodyType) -> String {
+fn api_key_location_from_index(index: usize) -> ApiKeyLocation {
+    match index {
+        1 => ApiKeyLocation::Query,
+        _ => ApiKeyLocation::Header,
+    }
+}
+
+fn body_kind_from_label(label: &str) -> BodyKind {
+    match label {
+        "Raw Text" => BodyKind::RawText,
+        "Raw JSON" => BodyKind::RawJson,
+        "URL Encoded" => BodyKind::UrlEncoded,
+        "Form Data" => BodyKind::FormData,
+        "Binary File" => BodyKind::BinaryFile,
+        _ => BodyKind::None,
+    }
+}
+
+fn body_type_index(body: &BodyType) -> usize {
     match body {
-        BodyType::RawText { content } | BodyType::RawJson { content } => content.clone(),
-        _ => String::new(),
-    }
-}
-
-fn body_kind_label(body: &BodyType) -> String {
-    match body {
-        BodyType::None => es_fluent::localize("request_tab_body_kind_none", None).to_string(),
-        BodyType::RawText { .. } => {
-            es_fluent::localize("request_tab_body_kind_raw_text", None).to_string()
-        }
-        BodyType::RawJson { .. } => {
-            es_fluent::localize("request_tab_body_kind_raw_json", None).to_string()
-        }
-        BodyType::UrlEncoded { .. } => {
-            es_fluent::localize("request_tab_body_kind_urlencoded", None).to_string()
-        }
-        BodyType::FormData { .. } => {
-            es_fluent::localize("request_tab_body_kind_form_data", None).to_string()
-        }
-        BodyType::BinaryFile { .. } => {
-            es_fluent::localize("request_tab_body_kind_binary_file", None).to_string()
-        }
-    }
-}
-
-fn auth_type_label(auth: &AuthType) -> String {
-    match auth {
-        AuthType::None => es_fluent::localize("request_tab_auth_none", None).to_string(),
-        AuthType::Basic { .. } => es_fluent::localize("request_tab_auth_basic", None).to_string(),
-        AuthType::Bearer { .. } => es_fluent::localize("request_tab_auth_bearer", None).to_string(),
-        AuthType::ApiKey { .. } => {
-            es_fluent::localize("request_tab_auth_api_key", None).to_string()
-        }
+        BodyType::None => 0,
+        BodyType::RawText { .. } => 1,
+        BodyType::RawJson { .. } => 2,
+        BodyType::UrlEncoded { .. } => 3,
+        BodyType::FormData { .. } => 4,
+        BodyType::BinaryFile { .. } => 5,
     }
 }
 

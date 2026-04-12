@@ -24,13 +24,18 @@ Status legend: `done` / `partial` / `pending`
 - Slice 3 (Body actions): `partial`
   - done: copy (text-like types), save-to-file (blob streaming path), body-search toggle + match counting, XML/HTML fallback behavior.
   - pending: image preview render path from preview bytes, full-content blob scan search with snippets/highlights/navigation, explicit copy-disabled tooltip UX.
-- Slice 4 (Key-value editor): `pending`
-  - params/headers still use text serialization and parsing.
-- Slice 5 (Auth structured editor): `pending`
-  - auth still uses text DSL input.
+- Slice 4 (Key-value editor): `partial`
+  - done: params/headers moved to row-based structured editor (add/remove/enable/disable), URL↔params sync preserved with disabled-row retention.
+  - partial: URL-encoded body now reuses the same row model in `request_tab.rs`.
+  - pending: extract standalone reusable `key_value_editor.rs` component + table column header/empty-state polish.
+- Slice 5 (Auth structured editor): `partial`
+  - done: replaced text DSL input with auth type dropdown + per-type structured panels (None/Basic/Bearer/API Key), including API key location dropdown.
+  - done: removed `auth_to_text()` / `parse_auth_text()` path.
+  - pending: integrate secret value read/write UX via `SecretManager` (instead of direct secret-ref fields), show/hide secret toggles, extract `auth_editor.rs`.
 - Slice 6 (Body structured editor + streamed request payload): `partial`
   - done: method dropdown replacing freeform method-only editing.
-  - pending: body type selector/editor, file pick/replace/clear UX, >100 MB confirmation, outbound streamed request payload abstraction for large binary/form-data.
+  - done: body type dropdown + per-type panels for None/Raw Text/Raw JSON/URL Encoded; removed `body_input` and `body_editor_value()`.
+  - pending: Form Data/Binary file picker UX (pick/replace/clear), >100 MB confirmation, streamed outbound request payload abstraction for large binary/form-data, extract `body_editor.rs`.
 - Slice 7 (Keyboard shortcuts): `done`
   - implemented: close tab, new request, duplicate request, next/prev tab, focus URL bar, toggle sidebar, toggle body search.
 - Slice 8 (File decomposition): `pending`
