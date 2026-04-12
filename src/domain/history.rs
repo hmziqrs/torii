@@ -48,4 +48,10 @@ pub struct HistoryEntry {
     pub first_byte_at: Option<i64>,
     pub cancelled_at: Option<i64>,
     pub partial_size: Option<i64>,
+
+    // Phase 3 secret-safe sent-request snapshot
+    pub request_url_redacted: Option<String>,
+    pub request_headers_redacted_json: Option<String>,
+    pub request_auth_kind: Option<String>,
+    pub request_body_summary_json: Option<String>,
 }

@@ -161,7 +161,7 @@ fn history_finalize_cancelled_persists_partial_size() -> Result<()> {
     let history_repo = SqliteHistoryRepository::new(db.clone());
 
     let workspace = workspace_repo.create("Workspace")?;
-    let entry = history_repo.create_pending(workspace.id, None, "GET", "https://test.local")?;
+    let entry = history_repo.create_pending(workspace.id, None, "GET", "https://test.local", None)?;
 
     history_repo.finalize_cancelled(entry.id, Some(2048))?;
 
@@ -181,7 +181,7 @@ fn history_response_metadata_roundtrip() -> Result<()> {
     let history_repo = SqliteHistoryRepository::new(db.clone());
 
     let workspace = workspace_repo.create("Workspace")?;
-    let entry = history_repo.create_pending(workspace.id, None, "GET", "https://test.local")?;
+    let entry = history_repo.create_pending(workspace.id, None, "GET", "https://test.local", None)?;
 
     let headers = r#"{"content-type":"application/json"}"#;
     history_repo.finalize_completed(
@@ -225,10 +225,10 @@ fn history_get_latest_for_request() -> Result<()> {
     let request = request_repo.create(collection.id, None, "Test", "GET", "/api")?;
 
     // Create multiple history entries for same request
-    let entry1 = history_repo.create_pending(workspace.id, Some(request.id), "GET", "/api")?;
+    let entry1 = history_repo.create_pending(workspace.id, Some(request.id), "GET", "/api", None)?;
     history_repo.finalize_completed(entry1.id, 200, None, None, None, None, None, None)?;
 
-    let entry2 = history_repo.create_pending(workspace.id, Some(request.id), "GET", "/api")?;
+    let entry2 = history_repo.create_pending(workspace.id, Some(request.id), "GET", "/api", None)?;
     history_repo.finalize_completed(entry2.id, 404, None, None, None, None, None, None)?;
 
     // Latest should be one of the completed entries for this request

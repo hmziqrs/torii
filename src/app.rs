@@ -2,6 +2,8 @@ use gpui::{
     Action, App, AppContext as _, Bounds, Focusable as _, Global, KeyBinding, SharedString,
     WindowBounds, WindowKind, WindowOptions, actions, px, size,
 };
+
+use crate::views::item_tabs::request_tab::{CancelRequest, SaveRequest, SendRequest};
 use gpui_component::{ActiveTheme, Root, Theme, ThemeMode, TitleBar};
 
 use crate::services::{
@@ -153,6 +155,15 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-q", Quit, None),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("alt-f4", Quit, None),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-s", SaveRequest, Some("RequestTabView")),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-s", SaveRequest, Some("RequestTabView")),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-enter", SendRequest, Some("RequestTabView")),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-enter", SendRequest, Some("RequestTabView")),
+        KeyBinding::new("escape", CancelRequest, Some("RequestTabView")),
     ]);
 
     cx.on_action(|_: &Quit, cx| {

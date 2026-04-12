@@ -23,8 +23,15 @@ use crate::{
     session::request_editor_state::{EditorIdentity, ExecStatus, RequestEditorState, SaveStatus},
 };
 
+// ---------------------------------------------------------------------------
+// Actions for request tab keyboard shortcuts
+// ---------------------------------------------------------------------------
+
+actions!(request_tab, [SaveRequest, SendRequest, CancelRequest]);
+
 pub struct RequestTabView {
     editor: RequestEditorState,
+    focus_handle: FocusHandle,
     name_input: Entity<InputState>,
     method_input: Entity<InputState>,
     url_input: Entity<InputState>,
@@ -258,6 +265,7 @@ impl RequestTabView {
 
         Self {
             editor,
+            focus_handle: cx.focus_handle(),
             name_input,
             method_input,
             url_input,
@@ -278,6 +286,25 @@ impl RequestTabView {
 
     pub fn editor_mut(&mut self) -> &mut RequestEditorState {
         &mut self.editor
+    }
+
+    fn handle_save_request(&mut self, _action: &SaveRequest, window: &mut Window, cx: &mut Context<Self>) {
+        match self.save(cx) {
+            Ok(()) => {
+                window.push_notification(es_fluent::localize("request_tab_save_ok", None), cx);
+            }
+            Err(err) => {
+                window.push_notification(err, cx);
+            }
+        }
+    }
+
+    fn handle_send_request(&mut self, _action: &SendRequest, _window: &mut Window, cx: &mut Context<Self>) {
+        self.send(cx);
+    }
+
+    fn handle_cancel_request(&mut self, _action: &CancelRequest, _window: &mut Window, cx: &mut Context<Self>) {
+        self.cancel_send(cx);
     }
 
     pub fn has_unsaved_changes(&self) -> bool {
@@ -439,13 +466,15 @@ impl RequestTabView {
             }
         };
 
-        // Create pending history row
+        // Create pending history row with secret-safe snapshot
         let draft = self.editor.draft().clone();
+        let snapshot = crate::repos::history_repo::build_request_snapshot(&draft);
         let history_entry = match services.repos.history.create_pending(
             workspace_id,
             self.editor.request_id(),
             &draft.method,
             &draft.url,
+            Some(snapshot),
         ) {
             Ok(entry) => entry,
             Err(e) => {
@@ -532,13 +561,28 @@ impl RequestTabView {
                 this.loaded_full_body_text = None;
                 match result {
                     Ok(ExecOutcome::Completed(summary)) => {
-                        this.editor.complete_exec(summary, operation_id);
+                        if !this.editor.complete_exec(summary, operation_id) {
+                            tracing::warn!(
+                                op_id = %operation_id,
+                                "late response ignored — operation no longer active"
+                            );
+                        }
                     }
                     Ok(ExecOutcome::Failed(error)) => {
-                        this.editor.fail_exec(error, operation_id);
+                        if !this.editor.fail_exec(error, operation_id) {
+                            tracing::warn!(
+                                op_id = %operation_id,
+                                "late failure ignored — operation no longer active"
+                            );
+                        }
                     }
                     Ok(ExecOutcome::Cancelled { partial_size }) => {
-                        this.editor.cancel_exec(partial_size, operation_id);
+                        if !this.editor.cancel_exec(partial_size, operation_id) {
+                            tracing::warn!(
+                                op_id = %operation_id,
+                                "late cancel ignored — operation no longer active"
+                            );
+                        }
                     }
                     Ok(ExecOutcome::PreflightFailed(msg)) => {
                         this.editor.set_preflight_error(msg);
@@ -867,6 +911,12 @@ fn build_execution_service(
     )
 }
 
+impl Focusable for RequestTabView {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
 impl Render for RequestTabView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let request = self.editor.draft();
@@ -1053,6 +1103,10 @@ impl Render for RequestTabView {
             .size_full()
             .p_6()
             .gap_5()
+            .track_focus(&self.focus_handle(cx))
+            .on_action(cx.listener(Self::handle_save_request))
+            .on_action(cx.listener(Self::handle_send_request))
+            .on_action(cx.listener(Self::handle_cancel_request))
             .child(
                 h_flex()
                     .items_center()

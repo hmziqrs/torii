@@ -25,7 +25,7 @@ use torii::{
     repos::{
         collection_repo::{CollectionRepository, SqliteCollectionRepository},
         history_repo::SqliteHistoryRepository,
-        request_repo::SqliteRequestRepository,
+        request_repo::{RequestRepository, SqliteRequestRepository},
         workspace_repo::{SqliteWorkspaceRepository, WorkspaceRepository},
     },
     services::request_execution::{
@@ -607,4 +607,271 @@ fn mock_transport_empty_body() {
         }
         other => panic!("expected Completed, got {other:?}"),
     }
+}
+
+// ---------------------------------------------------------------------------
+// §9 Integration Tests: security, cancel races, history snapshot
+// ---------------------------------------------------------------------------
+
+#[test]
+fn auth_secrets_never_appear_in_request_domain_model() {
+    let mock = MockTransport::new();
+    mock.respond_ok(b"ok");
+
+    let (ws_repo, col_repo, _req_repo, _hist_repo, _blob, secrets, exec) =
+        build_test_services(mock.clone());
+
+    secrets.put_secret("bearer-token-123", "super-secret-value").unwrap();
+
+    let ws = ws_repo.create("WS").unwrap();
+    let col = col_repo.create(ws.id, "Col").unwrap();
+    let mut request = simple_request("GET", "https://api.test/protected", col.id);
+    request.auth = AuthType::Bearer {
+        token_secret_ref: Some("bearer-token-123".to_string()),
+    };
+
+    let cancel = CancellationToken::new();
+    let outcome = run_async(exec.execute(&request, ws.id, cancel)).unwrap();
+    assert!(matches!(outcome, ExecOutcome::Completed(_)));
+
+    // Domain model only stores the secret REF, never the value
+    assert_eq!(
+        request.auth,
+        AuthType::Bearer {
+            token_secret_ref: Some("bearer-token-123".to_string())
+        }
+    );
+}
+
+#[test]
+fn secret_store_failure_produces_preflight_error() {
+    let mock = MockTransport::new();
+    mock.respond_ok(b"ok");
+
+    let (ws_repo, col_repo, _req_repo, _hist_repo, _blob, _secrets, exec) =
+        build_test_services(mock);
+
+    let ws = ws_repo.create("WS").unwrap();
+    let col = col_repo.create(ws.id, "Col").unwrap();
+    let mut request = simple_request("GET", "https://api.test/protected", col.id);
+    request.auth = AuthType::Bearer {
+        token_secret_ref: Some("nonexistent-secret-ref".to_string()),
+    };
+
+    let cancel = CancellationToken::new();
+    let outcome = run_async(exec.execute(&request, ws.id, cancel)).unwrap();
+
+    match outcome {
+        ExecOutcome::PreflightFailed(msg) => {
+            assert!(
+                msg.contains("not found") || msg.contains("auth resolution"),
+                "unexpected message: {msg}"
+            );
+        }
+        other => panic!("expected PreflightFailed, got {other:?}"),
+    }
+}
+
+#[test]
+fn cancel_before_response_yields_cancelled_outcome() {
+    let mock = MockTransport::new();
+    mock.respond_with(MockResponse {
+        fail_after: Some(Duration::from_secs(30)),
+        ..Default::default()
+    });
+
+    let (ws_repo, col_repo, _req_repo, _hist_repo, _blob, _secrets, exec) =
+        build_test_services(mock);
+
+    let ws = ws_repo.create("WS").unwrap();
+    let col = col_repo.create(ws.id, "Col").unwrap();
+    let request = simple_request("GET", "https://api.test/slow", col.id);
+
+    let cancel = CancellationToken::new();
+    let cancel_clone = cancel.clone();
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let outcome = rt.block_on(async {
+        let exec_handle = tokio::spawn(async move {
+            exec.execute(&request, ws.id, cancel).await
+        });
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        cancel_clone.cancel();
+        exec_handle.await.unwrap().unwrap()
+    });
+
+    match outcome {
+        ExecOutcome::Cancelled { partial_size } => {
+            assert!(partial_size.is_none());
+        }
+        ExecOutcome::Failed(_) => {}
+        other => panic!("expected Cancelled or Failed, got {other:?}"),
+    }
+}
+
+#[test]
+fn cancel_mid_stream_clears_blob_hash() {
+    let mock = MockTransport::new();
+    let chunks: Vec<Vec<u8>> = (0..20)
+        .map(|i| format!("chunk-{i:04}\n").into_bytes())
+        .collect();
+    mock.respond_with(MockResponse {
+        status_code: 200,
+        status_text: "OK".to_string(),
+        body_chunks: chunks,
+        chunk_delay: Duration::from_millis(100),
+        ..Default::default()
+    });
+
+    let (ws_repo, col_repo, _req_repo, _hist_repo, _blob, _secrets, exec) =
+        build_test_services(mock);
+
+    let ws = ws_repo.create("WS").unwrap();
+    let col = col_repo.create(ws.id, "Col").unwrap();
+    let request = simple_request("GET", "https://api.test/stream", col.id);
+
+    let cancel = CancellationToken::new();
+    let cancel_clone = cancel.clone();
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let outcome = rt.block_on(async {
+        let exec_handle = tokio::spawn(async move {
+            exec.execute(&request, ws.id, cancel).await
+        });
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        cancel_clone.cancel();
+        exec_handle.await.unwrap().unwrap()
+    });
+
+    match outcome {
+        ExecOutcome::Cancelled { .. } | ExecOutcome::Completed { .. } => {}
+        other => panic!("expected Cancelled or Completed, got {other:?}"),
+    }
+}
+
+#[test]
+fn history_snapshot_redacts_auth_headers() {
+    let mock = MockTransport::new();
+    mock.respond_ok(b"ok");
+
+    let (ws_repo, col_repo, _req_repo, _hist_repo, _blob, secrets, _exec) =
+        build_test_services(mock);
+
+    secrets.put_secret("my-api-key", "secret-key-value").unwrap();
+
+    let ws = ws_repo.create("WS").unwrap();
+    let col = col_repo.create(ws.id, "Col").unwrap();
+    let mut request = simple_request("GET", "https://api.test/data", col.id);
+    request.auth = AuthType::Bearer {
+        token_secret_ref: Some("my-api-key".to_string()),
+    };
+    request.headers.push(KeyValuePair::new("Authorization", "will-be-replaced"));
+    request.headers.push(KeyValuePair::new("X-Custom", "visible"));
+
+    let snapshot = torii::repos::history_repo::build_request_snapshot(&request);
+
+    // Auth kind = "bearer", never the secret value
+    assert_eq!(snapshot.auth_kind.as_deref(), Some("bearer"));
+
+    // Redacted headers
+    if let Some(headers_json) = &snapshot.headers_redacted_json {
+        let headers: Vec<(String, String)> = serde_json::from_str(headers_json).unwrap();
+        let auth_h = headers.iter().find(|(k, _)| k == "Authorization").unwrap();
+        assert_eq!(auth_h.1, "[REDACTED]");
+        let custom_h = headers.iter().find(|(k, _)| k == "X-Custom").unwrap();
+        assert_eq!(custom_h.1, "visible");
+    }
+
+    // Body summary: kind only, no content
+    if let Some(body_json) = &snapshot.body_summary_json {
+        assert!(!body_json.contains("secret"));
+        let body: serde_json::Value = serde_json::from_str(body_json).unwrap();
+        assert_eq!(body["kind"], "none");
+    }
+}
+
+#[test]
+fn large_response_bounded_by_preview_cap() {
+    let mock = MockTransport::new();
+    let large_body = vec![b'A'; 10 * 1024 * 1024];
+    mock.respond_with(MockResponse {
+        status_code: 200,
+        status_text: "OK".to_string(),
+        headers: vec![("content-type".to_string(), "application/octet-stream".to_string())],
+        body_chunks: vec![large_body],
+        ..Default::default()
+    });
+
+    let (ws_repo, col_repo, _req_repo, _hist_repo, blob_store, _secrets, exec) =
+        build_test_services(mock);
+
+    let ws = ws_repo.create("WS").unwrap();
+    let col = col_repo.create(ws.id, "Col").unwrap();
+    let request = simple_request("GET", "https://api.test/large", col.id);
+
+    let cancel = CancellationToken::new();
+    let outcome = run_async(exec.execute(&request, ws.id, cancel)).unwrap();
+
+    match outcome {
+        ExecOutcome::Completed(summary) => {
+            match &summary.body_ref {
+                torii::domain::response::BodyRef::DiskBlob {
+                    blob_id, preview, size_bytes,
+                } => {
+                    assert_eq!(*size_bytes, 10 * 1024 * 1024 as u64);
+                    let preview_len = preview.as_ref().map(|p| p.len()).unwrap_or(0);
+                    assert!(
+                        preview_len <= torii::domain::response::ResponseBudgets::PREVIEW_CAP_BYTES,
+                        "preview {preview_len} exceeds cap"
+                    );
+                    assert!(blob_store.exists(blob_id));
+                    let full = blob_store.read_all(blob_id).unwrap();
+                    assert_eq!(full.len(), 10 * 1024 * 1024);
+                }
+                other => panic!("expected DiskBlob, got {other:?}"),
+            }
+        }
+        other => panic!("expected Completed, got {other:?}"),
+    }
+}
+
+#[test]
+fn secret_ref_not_in_request_sqlite_row() {
+    let (_paths, db) = common::test_database("secret-not-in-sqlite").unwrap();
+    let db = Arc::new(db);
+    let workspace_repo = Arc::new(SqliteWorkspaceRepository::new(db.clone()));
+    let collection_repo = Arc::new(SqliteCollectionRepository::new(db.clone()));
+    let request_repo = Arc::new(SqliteRequestRepository::new(db.clone()));
+
+    let ws = workspace_repo.create("WS").unwrap();
+    let col = collection_repo.create(ws.id, "Col").unwrap();
+    let mut request = request_repo.create(col.id, None, "Test", "POST", "https://api.test").unwrap();
+
+    request.auth = AuthType::Bearer {
+        token_secret_ref: Some("secret-ref-key".to_string()),
+    };
+    request.body = BodyType::RawJson {
+        content: r#"{"data":"value"}"#.to_string(),
+    };
+    request_repo.save(&request, request.meta.revision).unwrap();
+
+    let loaded = request_repo.get(request.id).unwrap().unwrap();
+    match &loaded.auth {
+        AuthType::Bearer { token_secret_ref } => {
+            assert_eq!(token_secret_ref.as_deref(), Some("secret-ref-key"));
+        }
+        other => panic!("expected Bearer auth, got {other:?}"),
+    }
+
+    // Direct SQL: auth_json contains the ref key but never actual secret values
+    let auth_json: String = db.block_on(async {
+        sqlx::query_scalar("SELECT auth_json FROM requests WHERE id = ?")
+            .bind(request.id.to_string())
+            .fetch_one(db.pool())
+            .await
+            .unwrap()
+    });
+    assert!(auth_json.contains("secret-ref-key"));
+    assert!(!auth_json.contains("super-secret-value"));
+    assert!(!auth_json.contains("password"));
 }

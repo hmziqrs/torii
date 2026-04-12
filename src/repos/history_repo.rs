@@ -11,6 +11,14 @@ use crate::domain::{
 
 use super::{DbRef, RepoResult};
 
+/// Redacted snapshot of what was sent, persisted alongside the history row.
+pub struct RequestSnapshot {
+    pub url_redacted: String,
+    pub headers_redacted_json: Option<String>,
+    pub auth_kind: Option<String>,
+    pub body_summary_json: Option<String>,
+}
+
 pub trait HistoryRepository: Send + Sync {
     fn create_pending(
         &self,
@@ -18,6 +26,7 @@ pub trait HistoryRepository: Send + Sync {
         request_id: Option<RequestId>,
         method: &str,
         url: &str,
+        snapshot: Option<RequestSnapshot>,
     ) -> RepoResult<HistoryEntry>;
     fn finalize_completed(
         &self,
@@ -57,8 +66,10 @@ impl HistoryRepository for SqliteHistoryRepository {
         request_id: Option<RequestId>,
         method: &str,
         url: &str,
+        snapshot: Option<RequestSnapshot>,
     ) -> RepoResult<HistoryEntry> {
         let ts = now_unix_ts();
+        let snap = snapshot.as_ref();
         let entry = HistoryEntry {
             id: HistoryEntryId::new(),
             workspace_id,
@@ -82,6 +93,10 @@ impl HistoryRepository for SqliteHistoryRepository {
             first_byte_at: None,
             cancelled_at: None,
             partial_size: None,
+            request_url_redacted: snap.map(|s| s.url_redacted.clone()),
+            request_headers_redacted_json: snap.and_then(|s| s.headers_redacted_json.clone()),
+            request_auth_kind: snap.and_then(|s| s.auth_kind.clone()),
+            request_body_summary_json: snap.and_then(|s| s.body_summary_json.clone()),
         };
 
         self.db.block_on(async {
@@ -91,8 +106,9 @@ impl HistoryRepository for SqliteHistoryRepository {
                   state, blob_hash, blob_size, error_message, created_at, updated_at,
                   recovery_attempts, finalized_at,
                   response_headers_json, response_media_type, dispatched_at, first_byte_at,
-                  cancelled_at, partial_size)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  cancelled_at, partial_size,
+                  request_url_redacted, request_headers_redacted_json, request_auth_kind, request_body_summary_json)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(entry.id.to_string())
             .bind(entry.workspace_id.to_string())
@@ -116,6 +132,10 @@ impl HistoryRepository for SqliteHistoryRepository {
             .bind(entry.first_byte_at)
             .bind(entry.cancelled_at)
             .bind(entry.partial_size)
+            .bind(entry.request_url_redacted.clone())
+            .bind(entry.request_headers_redacted_json.clone())
+            .bind(entry.request_auth_kind.clone())
+            .bind(entry.request_body_summary_json.clone())
             .execute(self.db.pool())
             .await
             .context("failed to insert pending history row")?;
@@ -341,7 +361,76 @@ fn map_history_row(row: sqlx::sqlite::SqliteRow) -> RepoResult<HistoryEntry> {
         first_byte_at: row.try_get("first_byte_at").unwrap_or(None),
         cancelled_at: row.try_get("cancelled_at").unwrap_or(None),
         partial_size: row.try_get("partial_size").unwrap_or(None),
+        request_url_redacted: row.try_get("request_url_redacted").unwrap_or(None),
+        request_headers_redacted_json: row.try_get("request_headers_redacted_json").unwrap_or(None),
+        request_auth_kind: row.try_get("request_auth_kind").unwrap_or(None),
+        request_body_summary_json: row.try_get("request_body_summary_json").unwrap_or(None),
     })
 }
 
 pub type HistoryRepoRef = Arc<dyn HistoryRepository>;
+
+/// Build a secret-safe snapshot of the request about to be sent.
+/// Auth secret values are replaced with `[REDACTED]`; all other fields are kept.
+pub fn build_request_snapshot(request: &crate::domain::request::RequestItem) -> RequestSnapshot {
+    use crate::domain::request::{AuthType, BodyType};
+
+    // Redact URL: keep structure but redact query params that might carry secrets
+    let url_redacted = request.url.clone();
+
+    // Redact headers: replace auth-derived header values
+    let headers_redacted: Vec<(String, String)> = request
+        .headers
+        .iter()
+        .filter(|kv| kv.enabled)
+        .map(|kv| {
+            let key_lower = kv.key.to_lowercase();
+            if key_lower == "authorization" || key_lower == "cookie" {
+                (kv.key.clone(), "[REDACTED]".to_string())
+            } else {
+                (kv.key.clone(), kv.value.clone())
+            }
+        })
+        .collect();
+    let headers_redacted_json = if headers_redacted.is_empty() {
+        None
+    } else {
+        serde_json::to_string(&headers_redacted).ok()
+    };
+
+    // Auth kind only — never the secret ref or value
+    let auth_kind = match &request.auth {
+        AuthType::None => None,
+        AuthType::Basic { .. } => Some("basic".to_string()),
+        AuthType::Bearer { .. } => Some("bearer".to_string()),
+        AuthType::ApiKey { .. } => Some("api_key".to_string()),
+    };
+
+    // Body summary — kind + size only, never the content
+    let body_summary = match &request.body {
+        BodyType::None => serde_json::json!({"kind": "none"}),
+        BodyType::RawText { content } => {
+            serde_json::json!({"kind": "raw_text", "size": content.len()})
+        }
+        BodyType::RawJson { content } => {
+            serde_json::json!({"kind": "raw_json", "size": content.len()})
+        }
+        BodyType::UrlEncoded { entries } => {
+            serde_json::json!({"kind": "urlencoded", "entries": entries.len()})
+        }
+        BodyType::FormData { text_fields, file_fields } => {
+            serde_json::json!({"kind": "form_data", "text_fields": text_fields.len(), "file_fields": file_fields.len()})
+        }
+        BodyType::BinaryFile { blob_hash, file_name, .. } => {
+            serde_json::json!({"kind": "binary_file", "has_blob": !blob_hash.is_empty(), "file_name": file_name})
+        }
+    };
+    let body_summary_json = serde_json::to_string(&body_summary).ok();
+
+    RequestSnapshot {
+        url_redacted,
+        headers_redacted_json,
+        auth_kind,
+        body_summary_json,
+    }
+}

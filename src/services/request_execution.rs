@@ -120,6 +120,7 @@ impl HttpTransport for ReqwestTransport {
 #[derive(Clone)]
 pub struct RequestExecutionService {
     transport: Arc<dyn HttpTransport>,
+    #[allow(dead_code)]
     history_repo: HistoryRepoRef,
     blob_store: Arc<BlobStore>,
     secret_store: SecretStoreRef,
@@ -147,10 +148,17 @@ impl RequestExecutionService {
         _workspace_id: WorkspaceId,
         cancel: CancellationToken,
     ) -> Result<ExecOutcome> {
+        tracing::info!(
+            method = %request.method,
+            url = %request.url,
+            "request execution starting"
+        );
+
         // --- Preflight: parse URL ---
         let parsed_url = match url::Url::parse(&request.url) {
             Ok(u) => u,
             Err(e) => {
+                tracing::warn!(error = %e, "preflight rejected: invalid URL");
                 return Ok(ExecOutcome::PreflightFailed(format!("invalid URL: {e}")));
             }
         };
@@ -167,6 +175,7 @@ impl RequestExecutionService {
         let auth_headers = match resolve_auth_headers(&request.auth, &self.secret_store) {
             Ok(h) => h,
             Err(e) => {
+                tracing::warn!(error = %e, "preflight rejected: auth resolution failed");
                 return Ok(ExecOutcome::PreflightFailed(format!(
                     "auth resolution failed: {e}"
                 )));
@@ -203,6 +212,7 @@ impl RequestExecutionService {
 
         // --- Send ---
         let dispatched_at = Instant::now();
+        tracing::info!(method = %request.method, "request dispatched");
         let transport_response = match self
             .transport
             .send(method, parsed_url, header_map, body, cancel.clone())
@@ -211,8 +221,10 @@ impl RequestExecutionService {
             Ok(r) => r,
             Err(e) => {
                 if cancel.is_cancelled() {
+                    tracing::info!("request cancelled before response");
                     return Ok(ExecOutcome::Cancelled { partial_size: None });
                 }
+                tracing::warn!(error = %e, "request send failed");
                 return Ok(ExecOutcome::Failed(e.to_string()));
             }
         };
@@ -251,6 +263,7 @@ impl RequestExecutionService {
         media_type: &Option<String>,
         cancel: CancellationToken,
     ) -> Result<BodyRef> {
+        tracing::info!("response body streaming started");
         let mut preview_buf = Vec::new();
         let mut total_written: u64 = 0;
         let mut exceeded_preview_cap = false;
@@ -266,8 +279,12 @@ impl RequestExecutionService {
 
         while let Some(chunk_result) = stream.next().await {
             if cancel.is_cancelled() {
+                tracing::info!(bytes_written = total_written, "response stream cancelled");
                 drop(temp_file);
-                let _ = std::fs::remove_file(&temp_path);
+                match std::fs::remove_file(&temp_path) {
+                    Ok(()) => tracing::debug!("cleaned up partial response blob"),
+                    Err(e) => tracing::warn!(error = %e, "failed to clean up partial response blob"),
+                }
                 return Ok(BodyRef::Empty);
             }
 

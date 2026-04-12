@@ -25,9 +25,9 @@ fn startup_recovery_reconciles_pending_history_and_orphans() -> Result<()> {
     let workspace = workspace_repo.create("Main")?;
 
     let pending =
-        history_repo.create_pending(workspace.id, None, "GET", "https://pending.local")?;
+        history_repo.create_pending(workspace.id, None, "GET", "https://pending.local", None)?;
     let referenced_blob = blob_store.write_bytes(b"referenced-blob", Some("text/plain"))?;
-    let completed = history_repo.create_pending(workspace.id, None, "GET", "https://ok.local")?;
+    let completed = history_repo.create_pending(workspace.id, None, "GET", "https://ok.local", None)?;
     history_repo.finalize_completed(
         completed.id,
         200,
