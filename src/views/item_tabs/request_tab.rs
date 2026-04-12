@@ -502,7 +502,7 @@ impl RequestTabView {
         let blob_store = services.blob_store.clone();
         let io_runtime = services.io_runtime.clone();
 
-        let _ = cx.spawn(async move |this, cx| {
+        cx.spawn(async move |this, cx| {
             let request = draft.clone();
             let handle = io_runtime.spawn(async move {
                 exec_service
@@ -585,6 +585,7 @@ impl RequestTabView {
                         }
                     }
                     Ok(ExecOutcome::PreflightFailed(msg)) => {
+                        this.editor.reset_preflight();
                         this.editor.set_preflight_error(msg);
                     }
                     Err(e) => {
@@ -594,7 +595,8 @@ impl RequestTabView {
                 this.editor.set_latest_history_id(Some(operation_id));
                 cx.notify();
             });
-        });
+        })
+        .detach();
     }
 
     // -----------------------------------------------------------------------

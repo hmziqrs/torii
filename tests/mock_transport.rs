@@ -198,8 +198,17 @@ impl HttpTransport for MockTransport {
 
         // If programmed to fail, do so
         if let Some(delay) = response.fail_after {
-            if !delay.is_zero() {
-                tokio::time::sleep(delay).await;
+            if delay.is_zero() {
+                if cancel.is_cancelled() {
+                    return Err(anyhow::anyhow!("mock transport cancelled for {}", captured.url));
+                }
+            } else {
+                tokio::select! {
+                    _ = cancel.cancelled() => {
+                        return Err(anyhow::anyhow!("mock transport cancelled for {}", captured.url));
+                    }
+                    _ = tokio::time::sleep(delay) => {}
+                }
             }
             return Err(anyhow::anyhow!("mock transport error for {}", captured.url));
         }
@@ -704,8 +713,7 @@ fn cancel_before_response_yields_cancelled_outcome() {
         ExecOutcome::Cancelled { partial_size } => {
             assert!(partial_size.is_none());
         }
-        ExecOutcome::Failed(_) => {}
-        other => panic!("expected Cancelled or Failed, got {other:?}"),
+        other => panic!("expected Cancelled, got {other:?}"),
     }
 }
 

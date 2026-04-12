@@ -72,7 +72,7 @@ impl HttpTransport for ReqwestTransport {
         url: url::Url,
         headers: http::HeaderMap,
         body: Option<bytes::Bytes>,
-        _cancel: CancellationToken,
+        cancel: CancellationToken,
     ) -> Result<TransportResponse> {
         let mut builder = self.client.request(method, url.as_str());
         for (name, value) in &headers {
@@ -82,7 +82,16 @@ impl HttpTransport for ReqwestTransport {
             builder = builder.body(reqwest::Body::from(body));
         }
 
-        let response = builder.send().await.context("request send failed")?;
+        let send_fut = builder.send();
+        tokio::pin!(send_fut);
+        let response = tokio::select! {
+            _ = cancel.cancelled() => {
+                return Err(anyhow!("request send cancelled"));
+            }
+            result = &mut send_fut => {
+                result.context("request send failed")?
+            }
+        };
 
         let status_code = response.status().as_u16();
         let status_text = response

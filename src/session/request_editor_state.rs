@@ -390,6 +390,15 @@ impl RequestEditorState {
     pub fn clear_preflight_error(&mut self) {
         self.preflight_error = None;
     }
+
+    /// Reset exec state after a preflight failure.
+    /// Clears the exec status back to Idle and drops the active operation
+    /// so the editor is not stuck in Sending.
+    pub fn reset_preflight(&mut self) {
+        self.exec_status = ExecStatus::Idle;
+        self.active_operation_id = None;
+        self.cancellation_token = None;
+    }
 }
 
 #[cfg(test)]
@@ -620,5 +629,31 @@ mod tests {
         assert_eq!(editor.baseline().unwrap().url, "/remote-change");
         // Still dirty because draft diverges from new baseline
         assert!(editor.detect_dirty());
+    }
+
+    #[test]
+    fn reset_preflight_clears_sending_state() {
+        let request = RequestItem::new(test_collection_id(), None, "Test", "GET", "/api", 0);
+        let mut editor = RequestEditorState::from_persisted(request);
+        assert!(matches!(editor.exec_status(), ExecStatus::Idle));
+
+        // Begin send — transitions to Sending
+        let op_id = HistoryEntryId::new();
+        editor.begin_send(op_id);
+        assert!(editor.exec_status().is_in_flight());
+        assert_eq!(editor.active_operation_id(), Some(op_id));
+        assert!(editor.cancellation_token().is_some());
+
+        // Reset after preflight failure
+        editor.reset_preflight();
+        assert!(matches!(editor.exec_status(), ExecStatus::Idle));
+        assert!(editor.active_operation_id().is_none());
+        assert!(editor.cancellation_token().is_none());
+
+        // A subsequent send should work cleanly
+        let op_id2 = HistoryEntryId::new();
+        editor.begin_send(op_id2);
+        assert!(editor.exec_status().is_in_flight());
+        assert_eq!(editor.active_operation_id(), Some(op_id2));
     }
 }
