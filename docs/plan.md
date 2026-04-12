@@ -234,7 +234,7 @@ Blob/file storage should cover:
 - `Phase 0`: completed
 - `Phase 1`: completed
 - `Phase 2`: completed on 2026-04-11
-- `Phase 3`: in progress
+- `Phase 3`: completed on 2026-04-12
 - `Phase 3.5`: pending
 
 Phase 2 completion summary:
@@ -246,6 +246,19 @@ Phase 2 completion summary:
 - tab session persistence and restore are backed by SQLite and scoped by session ID
 - sidebar selection, tab focus, delete cascade cleanup, and layout persistence are wired together
 - validation coverage for Phase 2 behavior is present and passing
+
+Phase 3 completion summary:
+
+- full REST request editor with method, URL, params, auth, headers, body, scripts/tests, and settings sections
+- request draft state in hot entities with orthogonal save/exec status axes
+- send/cancel/duplicate/save flows with auto-cancel and late-response ignore via operation IDs
+- secret-safe history snapshots, bounded response previews with blob-backed full-body persistence
+- per-tab 32 MiB volatile cap enforced, URL-params bidirectional sync, dirty indicator on tab bar
+- shared `reqwest::Client` with `HttpTransport` trait, `MockTransport` for tests
+- tracing spans (`request.send`, `request.cancel`, `response.persist`) and telemetry counters
+- `TokioRuntimeGlobal` registered as GPUI global, async I/O via `tokio::fs` and `spawn_blocking`
+- FormData and BinaryFile body execution fully implemented
+- all validation gates passing: unit, integration, performance, security, and observability
 
 ## Phase 0 (P0): Foundation and State Contract
 
@@ -345,11 +358,11 @@ Status:
 - Item-driven tab routing replaced page-driven routing
 - Tab session persistence, restore, drag reorder, sidebar sync, and delete cascade cleanup are implemented and test-covered
 
-## Phase 3 (P0): REST Request Editor and Execution Core
+## Phase 3 (P0): REST Request Editor and Execution Core [x]
 
 Goal: make the primary request workflow production-safe before adding other protocols.
 
-Detailed execution document: [docs/phase-3.md](docs/phase-3.md)
+Detailed execution document: [docs/completed/phase-3.md](docs/completed/phase-3.md)
 
 Scope:
 
@@ -387,7 +400,7 @@ Exit criteria:
 
 Goal: make the request-response loop actually usable day-to-day, not just lifecycle-correct.
 
-Phase 3 made send/save/cancel safe at the state and persistence layer, but the response panel is a single flat dump and the request editor is a list of bare input fields. This phase closes the gap between "the lifecycle works" and "a developer can actually use this to debug an API."
+Phase 3 made send/save/cancel safe at the state and persistence layer, but the response panel is a single flat dump and the request editor uses bare text inputs for every section. This phase closes the gap between "the lifecycle works" and "a developer can actually use this to debug an API."
 
 Detailed execution document: [docs/phase-3.5.md](docs/phase-3.5.md) (to be created)
 
@@ -399,10 +412,10 @@ Scope:
   - reopening a request tab restores the latest-run response summary and preview from persisted history/blob data without re-sending the request
   - usability work in this phase must not bypass preview caps, blob reload rules, or late-response ignore semantics introduced in Phase 3
 - Tabbed response panel with four tabs:
-  - Body (preview by default, pretty-print and raw toggle, explicit "load full body" path when only a preview is in memory)
+  - Body (preview by default, pretty-print and raw toggle, explicit "load full body" path when only a preview is in memory; case-insensitive substring search within the active preview or full-body text after a load; search state is view-local and not persisted)
   - Headers (preserve repeated header rows; do not collapse duplicate names into a lossy map)
-  - Cookies (table parsed from `Set-Cookie` headers with name, value preview, domain, path, expiry/max-age, secure, httpOnly, sameSite)
-  - Timing (total time, TTFB, request start/completed timestamps, with DNS/TCP/TLS placeholders only when the transport exposes them)
+  - Cookies (table parsed from `Set-Cookie` headers per RFC 6265 using the `cookie` crate; columns: name, value preview, domain, path, expiry/max-age, secure, httpOnly, sameSite; multiple cookies with the same name are each shown as a distinct row)
+  - Timing (total time, TTFB, request start/completed timestamps; DNS/TCP/TLS rows are shown as `—` placeholders when the transport does not expose them — rows are always present so the layout is stable regardless of transport capabilities)
 - Classified request failure display:
   - preflight validation failures remain distinct from wire failures:
     - malformed URL
@@ -422,27 +435,30 @@ Scope:
   - response size (formatted: B / KB / MB)
   - total time
 - Response body improvements:
-  - copy response body to clipboard from preview or blob-backed full body depending on availability
-  - save response body to file without forcing the whole payload into hot memory first
-  - image preview for image/* media types
+  - copy response body to clipboard: enabled for text media types only; disabled with an explanatory tooltip for binary and image types
+  - save response body to file: for `DiskBlob` bodies, stream from the blob store reader rather than calling `read_all()`; for `InMemoryPreview` bodies, write from the in-memory bytes directly; never allocate a second full-body copy in RAM during save
+  - image preview for `image/*` media types: decode and render from the `BodyRef` preview bytes only, not the full blob; images truncated at the preview cap show a "preview truncated — load full image" notice rather than a corrupt partial render
   - XML/HTML pretty-print alongside existing JSON pretty-print
-  - search within response body across the active preview and full-body reload path
+  - search within response body as described in the Body tab above
 - Request editor improvements:
-  - tabbed request builder (Params, Auth, Headers, Body, Scripts, Settings) instead of flat sections
-  - key-value editor component for headers and params (add/remove/enable/disable rows)
-  - auth type selector dropdown with inline credential fields
-  - body type selector dropdown (none, raw text, raw JSON, urlencoded, form-data, binary)
+  - the section tabs (Params, Auth, Headers, Body, Scripts, Settings) already exist from Phase 3; this phase replaces the text-input-based content inside each section with structured component editors:
+    - check whether `gpui-component` provides a composable row-list or editable-table primitive before building a bespoke key-value editor
+    - key-value editor component for headers and params (add/remove/enable/disable rows)
+    - the key-value params editor must preserve the Phase 3 URL↔params bidirectional sync contract: URL bar edits update the params table, param row edits rewrite the URL query string
+    - auth type selector dropdown with structured inline credential fields per auth type; the existing typed `AuthType` domain model in SQLite is read directly — no migration needed
+    - body type selector dropdown (none, raw text, raw JSON, urlencoded, form-data, binary)
   - file-backed body UX for `form-data` and `binary`:
     - pick file
     - replace file
     - clear file
     - show missing/unreadable file state before send
     - persist file/blob references through the existing request model rather than ad hoc view-local paths
+    - file size cap: files over 100 MB require a confirmation prompt; large file bodies must not be loaded into `Bytes` in full before sending — they must be read from the blob store at send time
 - Keyboard shortcut expansion:
   - define shortcuts as `Cmd` on macOS and `Ctrl` on Windows/Linux where applicable
   - specify scope for each shortcut so text inputs and modal dialogs keep expected native behavior
-  - close tab
-  - new request
+  - close tab: triggers the existing close-while-dirty confirm dialog when the request has unsaved changes; does not bypass the dirty check
+  - new request: opens a draft tab in the collection currently selected in the sidebar; shows a toast and takes no action if no collection is selected
   - duplicate request
   - next/prev tab
   - focus URL bar
@@ -454,11 +470,21 @@ Exit criteria:
 - Response panel shows body, headers, cookies, and timing in separate tabs without violating preview-memory caps
 - Latest-run response data reopens from persisted history/blob storage without requiring a resend
 - Preflight validation failures and transport failures display distinct, human-readable states
-- Response metadata bar shows status code, size, and time at a glance
-- Copy, save, and search actions work for preview-backed and blob-backed response bodies
-- Header and cookie views preserve repeated headers and cookie attributes without lossy flattening
-- Request editor uses tabbed layout with structured editors for headers, params, auth, and body, including file-backed body flows
+- Response metadata bar shows status code with color coding, size, and time at a glance
+- Copy is enabled for text media types and disabled with a tooltip for binary/image types
+- Save-to-file streams from the blob store for `DiskBlob` bodies without a full in-memory load
+- Image preview decodes from preview bytes only; full-blob image decode does not occur by default
+- Search works within the active preview and prompts for full-body load when the preview is truncated
+- Header and cookie views preserve repeated headers and all RFC 6265 cookie attributes without lossy flattening; cookies with the same name appear as distinct rows
+- Timing panel always shows DNS/TCP/TLS rows as `—` placeholders rather than omitting them
+- Section tab content is replaced with structured component editors; text-input fallbacks are removed
+- URL↔params bidirectional sync is preserved through the new key-value params editor
+- Auth type selector populates structured fields from the existing `AuthType` domain model without data migration
+- File-backed body flows cover pick, replace, clear, and missing-file states before send
+- Files over 100 MB trigger a confirmation prompt; large file bodies are not fully loaded into RAM
 - All new shortcuts are documented, platform-correct, scoped correctly, and functional
+- Close-tab shortcut respects the close-while-dirty confirm dialog
+- New-request shortcut requires a selected collection and shows a toast when none is selected
 - All new user-facing copy and error messages are Fluent-based
 
 ## Phase 4 (P1): Collections, Folders, Environments, and Drag/Drop
