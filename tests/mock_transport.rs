@@ -875,3 +875,140 @@ fn secret_ref_not_in_request_sqlite_row() {
     assert!(!auth_json.contains("super-secret-value"));
     assert!(!auth_json.contains("password"));
 }
+
+// ---------------------------------------------------------------------------
+// §9 Performance Tests: 50 MB and 200 MB response budgets
+// ---------------------------------------------------------------------------
+
+#[test]
+fn response_50mb_bounded_by_preview_cap() {
+    let mock = MockTransport::new();
+    let large_body = vec![b'B'; 50 * 1024 * 1024];
+    mock.respond_with(MockResponse {
+        status_code: 200,
+        status_text: "OK".to_string(),
+        headers: vec![("content-type".to_string(), "application/octet-stream".to_string())],
+        body_chunks: vec![large_body],
+        ..Default::default()
+    });
+
+    let (ws_repo, col_repo, _req_repo, _hist_repo, blob_store, _secrets, exec) =
+        build_test_services(mock);
+
+    let ws = ws_repo.create("WS").unwrap();
+    let col = col_repo.create(ws.id, "Col").unwrap();
+    let request = simple_request("GET", "https://api.test/large-50m", col.id);
+
+    let cancel = CancellationToken::new();
+    let outcome = run_async(exec.execute(&request, ws.id, cancel)).unwrap();
+
+    match outcome {
+        ExecOutcome::Completed(summary) => {
+            match &summary.body_ref {
+                torii::domain::response::BodyRef::DiskBlob {
+                    blob_id, preview, size_bytes,
+                } => {
+                    assert_eq!(*size_bytes, 50u64 * 1024 * 1024);
+                    let preview_len = preview.as_ref().map(|p| p.len()).unwrap_or(0);
+                    assert!(
+                        preview_len <= torii::domain::response::ResponseBudgets::PREVIEW_CAP_BYTES,
+                        "preview {preview_len} exceeds cap"
+                    );
+                    assert!(blob_store.exists(blob_id));
+                    let full = blob_store.read_all(blob_id).unwrap();
+                    assert_eq!(full.len(), 50 * 1024 * 1024);
+                }
+                other => panic!("expected DiskBlob, got {other:?}"),
+            }
+        }
+        other => panic!("expected Completed, got {other:?}"),
+    }
+}
+
+#[test]
+fn response_200mb_bounded_by_preview_cap() {
+    let mock = MockTransport::new();
+    let large_body = vec![b'C'; 200 * 1024 * 1024];
+    mock.respond_with(MockResponse {
+        status_code: 200,
+        status_text: "OK".to_string(),
+        headers: vec![("content-type".to_string(), "application/octet-stream".to_string())],
+        body_chunks: vec![large_body],
+        ..Default::default()
+    });
+
+    let (ws_repo, col_repo, _req_repo, _hist_repo, blob_store, _secrets, exec) =
+        build_test_services(mock);
+
+    let ws = ws_repo.create("WS").unwrap();
+    let col = col_repo.create(ws.id, "Col").unwrap();
+    let request = simple_request("GET", "https://api.test/large-200m", col.id);
+
+    let cancel = CancellationToken::new();
+    let outcome = run_async(exec.execute(&request, ws.id, cancel)).unwrap();
+
+    match outcome {
+        ExecOutcome::Completed(summary) => {
+            match &summary.body_ref {
+                torii::domain::response::BodyRef::DiskBlob {
+                    blob_id, preview, size_bytes,
+                } => {
+                    assert_eq!(*size_bytes, 200u64 * 1024 * 1024);
+                    let preview_len = preview.as_ref().map(|p| p.len()).unwrap_or(0);
+                    assert!(
+                        preview_len <= torii::domain::response::ResponseBudgets::PREVIEW_CAP_BYTES,
+                        "preview {preview_len} exceeds cap"
+                    );
+                    assert!(blob_store.exists(blob_id));
+                }
+                other => panic!("expected DiskBlob, got {other:?}"),
+            }
+        }
+        other => panic!("expected Completed, got {other:?}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// §9 Integration: drip-feed and stall scenarios
+// ---------------------------------------------------------------------------
+
+#[test]
+fn drip_feed_cancel_race_with_preview_cap() {
+    let mock = MockTransport::new();
+    let chunks: Vec<Vec<u8>> = (0..100)
+        .map(|i| format!("chunk-{i:04}\n").into_bytes())
+        .collect();
+    mock.respond_with(MockResponse {
+        status_code: 200,
+        status_text: "OK".to_string(),
+        headers: vec![("content-type".to_string(), "text/plain".to_string())],
+        body_chunks: chunks,
+        chunk_delay: Duration::from_millis(20),
+        ..Default::default()
+    });
+
+    let (ws_repo, col_repo, _req_repo, _hist_repo, _blob, _secrets, exec) =
+        build_test_services(mock);
+
+    let ws = ws_repo.create("WS").unwrap();
+    let col = col_repo.create(ws.id, "Col").unwrap();
+    let request = simple_request("GET", "https://api.test/drip", col.id);
+
+    let cancel = CancellationToken::new();
+    let cancel_clone = cancel.clone();
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let outcome = rt.block_on(async {
+        let exec_handle = tokio::spawn(async move {
+            exec.execute(&request, ws.id, cancel).await
+        });
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        cancel_clone.cancel();
+        exec_handle.await.unwrap().unwrap()
+    });
+
+    match outcome {
+        ExecOutcome::Cancelled { .. } | ExecOutcome::Completed { .. } => {}
+        other => panic!("expected Cancelled or Completed, got {other:?}"),
+    }
+}

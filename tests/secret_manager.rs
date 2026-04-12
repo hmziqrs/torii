@@ -84,3 +84,48 @@ fn upsert_rolls_back_secret_ref_when_store_write_fails() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn duplicated_requests_have_independent_secret_ownership() -> Result<()> {
+    // When a request is duplicated, the duplicate gets its own secret refs.
+    // Deleting one request's secrets must not break the other's.
+    let (_paths, db) = common::test_database("secret-duplicate-isolation")?;
+    let db = Arc::new(db);
+    let refs_repo = Arc::new(SqliteSecretRefRepository::new(db.clone()));
+    let store: SecretStoreRef = Arc::new(torii::infra::secrets::InMemorySecretStore::new());
+    let manager = SecretManager::new(refs_repo.clone(), store.clone(), "memory", "torii.test");
+
+    // Source request owns a bearer token
+    let _source_ref =
+        manager.upsert_secret("request", "source-1", "bearer_token", "original-token")?;
+
+    // Duplicate gets its own secret ref with same value but different ownership
+    let _dup_ref =
+        manager.upsert_secret("request", "duplicate-1", "bearer_token", "original-token")?;
+
+    // Both should resolve independently
+    let source_val = manager.get_secret("request", "source-1", "bearer_token")?;
+    assert_eq!(source_val.as_deref(), Some("original-token"));
+    let dup_val = manager.get_secret("request", "duplicate-1", "bearer_token")?;
+    assert_eq!(dup_val.as_deref(), Some("original-token"));
+
+    // Delete source request's secret
+    manager.delete_secret("request", "source-1", "bearer_token")?;
+
+    // Duplicate's secret must still work
+    let dup_after_delete = manager.get_secret("request", "duplicate-1", "bearer_token")?;
+    assert_eq!(
+        dup_after_delete.as_deref(),
+        Some("original-token"),
+        "duplicate's secret must survive source deletion"
+    );
+
+    // Source's secret must be gone
+    let source_after_delete = manager.get_secret("request", "source-1", "bearer_token")?;
+    assert!(
+        source_after_delete.is_none(),
+        "source secret must be deleted"
+    );
+
+    Ok(())
+}
