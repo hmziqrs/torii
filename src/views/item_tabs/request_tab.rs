@@ -2,10 +2,12 @@ use std::sync::Arc;
 
 use gpui::{prelude::*, *};
 use gpui_component::{
+    Disableable as _,
     Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants},
     h_flex,
     input::{Input, InputEvent, InputState},
+    select::{Select, SelectEvent, SelectState},
     v_flex,
 };
 
@@ -20,6 +22,7 @@ use crate::{
     repos::request_repo::RequestRepoError,
     services::{
         app_services::{AppServices, AppServicesGlobal},
+        error_classifier::ClassifiedError,
         request_execution::{ExecOutcome, ExecProgressEvent},
         telemetry,
     },
@@ -30,7 +33,17 @@ use crate::{
 // Actions for request tab keyboard shortcuts
 // ---------------------------------------------------------------------------
 
-actions!(request_tab, [SaveRequest, SendRequest, CancelRequest]);
+actions!(
+    request_tab,
+    [
+        SaveRequest,
+        SendRequest,
+        CancelRequest,
+        DuplicateRequest,
+        FocusUrlBar,
+        ToggleBodySearch
+    ]
+);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RequestSectionTab {
@@ -55,6 +68,7 @@ pub struct RequestTabView {
     focus_handle: FocusHandle,
     name_input: Entity<InputState>,
     method_input: Entity<InputState>,
+    method_select: Entity<SelectState<Vec<&'static str>>>,
     url_input: Entity<InputState>,
     params_input: Entity<InputState>,
     auth_input: Entity<InputState>,
@@ -69,6 +83,8 @@ pub struct RequestTabView {
     loaded_full_body_blob_id: Option<String>,
     loaded_full_body_text: Option<String>,
     input_sync_guard: ReentrancyGuard,
+    body_search_visible: bool,
+    body_search_input: Entity<InputState>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -140,6 +156,20 @@ impl RequestTabView {
             state.set_value(initial.method.clone(), window, cx);
             state
         });
+        let method_select = cx.new(|cx| {
+            let mut select = SelectState::new(
+                vec!["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
+                Some(gpui_component::IndexPath::default()),
+                window,
+                cx,
+            );
+            if let Some(ix) = standard_method_index(initial.method.as_str()) {
+                select.set_selected_index(Some(gpui_component::IndexPath::default().row(ix)), window, cx);
+            } else {
+                select.set_selected_index(None, window, cx);
+            }
+            select
+        });
         let url_input = cx.new(|cx| {
             let mut state = InputState::new(window, cx);
             state.set_value(initial.url.clone(), window, cx);
@@ -195,6 +225,7 @@ impl RequestTabView {
             state.set_value(value, window, cx);
             state
         });
+        let body_search_input = cx.new(|cx| InputState::new(window, cx));
 
         let mut subscriptions = Vec::new();
 
@@ -222,6 +253,29 @@ impl RequestTabView {
                         this.editor.refresh_save_status();
                         cx.notify();
                     }
+                }
+            },
+        ));
+
+        subscriptions.push(cx.subscribe_in(
+            &method_select,
+            window,
+            |this: &mut RequestTabView,
+             _: &Entity<SelectState<Vec<&'static str>>>,
+             event: &SelectEvent<Vec<&'static str>>,
+             window: &mut Window,
+             cx| {
+                let SelectEvent::Confirm(method) = event;
+                let Some(method) = method.clone() else {
+                    return;
+                };
+                if this.editor.draft().method != method {
+                    this.editor.draft_mut().method = method.to_string();
+                    this.method_input.update(cx, |input, cx| {
+                        input.set_value(method.to_string(), window, cx);
+                    });
+                    this.editor.refresh_save_status();
+                    cx.notify();
                 }
             },
         ));
@@ -407,6 +461,7 @@ impl RequestTabView {
             focus_handle: cx.focus_handle(),
             name_input,
             method_input,
+            method_select,
             url_input,
             params_input,
             auth_input,
@@ -421,6 +476,8 @@ impl RequestTabView {
             loaded_full_body_blob_id: None,
             loaded_full_body_text: None,
             input_sync_guard: ReentrancyGuard::default(),
+            body_search_visible: false,
+            body_search_input,
             _subscriptions: subscriptions,
         }
     }
@@ -450,6 +507,43 @@ impl RequestTabView {
 
     fn handle_cancel_request(&mut self, _action: &CancelRequest, _window: &mut Window, cx: &mut Context<Self>) {
         self.cancel_send(cx);
+    }
+
+    fn handle_duplicate_request(
+        &mut self,
+        _action: &DuplicateRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match self.duplicate(cx) {
+            Ok(_) => window.push_notification(es_fluent::localize("request_tab_duplicate_ok", None), cx),
+            Err(err) => window.push_notification(err, cx),
+        }
+    }
+
+    fn handle_focus_url_bar(
+        &mut self,
+        _action: &FocusUrlBar,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.url_input.read(cx).focus_handle(cx).focus(window, cx);
+    }
+
+    fn handle_toggle_body_search(
+        &mut self,
+        _action: &ToggleBodySearch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.body_search_visible = !self.body_search_visible;
+        if self.body_search_visible {
+            self.body_search_input
+                .read(cx)
+                .focus_handle(cx)
+                .focus(window, cx);
+        }
+        cx.notify();
     }
 
     pub fn has_unsaved_changes(&self) -> bool {
@@ -688,8 +782,11 @@ impl RequestTabView {
                             );
                         }
                     }
-                    Ok(ExecOutcome::Failed(error)) => {
-                        if !this.editor.fail_exec(error, operation_id) {
+                    Ok(ExecOutcome::Failed {
+                        summary,
+                        classified,
+                    }) => {
+                        if !this.editor.fail_exec(summary, classified, operation_id) {
                             tracing::warn!(
                                 op_id = %operation_id,
                                 "late failure ignored — operation no longer active"
@@ -709,7 +806,7 @@ impl RequestTabView {
                         this.editor.set_preflight_error(msg);
                     }
                     Err(e) => {
-                        this.editor.fail_exec(e.to_string(), operation_id);
+                        this.editor.fail_exec(e.to_string(), None, operation_id);
                     }
                 }
                 this.editor.set_latest_history_id(Some(operation_id));
@@ -787,6 +884,131 @@ impl RequestTabView {
         self.loaded_full_body_blob_id = Some(blob_id);
         cx.notify();
         Ok(())
+    }
+
+    pub fn copy_response_body(&self, cx: &mut Context<Self>) -> Result<(), String> {
+        let Some((text, _media_type)) = self.response_body_text_for_actions(cx)? else {
+            return Err(es_fluent::localize("request_tab_copy_unavailable", None).to_string());
+        };
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+        Ok(())
+    }
+
+    pub fn save_response_body_to_file(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let services = cx.global::<AppServicesGlobal>().0.clone();
+        let (source, suggested_name) = match self.editor.exec_status() {
+            ExecStatus::Completed { response } => {
+                let suggested = suggested_file_name(response.media_type.as_deref());
+                match &response.body_ref {
+                    BodyRef::Empty => {
+                        return Err(
+                            es_fluent::localize("request_tab_save_unavailable", None).to_string()
+                        );
+                    }
+                    BodyRef::InMemoryPreview { bytes, .. } => {
+                        (SaveSource::InMemory(bytes.to_vec()), suggested)
+                    }
+                    BodyRef::DiskBlob { blob_id, .. } => {
+                        (SaveSource::Blob(blob_id.clone()), suggested)
+                    }
+                }
+            }
+            _ => {
+                return Err(es_fluent::localize("request_tab_save_unavailable", None).to_string());
+            }
+        };
+
+        let receiver = cx.prompt_for_new_path(&std::env::current_dir().unwrap_or_default(), Some(&suggested_name));
+        cx.spawn_in(window, async move |_, _| {
+            let Some(path) = receiver.await.ok().into_iter().flatten().flatten().next() else {
+                return;
+            };
+            let result = match source {
+                SaveSource::InMemory(bytes) => std::fs::write(&path, bytes).map_err(anyhow::Error::from),
+                SaveSource::Blob(blob_id) => {
+                    let mut reader = match services.blob_store.open_read(&blob_id) {
+                        Ok(file) => file,
+                        Err(err) => {
+                            tracing::warn!(error = %err, "open blob for save failed");
+                            return;
+                        }
+                    };
+                    let mut writer = match std::fs::File::create(&path) {
+                        Ok(file) => file,
+                        Err(err) => {
+                            tracing::warn!(error = %err, "create save destination failed");
+                            return;
+                        }
+                    };
+                    std::io::copy(&mut reader, &mut writer)
+                        .map(|_| ())
+                        .map_err(anyhow::Error::from)
+                }
+            };
+            if let Err(err) = result {
+                tracing::warn!(error = %err, "failed to save response body to file");
+            }
+        })
+        .detach();
+        Ok(())
+    }
+
+    fn response_body_text_for_actions(
+        &self,
+        cx: &Context<Self>,
+    ) -> Result<Option<(String, Option<String>)>, String> {
+        let ExecStatus::Completed { response } = self.editor.exec_status() else {
+            return Ok(None);
+        };
+
+        let media_type = response.media_type.clone();
+        if !is_text_like_media_type(media_type.as_deref()) {
+            return Ok(None);
+        }
+
+        let text = match &response.body_ref {
+            BodyRef::Empty => String::new(),
+            BodyRef::InMemoryPreview { bytes, .. } => {
+                render_preview_text(bytes, media_type.as_deref())
+            }
+            BodyRef::DiskBlob {
+                blob_id,
+                preview,
+                size_bytes,
+            } => {
+                if *size_bytes > (8 * 1024 * 1024) {
+                    return Err(es_fluent::localize("request_tab_copy_too_large", None).to_string());
+                }
+                let bytes = if self.loaded_full_body_blob_id.as_deref() == Some(blob_id.as_str()) {
+                    cx.global::<AppServicesGlobal>()
+                        .0
+                        .blob_store
+                        .read_all(blob_id)
+                        .map_err(|e| format!(
+                            "{}: {e}",
+                            es_fluent::localize("request_tab_full_body_load_failed", None)
+                        ))?
+                } else if let Some(preview) = preview {
+                    preview.to_vec()
+                } else {
+                    cx.global::<AppServicesGlobal>()
+                        .0
+                        .blob_store
+                        .read_preview(blob_id, ResponseBudgets::PREVIEW_CAP_BYTES)
+                        .map_err(|e| format!(
+                            "{}: {e}",
+                            es_fluent::localize("request_tab_full_body_load_failed", None)
+                        ))?
+                };
+                render_preview_text(&bytes, media_type.as_deref())
+            }
+        };
+
+        Ok(Some((text, media_type)))
     }
 
     // -----------------------------------------------------------------------
@@ -1114,6 +1336,15 @@ impl RequestTabView {
                 s.set_value(canonical_params_text, window, cx);
             });
         }
+        self.method_select.update(cx, |select, cx| {
+            if let Some(ix) = standard_method_index(draft.method.as_str()) {
+                if select.selected_index(cx).map(|it| it.row) != Some(ix) {
+                    select.set_selected_index(Some(gpui_component::IndexPath::default().row(ix)), window, cx);
+                }
+            } else if select.selected_value().is_some() {
+                select.set_selected_index(None, window, cx);
+            }
+        });
 
         if self.input_sync_guard.leave_and_take_deferred() {
             cx.notify();
@@ -1216,7 +1447,10 @@ impl Render for RequestTabView {
                     _ => div(),
                 };
 
-                let body_content = if looks_like_image(resp.media_type.as_deref()) {
+                let body_search_query = self.body_search_input.read(cx).value().to_string();
+                let body_matches = search_matches(&body_preview, &body_search_query);
+
+                let mut body_content = if looks_like_image(resp.media_type.as_deref()) {
                     div()
                         .text_sm()
                         .text_color(gpui::hsla(0., 0., 0.5, 1.))
@@ -1236,6 +1470,32 @@ impl Render for RequestTabView {
                         .text_color(gpui::hsla(0., 0., 0.5, 1.))
                         .child(es_fluent::localize("request_tab_response_body_empty", None))
                 };
+
+                if self.body_search_visible {
+                    body_content = v_flex()
+                        .gap_2()
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .child(Input::new(&self.body_search_input).large()),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(gpui::hsla(0., 0., 0.5, 1.))
+                                        .child(format!(
+                                            "{} {}",
+                                            body_matches.len(),
+                                            es_fluent::localize("request_tab_search_matches", None)
+                                        )),
+                                ),
+                        )
+                        .child(body_content)
+                }
 
                 let headers_content = if header_rows.is_empty() {
                     div()
@@ -1372,6 +1632,35 @@ impl Render for RequestTabView {
                         "—".to_string(),
                     ));
 
+                let body_actions = h_flex()
+                    .gap_1()
+                    .child(
+                        Button::new("request-response-copy")
+                            .outline()
+                            .disabled(!is_text_like_media_type(resp.media_type.as_deref()))
+                            .label(es_fluent::localize("request_tab_response_action_copy", None))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                if let Err(err) = this.copy_response_body(cx) {
+                                    window.push_notification(err, cx);
+                                } else {
+                                    window.push_notification(
+                                        es_fluent::localize("request_tab_copy_ok", None),
+                                        cx,
+                                    );
+                                }
+                            })),
+                    )
+                    .child(
+                        Button::new("request-response-save")
+                            .outline()
+                            .label(es_fluent::localize("request_tab_response_action_save", None))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                if let Err(err) = this.save_response_body_to_file(window, cx) {
+                                    window.push_notification(err, cx);
+                                }
+                            })),
+                    );
+
                 let active_content = match self.active_response_tab {
                     ResponseTab::Body => body_content.into_any_element(),
                     ResponseTab::Headers => headers_content.into_any_element(),
@@ -1451,14 +1740,30 @@ impl Render for RequestTabView {
                                 }),
                             )),
                     )
+                    .when(self.active_response_tab == ResponseTab::Body, |el: gpui::Div| {
+                        el.child(body_actions)
+                    })
                     .child(active_content)
                     .child(load_full_button)
             }
-            ExecStatus::Failed { error } => {
-                div().child(div().text_sm().text_color(gpui::red()).child(format!(
-                    "{}: {error}",
-                    es_fluent::localize("request_tab_response_failed", None)
-                )))
+            ExecStatus::Failed {
+                summary,
+                classified,
+            } => {
+                let (title, detail) = classified_error_display(classified.as_ref(), summary);
+                div().gap_2().child(
+                    div()
+                        .text_sm()
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(gpui::red())
+                        .child(title),
+                ).child(
+                    div()
+                        .text_xs()
+                        .font_family("monospace")
+                        .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                        .child(detail),
+                )
             }
             ExecStatus::Cancelled { partial_size } => {
                 let msg = match partial_size {
@@ -1548,6 +1853,9 @@ impl Render for RequestTabView {
             .on_action(cx.listener(Self::handle_save_request))
             .on_action(cx.listener(Self::handle_send_request))
             .on_action(cx.listener(Self::handle_cancel_request))
+            .on_action(cx.listener(Self::handle_duplicate_request))
+            .on_action(cx.listener(Self::handle_focus_url_bar))
+            .on_action(cx.listener(Self::handle_toggle_body_search))
             .child(
                 h_flex()
                     .items_center()
@@ -1565,6 +1873,7 @@ impl Render for RequestTabView {
                 h_flex()
                     .gap_2()
                     .items_end()
+                    .child(div().w_40().child(Select::new(&self.method_select)))
                     .child(div().w_32().child(Input::new(&self.method_input).large()))
                     .child(div().flex_1().child(Input::new(&self.url_input).large()))
                     .child(
@@ -1795,6 +2104,11 @@ fn status_code_color(status_code: u16) -> Hsla {
     }
 }
 
+enum SaveSource {
+    InMemory(Vec<u8>),
+    Blob(String),
+}
+
 fn response_body_preview_text(
     response: &crate::domain::response::ResponseSummary,
     loaded_full_body_text: &Option<String>,
@@ -1833,6 +2147,67 @@ fn response_body_preview_text(
 
 fn looks_like_image(media_type: Option<&str>) -> bool {
     matches!(media_type, Some(value) if value.to_ascii_lowercase().starts_with("image/"))
+}
+
+fn is_text_like_media_type(media_type: Option<&str>) -> bool {
+    let Some(media_type) = media_type else {
+        return true;
+    };
+    let media_type = media_type.to_ascii_lowercase();
+    media_type.starts_with("text/")
+        || matches!(
+            media_type.as_str(),
+            "application/json"
+                | "application/xml"
+                | "text/xml"
+                | "text/html"
+                | "application/javascript"
+                | "application/x-www-form-urlencoded"
+        )
+}
+
+fn search_matches(text: &str, query: &str) -> Vec<usize> {
+    if query.trim().is_empty() {
+        return Vec::new();
+    }
+    let text_lower = text.to_ascii_lowercase();
+    let query_lower = query.to_ascii_lowercase();
+    let mut matches = Vec::new();
+    let mut offset = 0;
+    while let Some(found) = text_lower[offset..].find(&query_lower) {
+        let absolute = offset + found;
+        matches.push(absolute);
+        offset = absolute + query_lower.len().max(1);
+        if offset >= text.len() {
+            break;
+        }
+    }
+    matches
+}
+
+fn suggested_file_name(media_type: Option<&str>) -> String {
+    let ext = match media_type.map(|v| v.to_ascii_lowercase()) {
+        Some(mt) if mt == "application/json" => "json",
+        Some(mt) if mt == "application/xml" || mt == "text/xml" => "xml",
+        Some(mt) if mt == "text/html" => "html",
+        Some(mt) if mt.starts_with("text/") => "txt",
+        Some(mt) if mt.starts_with("image/") => "img",
+        _ => "bin",
+    };
+    format!("response.{ext}")
+}
+
+fn standard_method_index(method: &str) -> Option<usize> {
+    match method.to_ascii_uppercase().as_str() {
+        "GET" => Some(0),
+        "POST" => Some(1),
+        "PUT" => Some(2),
+        "PATCH" => Some(3),
+        "DELETE" => Some(4),
+        "HEAD" => Some(5),
+        "OPTIONS" => Some(6),
+        _ => None,
+    }
 }
 
 fn parse_set_cookie_rows(rows: &[crate::domain::response::ResponseHeaderRow]) -> Vec<CookieRow> {
@@ -2161,10 +2536,10 @@ fn latest_run_summary(exec_status: &ExecStatus) -> String {
                 status
             }
         }
-        ExecStatus::Failed { error } => format!(
+        ExecStatus::Failed { summary, .. } => format!(
             "{}: {}",
             es_fluent::localize("request_tab_response_failed", None),
-            error
+            summary
         ),
         ExecStatus::Cancelled { partial_size } => match partial_size {
             Some(size) => format!(
@@ -2173,6 +2548,36 @@ fn latest_run_summary(exec_status: &ExecStatus) -> String {
             ),
             None => es_fluent::localize("request_tab_response_cancelled", None).to_string(),
         },
+    }
+}
+
+fn classified_error_display(classified: Option<&ClassifiedError>, summary: &str) -> (String, String) {
+    match classified {
+        Some(ClassifiedError::DnsFailure { host }) => (
+            es_fluent::localize("request_tab_error_dns_failure", None).to_string(),
+            format!("Could not resolve host: {host}"),
+        ),
+        Some(ClassifiedError::ConnectionRefused { host, port }) => (
+            es_fluent::localize("request_tab_error_connection_refused", None).to_string(),
+            format!("Connection refused: {host}:{port}"),
+        ),
+        Some(ClassifiedError::ConnectionTimeout) => (
+            es_fluent::localize("request_tab_error_connection_timeout", None).to_string(),
+            summary.to_string(),
+        ),
+        Some(ClassifiedError::RequestTimeout) => (
+            es_fluent::localize("request_tab_error_request_timeout", None).to_string(),
+            summary.to_string(),
+        ),
+        Some(ClassifiedError::TlsError { reason }) => (
+            es_fluent::localize("request_tab_error_tls_failure", None).to_string(),
+            reason.clone(),
+        ),
+        Some(ClassifiedError::TransportError { summary, detail }) => (summary.clone(), detail.clone()),
+        None => (
+            es_fluent::localize("request_tab_error_transport_generic", None).to_string(),
+            summary.to_string(),
+        ),
     }
 }
 

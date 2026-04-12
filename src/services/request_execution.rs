@@ -21,6 +21,7 @@ use crate::{
     infra::{blobs::BlobStore, secrets::SecretStoreRef},
     repos::history_repo::{HistoryRepoRef, build_request_snapshot},
     services::telemetry,
+    services::error_classifier::{ClassifiedError, classify_transport_error},
 };
 
 #[async_trait::async_trait]
@@ -135,7 +136,10 @@ pub enum ExecProgressEvent {
 #[derive(Debug)]
 pub enum ExecOutcome {
     Completed(ResponseSummary),
-    Failed(String),
+    Failed {
+        summary: String,
+        classified: Option<ClassifiedError>,
+    },
     Cancelled { partial_size: Option<u64> },
     PreflightFailed(String),
 }
@@ -203,9 +207,9 @@ impl RequestExecutionService {
                     summary.first_byte_at_unix_ms,
                 );
             }
-            Ok(ExecOutcome::Failed(error)) => {
+            Ok(ExecOutcome::Failed { summary, .. }) => {
                 telemetry::inc_requests_failed();
-                let _ = self.history_repo.mark_failed(operation_id, error);
+                let _ = self.history_repo.mark_failed(operation_id, summary);
             }
             Ok(ExecOutcome::Cancelled { partial_size }) => {
                 telemetry::inc_requests_cancelled();
@@ -339,7 +343,10 @@ impl RequestExecutionService {
                     return Ok(ExecOutcome::Cancelled { partial_size: None });
                 }
                 tracing::warn!(error = %e, "request send failed");
-                return Ok(ExecOutcome::Failed(e.to_string()));
+                return Ok(ExecOutcome::Failed {
+                    summary: e.to_string(),
+                    classified: Some(classify_transport_error(&e)),
+                });
             }
         };
 

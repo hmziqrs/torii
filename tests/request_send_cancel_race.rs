@@ -222,7 +222,7 @@ fn send_while_sending_auto_cancel_first_request() {
             Ok(ExecOutcome::Completed(summary)) => {
                 assert_eq!(summary.status_code, 200);
             }
-            Ok(ExecOutcome::Failed(_)) | Ok(ExecOutcome::Cancelled { .. }) => {
+            Ok(ExecOutcome::Failed { .. }) | Ok(ExecOutcome::Cancelled { .. }) => {
                 // Also acceptable — may have been cancelled
             }
             other => panic!("unexpected first result: {other:?}"),

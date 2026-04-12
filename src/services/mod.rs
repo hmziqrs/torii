@@ -1,4 +1,5 @@
 pub mod app_services;
+pub mod error_classifier;
 pub mod recovery;
 pub mod request_execution;
 pub mod secret_manager;

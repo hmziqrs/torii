@@ -453,8 +453,8 @@ fn mock_transport_error_response() {
     let outcome = run_async(exec.execute(&request, ws.id, cancel)).unwrap();
 
     match outcome {
-        ExecOutcome::Failed(msg) => {
-            assert!(msg.contains("mock transport error"));
+        ExecOutcome::Failed { summary, .. } => {
+            assert!(summary.contains("mock transport error"));
         }
         other => panic!("expected Failed, got {other:?}"),
     }

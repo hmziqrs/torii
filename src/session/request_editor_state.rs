@@ -6,6 +6,7 @@ use crate::domain::{
     request::RequestItem,
     response::ResponseSummary,
 };
+use crate::services::error_classifier::ClassifiedError;
 
 /// OperationId is a type alias for HistoryEntryId.
 pub type OperationId = HistoryEntryId;
@@ -41,7 +42,10 @@ pub enum ExecStatus {
     /// Terminal: response fully received.
     Completed { response: Arc<ResponseSummary> },
     /// Terminal: request failed.
-    Failed { error: String },
+    Failed {
+        summary: String,
+        classified: Option<ClassifiedError>,
+    },
     /// Terminal: request was cancelled.
     Cancelled { partial_size: Option<u64> },
 }
@@ -303,11 +307,19 @@ impl RequestEditorState {
         true
     }
 
-    pub fn fail_exec(&mut self, error: String, operation_id: HistoryEntryId) -> bool {
+    pub fn fail_exec(
+        &mut self,
+        summary: String,
+        classified: Option<ClassifiedError>,
+        operation_id: HistoryEntryId,
+    ) -> bool {
         if self.active_operation_id != Some(operation_id) {
             return false; // Late failure — ignore.
         }
-        self.exec_status = ExecStatus::Failed { error };
+        self.exec_status = ExecStatus::Failed {
+            summary,
+            classified,
+        };
         self.active_operation_id = None;
         self.cancellation_token = None;
         true
@@ -333,8 +345,11 @@ impl RequestEditorState {
     }
 
     /// Restore a failed execution snapshot (e.g. from history on reopen).
-    pub fn restore_failed_response(&mut self, error: String) {
-        self.exec_status = ExecStatus::Failed { error };
+    pub fn restore_failed_response(&mut self, summary: String) {
+        self.exec_status = ExecStatus::Failed {
+            summary,
+            classified: None,
+        };
         self.active_operation_id = None;
         self.cancellation_token = None;
     }

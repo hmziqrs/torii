@@ -3,7 +3,9 @@ use gpui::{
     WindowBounds, WindowKind, WindowOptions, actions, px, size,
 };
 
-use crate::views::item_tabs::request_tab::{CancelRequest, SaveRequest, SendRequest};
+use crate::views::item_tabs::request_tab::{
+    CancelRequest, DuplicateRequest, FocusUrlBar, SaveRequest, SendRequest, ToggleBodySearch,
+};
 use gpui_component::{ActiveTheme, Root, Theme, ThemeMode, TitleBar};
 
 use crate::services::{
@@ -16,7 +18,10 @@ use crate::services::{
 // Actions
 // ---------------------------------------------------------------------------
 
-actions!(app, [About, Quit, ToggleSearch]);
+actions!(
+    app,
+    [About, Quit, ToggleSearch, CloseTab, NewRequest, NextTab, PrevTab, ToggleSidebar]
+);
 
 #[derive(Action, Clone, PartialEq, Eq, serde::Deserialize)]
 #[action(namespace = app)]
@@ -166,6 +171,38 @@ pub fn init(cx: &mut App) {
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-enter", SendRequest, Some("RequestTabView")),
         KeyBinding::new("escape", CancelRequest, Some("RequestTabView")),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-d", DuplicateRequest, Some("RequestTabView")),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-d", DuplicateRequest, Some("RequestTabView")),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-l", FocusUrlBar, Some("RequestTabView")),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-l", FocusUrlBar, Some("RequestTabView")),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-f", ToggleBodySearch, Some("RequestTabView")),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-f", ToggleBodySearch, Some("RequestTabView")),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-w", CloseTab, None),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-w", CloseTab, None),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-n", NewRequest, None),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-n", NewRequest, None),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-]", NextTab, None),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-tab", NextTab, None),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-[", PrevTab, None),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-tab", PrevTab, None),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-b", ToggleSidebar, None),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-b", ToggleSidebar, None),
     ]);
 
     cx.on_action(|_: &Quit, cx| {
