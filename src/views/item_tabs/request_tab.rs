@@ -66,6 +66,7 @@ enum RequestSectionTab {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ResponseTab {
     Body,
+    Preview,
     Headers,
     Cookies,
     Timing,

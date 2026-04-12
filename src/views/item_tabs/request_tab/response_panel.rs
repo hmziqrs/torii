@@ -1,6 +1,7 @@
 use super::*;
 use crate::domain::response::ResponseHeaderRow;
 use gpui_component::table::DataTable;
+use gpui_component::text::html;
 
 // ---------------------------------------------------------------------------
 // Table delegates for response headers and cookies
@@ -396,6 +397,9 @@ fn render_completed_response(
     let body_search_query = view.body_search_input.read(cx).value().to_string();
     let body_matches = search_matches(&body_preview, &body_search_query);
 
+    let is_html = looks_like_html(resp.media_type.as_deref());
+    let html_body_for_preview = body_preview.clone();
+
     let mut body_content = if looks_like_image(resp.media_type.as_deref()) {
         div()
             .text_sm()
@@ -576,8 +580,25 @@ fn render_completed_response(
                 })),
         );
 
+    let preview_content = if is_html && !html_body_for_preview.is_empty() {
+        div()
+            .h(px(400.))
+            .child(
+                html(SharedString::from(html_body_for_preview))
+                    .p_3()
+                    .scrollable(true)
+                    .selectable(true),
+            )
+    } else {
+        div()
+            .text_sm()
+            .text_color(gpui::hsla(0., 0., 0.5, 1.))
+            .child(es_fluent::localize("request_tab_response_preview_empty", None))
+    };
+
     let active_content = match view.active_response_tab {
         ResponseTab::Body => body_content.into_any_element(),
+        ResponseTab::Preview => preview_content.into_any_element(),
         ResponseTab::Headers => headers_content.into_any_element(),
         ResponseTab::Cookies => cookies_content.into_any_element(),
         ResponseTab::Timing => timing_content.into_any_element(),
@@ -626,6 +647,16 @@ fn render_completed_response(
                         this.set_active_response_tab(ResponseTab::Body, cx);
                     }),
                 ))
+                .when(is_html, |el| {
+                    el.child(response_tab_button(
+                        "request-response-tab-preview",
+                        es_fluent::localize("request_tab_response_tab_preview", None).to_string(),
+                        view.active_response_tab == ResponseTab::Preview,
+                        cx.listener(|this, _, _, cx| {
+                            this.set_active_response_tab(ResponseTab::Preview, cx);
+                        }),
+                    ))
+                })
                 .child(response_tab_button(
                     "request-response-tab-headers",
                     es_fluent::localize("request_tab_response_tab_headers", None).to_string(),

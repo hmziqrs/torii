@@ -92,6 +92,13 @@ pub(super) fn looks_like_image(media_type: Option<&str>) -> bool {
     matches!(media_type, Some(value) if value.to_ascii_lowercase().starts_with("image/"))
 }
 
+pub(super) fn looks_like_html(media_type: Option<&str>) -> bool {
+    matches!(
+        media_type,
+        Some(value) if value.to_ascii_lowercase() == "text/html"
+    )
+}
+
 pub(super) fn is_text_like_media_type(media_type: Option<&str>) -> bool {
     let Some(media_type) = media_type else {
         return true;
