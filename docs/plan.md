@@ -234,6 +234,8 @@ Blob/file storage should cover:
 - `Phase 0`: completed
 - `Phase 1`: completed
 - `Phase 2`: completed on 2026-04-11
+- `Phase 3`: in progress
+- `Phase 3.5`: pending
 
 Phase 2 completion summary:
 
@@ -380,6 +382,62 @@ Exit criteria:
 - Response previews respect memory caps
 - Full response bodies can be reopened from disk
 - Cancelled requests never re-enter completed UI state from a late response
+
+## Phase 3.5 (P0): Response Presentation and Request Editor Usability
+
+Goal: make the request-response loop actually usable day-to-day, not just lifecycle-correct.
+
+Phase 3 made send/save/cancel safe at the state and persistence layer, but the response panel is a single flat dump and the request editor is a list of bare input fields. This phase closes the gap between "the lifecycle works" and "a developer can actually use this to debug an API."
+
+Detailed execution document: [docs/phase-3.5.md](docs/phase-3.5.md) (to be created)
+
+Scope:
+
+- Tabbed response panel with four tabs:
+  - Body (current preview, plus pretty-print and raw toggle)
+  - Headers (key-value table for response headers)
+  - Cookies (key-value table for response cookies parsed from Set-Cookie headers)
+  - Timing (total time, TTFB, with placeholders for DNS/TCP/TLS phases when middleware supports them)
+- Classified error display:
+  - DNS failure → "Could not resolve host: {host}"
+  - Connection refused → "Connection refused: {host}:{port}"
+  - Connection timeout → "Connection timed out"
+  - TLS error → "TLS handshake failed: {reason}"
+  - Generic → simplified reason with expandable detail
+- Response metadata bar:
+  - status code with color coding (2xx green, 3xx blue, 4xx yellow, 5xx red)
+  - status text
+  - response size (formatted: B / KB / MB)
+  - total time
+- Response body improvements:
+  - copy response body to clipboard
+  - save response body to file
+  - image preview for image/* media types
+  - XML/HTML pretty-print alongside existing JSON pretty-print
+  - search within response body
+- Request editor improvements:
+  - tabbed request builder (Params, Auth, Headers, Body, Scripts, Settings) instead of flat sections
+  - key-value editor component for headers and params (add/remove/enable/disable rows)
+  - auth type selector dropdown with inline credential fields
+  - body type selector dropdown (none, raw text, raw JSON, urlencoded, form-data, binary)
+- Keyboard shortcut expansion:
+  - Cmd+W — close tab
+  - Cmd+N — new request
+  - Cmd+D — duplicate request
+  - Cmd+Shift+] / [ — next/prev tab
+  - Cmd+L — focus URL bar
+  - Cmd+\ — toggle sidebar
+
+Exit criteria:
+
+- Response panel shows body, headers, cookies, and timing in separate tabs
+- Network errors display human-readable messages with actionable guidance
+- Response metadata bar shows status code, size, and time at a glance
+- Copy and save response actions work for all body types
+- Request editor uses tabbed layout with structured editors for headers, params, auth, and body
+- All new shortcuts are documented and functional
+
+## Phase 4 (P1): Collections, Folders, Environments, and Drag/Drop
 
 ## Phase 4 (P1): Collections, Folders, Environments, and Drag/Drop
 
@@ -547,8 +605,9 @@ Every phase should ship with the relevant tests, not as a later cleanup item.
 2. [x] Land DB schema + repositories + blob storage
 3. Build workspace/session/tab system
 4. Build REST editor and response lifecycle
-5. Build tree CRUD + drag/drop + environments
-6. Add history surfaces
+5. Build response presentation and request editor usability
+6. Build tree CRUD + drag/drop + environments
+7. Add history surfaces
 7. Add GraphQL, WS, and gRPC
 8. Add local folder mode
 9. Add Git integration
