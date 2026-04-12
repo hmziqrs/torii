@@ -648,6 +648,7 @@ impl RequestTabView {
             },
         ));
 
+        let this_entity = cx.entity();
         let mut this = Self {
             editor,
             focus_handle: cx.focus_handle(),
@@ -707,7 +708,7 @@ impl RequestTabView {
             }),
             params_kv_table: cx.new(|cx| {
                 TableState::new(
-                    kv_editor::KvTableDelegate::new(cx.entity(), KvTarget::Params, "params"),
+                    kv_editor::KvTableDelegate::new(this_entity.clone(), KvTarget::Params, "params"),
                     window,
                     cx,
                 )
@@ -719,7 +720,7 @@ impl RequestTabView {
             }),
             headers_kv_table: cx.new(|cx| {
                 TableState::new(
-                    kv_editor::KvTableDelegate::new(cx.entity(), KvTarget::Headers, "headers"),
+                    kv_editor::KvTableDelegate::new(this_entity.clone(), KvTarget::Headers, "headers"),
                     window,
                     cx,
                 )
@@ -731,7 +732,7 @@ impl RequestTabView {
             }),
             body_urlencoded_kv_table: cx.new(|cx| {
                 TableState::new(
-                    kv_editor::KvTableDelegate::new(cx.entity(), KvTarget::BodyUrlEncoded, "body-urlencoded"),
+                    kv_editor::KvTableDelegate::new(this_entity.clone(), KvTarget::BodyUrlEncoded, "body-urlencoded"),
                     window,
                     cx,
                 )
@@ -743,7 +744,7 @@ impl RequestTabView {
             }),
             body_form_text_kv_table: cx.new(|cx| {
                 TableState::new(
-                    kv_editor::KvTableDelegate::new(cx.entity(), KvTarget::BodyFormDataText, "body-form-text"),
+                    kv_editor::KvTableDelegate::new(this_entity.clone(), KvTarget::BodyFormDataText, "body-form-text"),
                     window,
                     cx,
                 )
