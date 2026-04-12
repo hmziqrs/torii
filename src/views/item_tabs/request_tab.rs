@@ -29,6 +29,16 @@ use crate::{
 
 actions!(request_tab, [SaveRequest, SendRequest, CancelRequest]);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RequestSectionTab {
+    Params,
+    Auth,
+    Headers,
+    Body,
+    Scripts,
+    Tests,
+}
+
 pub struct RequestTabView {
     editor: RequestEditorState,
     focus_handle: FocusHandle,
@@ -43,6 +53,7 @@ pub struct RequestTabView {
     tests_input: Entity<InputState>,
     timeout_input: Entity<InputState>,
     follow_redirects_input: Entity<InputState>,
+    active_section: RequestSectionTab,
     loaded_full_body_blob_id: Option<String>,
     loaded_full_body_text: Option<String>,
     _subscriptions: Vec<Subscription>,
@@ -338,6 +349,7 @@ impl RequestTabView {
             tests_input,
             timeout_input,
             follow_redirects_input,
+            active_section: RequestSectionTab::Params,
             loaded_full_body_blob_id: None,
             loaded_full_body_text: None,
             _subscriptions: subscriptions,
@@ -991,6 +1003,66 @@ impl RequestTabView {
         *destination_ref = Some(new_ref.key_name);
         Ok(())
     }
+
+    fn set_active_section(&mut self, section: RequestSectionTab, cx: &mut Context<Self>) {
+        if self.active_section != section {
+            self.active_section = section;
+            cx.notify();
+        }
+    }
+
+    fn open_settings_dialog(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let timeout_input = self.timeout_input.clone();
+        let follow_redirects_input = self.follow_redirects_input.clone();
+
+        window.open_dialog(cx, move |dialog, _, _| {
+            dialog
+                .title(es_fluent::localize("request_tab_settings_label", None))
+                .overlay_closable(true)
+                .keyboard(true)
+                .child(
+                    v_flex()
+                        .gap_3()
+                        .child(
+                            v_flex()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                                        .child(es_fluent::localize("request_tab_timeout_label", None)),
+                                )
+                                .child(Input::new(&timeout_input).large()),
+                        )
+                        .child(
+                            v_flex()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                                        .child(es_fluent::localize(
+                                            "request_tab_follow_redirects_label",
+                                            None,
+                                        )),
+                                )
+                                .child(Input::new(&follow_redirects_input).large()),
+                        ),
+                )
+                .footer(
+                    h_flex()
+                        .justify_end()
+                        .child(
+                            Button::new("request-settings-close")
+                                .primary()
+                                .label(es_fluent::localize("request_tab_dirty_close_cancel", None))
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                }),
+                        ),
+                )
+        });
+    }
 }
 
 fn build_execution_service(
@@ -1113,7 +1185,7 @@ impl Render for RequestTabView {
                 };
 
                 div()
-                    .gap_3()
+                    .gap_2()
                     .child(
                         h_flex().gap_3().child(
                             div()
@@ -1194,11 +1266,67 @@ impl Render for RequestTabView {
         };
 
         let auth_label = auth_type_label(&request.auth);
+        let latest_run = self
+            .editor
+            .latest_history_id()
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| es_fluent::localize("request_tab_latest_run_none", None).to_string());
+
+        let section_content = match self.active_section {
+            RequestSectionTab::Params => v_flex()
+                .gap_2()
+                .child(Input::new(&self.params_input).large())
+                .into_any_element(),
+            RequestSectionTab::Auth => v_flex()
+                .gap_2()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                        .child(auth_label),
+                )
+                .child(Input::new(&self.auth_input).large())
+                .into_any_element(),
+            RequestSectionTab::Headers => v_flex()
+                .gap_2()
+                .child(Input::new(&self.headers_input).large())
+                .into_any_element(),
+            RequestSectionTab::Body => v_flex()
+                .gap_2()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                        .child(body_kind_label(&request.body)),
+                )
+                .child(Input::new(&self.body_input).large())
+                .into_any_element(),
+            RequestSectionTab::Scripts => v_flex()
+                .gap_2()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                        .child(es_fluent::localize("request_tab_pre_request_label", None)),
+                )
+                .child(Input::new(&self.pre_request_input).large())
+                .into_any_element(),
+            RequestSectionTab::Tests => v_flex()
+                .gap_2()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                        .child(es_fluent::localize("request_tab_tests_label", None)),
+                )
+                .child(Input::new(&self.tests_input).large())
+                .into_any_element(),
+        };
 
         v_flex()
             .size_full()
-            .p_6()
-            .gap_5()
+            .p_4()
+            .gap_3()
             .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(Self::handle_save_request))
             .on_action(cx.listener(Self::handle_send_request))
@@ -1209,11 +1337,27 @@ impl Render for RequestTabView {
                     .justify_between()
                     .child(
                         div()
-                            .text_2xl()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .child(es_fluent::localize("request_tab_title", None)),
+                            .text_xs()
+                            .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                            .child(es_fluent::localize("request_tab_name_label", None)),
                     )
                     .child(dirty_indicator),
+            )
+            .child(Input::new(&self.name_input).large())
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_end()
+                    .child(div().w_32().child(Input::new(&self.method_input).large()))
+                    .child(div().flex_1().child(Input::new(&self.url_input).large()))
+                    .child(
+                        Button::new("request-send")
+                            .primary()
+                            .label(es_fluent::localize("request_tab_action_send", None))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.send(cx);
+                            })),
+                    ),
             )
             .child(
                 h_flex()
@@ -1230,9 +1374,7 @@ impl Render for RequestTabView {
                                         cx,
                                     );
                                 }
-                                Err(err) => {
-                                    window.push_notification(err, cx);
-                                }
+                                Err(err) => window.push_notification(err, cx),
                             })),
                     )
                     .child(
@@ -1247,19 +1389,9 @@ impl Render for RequestTabView {
                                             cx,
                                         );
                                     }
-                                    Err(err) => {
-                                        window.push_notification(err, cx);
-                                    }
+                                    Err(err) => window.push_notification(err, cx),
                                 },
                             )),
-                    )
-                    .child(
-                        Button::new("request-send")
-                            .primary()
-                            .label(es_fluent::localize("request_tab_action_send", None))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.send(cx);
-                            })),
                     )
                     .child(
                         Button::new("request-cancel")
@@ -1279,210 +1411,97 @@ impl Render for RequestTabView {
                     ),
             )
             .child(
-                v_flex()
-                    .gap_2()
-                    .p_3()
-                    .rounded(px(6.))
-                    .border_1()
+                h_flex()
+                    .justify_between()
+                    .items_center()
                     .child(
-                        div()
-                            .text_sm()
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .child(es_fluent::localize("request_tab_name_label", None)),
-                    )
-                    .child(Input::new(&self.name_input).large()),
-            )
-            .child(
-                v_flex().gap_2().p_3().rounded(px(6.)).border_1().child(
-                    h_flex()
-                        .gap_3()
-                        .items_end()
-                        .child(
-                            v_flex()
-                                .w_32()
-                                .gap_2()
-                                .child(
-                                    div().text_sm().font_weight(gpui::FontWeight::MEDIUM).child(
-                                        es_fluent::localize("request_tab_method_label", None),
-                                    ),
-                                )
-                                .child(Input::new(&self.method_input).large()),
-                        )
-                        .child(
-                            v_flex()
-                                .flex_1()
-                                .gap_2()
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .font_weight(gpui::FontWeight::MEDIUM)
-                                        .child(es_fluent::localize("request_tab_url_label", None)),
-                                )
-                                .child(Input::new(&self.url_input).large()),
-                        ),
-                ),
-            )
-            .child(
-                v_flex()
-                    .gap_2()
-                    .p_3()
-                    .rounded(px(6.))
-                    .border_1()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .child(es_fluent::localize("request_tab_params_label", None)),
-                    )
-                    .child(Input::new(&self.params_input).large()),
-            )
-            .child(
-                v_flex()
-                    .gap_2()
-                    .p_3()
-                    .rounded(px(6.))
-                    .border_1()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .child(es_fluent::localize("request_tab_auth_label", None)),
-                    )
-                    .child(div().text_xs().text_color(gpui::hsla(0., 0., 0.45, 1.)).child(auth_label))
-                    .child(Input::new(&self.auth_input).large()),
-            )
-            .child(
-                v_flex()
-                    .gap_2()
-                    .p_3()
-                    .rounded(px(6.))
-                    .border_1()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .child(es_fluent::localize("request_tab_headers_label", None)),
-                    )
-                    .child(Input::new(&self.headers_input).large()),
-            )
-            .child(
-                v_flex()
-                    .gap_2()
-                    .p_3()
-                    .rounded(px(6.))
-                    .border_1()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .child(es_fluent::localize("request_tab_body_label", None)),
+                        div().text_xs().text_color(gpui::hsla(0., 0., 0.45, 1.)).child(format!(
+                            "{}: {}",
+                            es_fluent::localize("request_tab_latest_run_label", None),
+                            latest_run
+                        )),
                     )
                     .child(
-                        div()
-                            .text_xs()
-                            .text_color(gpui::hsla(0., 0., 0.45, 1.))
-                            .child(body_kind_label(&request.body)),
-                    )
-                    .child(Input::new(&self.body_input).large()),
-            )
-            .child(
-                v_flex()
-                    .gap_2()
-                    .p_3()
-                    .rounded(px(6.))
-                    .border_1()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .child(es_fluent::localize("request_tab_scripts_label", None)),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(gpui::hsla(0., 0., 0.45, 1.))
-                            .child(es_fluent::localize("request_tab_pre_request_label", None)),
-                    )
-                    .child(Input::new(&self.pre_request_input).large())
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(gpui::hsla(0., 0., 0.45, 1.))
-                            .child(es_fluent::localize("request_tab_tests_label", None)),
-                    )
-                    .child(Input::new(&self.tests_input).large()),
-            )
-            .child(
-                v_flex()
-                    .gap_2()
-                    .p_3()
-                    .rounded(px(6.))
-                    .border_1()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .child(es_fluent::localize("request_tab_settings_label", None)),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_3()
-                            .items_end()
-                            .child(
-                                v_flex()
-                                    .w_40()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(gpui::hsla(0., 0., 0.45, 1.))
-                                            .child(es_fluent::localize(
-                                                "request_tab_timeout_label",
-                                                None,
-                                            )),
-                                    )
-                                    .child(Input::new(&self.timeout_input).large()),
-                            )
-                            .child(
-                                v_flex()
-                                    .w_40()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(gpui::hsla(0., 0., 0.45, 1.))
-                                            .child(es_fluent::localize(
-                                                "request_tab_follow_redirects_label",
-                                                None,
-                                            )),
-                                    )
-                                    .child(Input::new(&self.follow_redirects_input).large()),
-                            ),
+                        Button::new("request-settings-open")
+                            .ghost()
+                            .label(es_fluent::localize("request_tab_settings_label", None))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_settings_dialog(window, cx);
+                            })),
                     ),
             )
             .child(
+                h_flex()
+                    .gap_1()
+                    .flex_wrap()
+                    .child(
+                        section_tab_button(
+                            "request-tab-params",
+                            es_fluent::localize("request_tab_params_label", None).to_string(),
+                            self.active_section == RequestSectionTab::Params,
+                            cx.listener(|this, _, _, cx| {
+                                this.set_active_section(RequestSectionTab::Params, cx);
+                            }),
+                        ),
+                    )
+                    .child(
+                        section_tab_button(
+                            "request-tab-auth",
+                            es_fluent::localize("request_tab_auth_label", None).to_string(),
+                            self.active_section == RequestSectionTab::Auth,
+                            cx.listener(|this, _, _, cx| {
+                                this.set_active_section(RequestSectionTab::Auth, cx);
+                            }),
+                        ),
+                    )
+                    .child(
+                        section_tab_button(
+                            "request-tab-headers",
+                            es_fluent::localize("request_tab_headers_label", None).to_string(),
+                            self.active_section == RequestSectionTab::Headers,
+                            cx.listener(|this, _, _, cx| {
+                                this.set_active_section(RequestSectionTab::Headers, cx);
+                            }),
+                        ),
+                    )
+                    .child(
+                        section_tab_button(
+                            "request-tab-body",
+                            es_fluent::localize("request_tab_body_label", None).to_string(),
+                            self.active_section == RequestSectionTab::Body,
+                            cx.listener(|this, _, _, cx| {
+                                this.set_active_section(RequestSectionTab::Body, cx);
+                            }),
+                        ),
+                    )
+                    .child(
+                        section_tab_button(
+                            "request-tab-scripts",
+                            es_fluent::localize("request_tab_scripts_label", None).to_string(),
+                            self.active_section == RequestSectionTab::Scripts,
+                            cx.listener(|this, _, _, cx| {
+                                this.set_active_section(RequestSectionTab::Scripts, cx);
+                            }),
+                        ),
+                    )
+                    .child(
+                        section_tab_button(
+                            "request-tab-tests",
+                            es_fluent::localize("request_tab_tests_label", None).to_string(),
+                            self.active_section == RequestSectionTab::Tests,
+                            cx.listener(|this, _, _, cx| {
+                                this.set_active_section(RequestSectionTab::Tests, cx);
+                            }),
+                        ),
+                    ),
+            )
+            .child(
                 v_flex()
                     .gap_2()
                     .p_3()
                     .rounded(px(6.))
                     .border_1()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .child(es_fluent::localize("request_tab_latest_run_label", None)),
-                    )
-                    .child(
-                        div().text_sm().child(
-                            self.editor
-                                .latest_history_id()
-                                .map(|id| id.to_string())
-                                .unwrap_or_else(|| {
-                                    es_fluent::localize("request_tab_latest_run_none", None)
-                                        .to_string()
-                                }),
-                        ),
-                    ),
+                    .child(section_content),
             )
             .when(
                 matches!(save_status, SaveStatus::SaveFailed { .. }),
@@ -1509,6 +1528,19 @@ impl Render for RequestTabView {
                     )
                     .child(response_panel),
             )
+    }
+}
+
+fn section_tab_button(
+    id: &'static str,
+    label: String,
+    active: bool,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+) -> Button {
+    if active {
+        Button::new(id).primary().label(label).on_click(on_click)
+    } else {
+        Button::new(id).ghost().label(label).on_click(on_click)
     }
 }
 
