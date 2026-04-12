@@ -35,6 +35,7 @@ Status legend: `done` / `partial` / `pending`
 - Slice 6 (Body structured editor + streamed request payload): `partial`
   - done: method dropdown replacing freeform method-only editing.
   - done: body type dropdown + per-type panels for None/Raw Text/Raw JSON/URL Encoded; removed `body_input` and `body_editor_value()`.
+  - done: Raw JSON now uses `InputState::code_editor` (line numbers + searchable), and Raw Text/Scripts/Tests use multiline editor-mode input with fixed editor heights.
   - pending: Form Data/Binary file picker UX (pick/replace/clear), >100 MB confirmation, streamed outbound request payload abstraction for large binary/form-data, extract `body_editor.rs`.
 - Slice 7 (Keyboard shortcuts): `done`
   - implemented: close tab, new request, duplicate request, next/prev tab, focus URL bar, toggle sidebar, toggle body search.

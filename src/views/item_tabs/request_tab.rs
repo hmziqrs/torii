@@ -7,7 +7,7 @@ use gpui_component::{
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
     h_flex,
-    input::{Input, InputEvent, InputState},
+    input::{Input, InputEvent, InputState, TabSize},
     select::{Select, SelectEvent, SelectState},
     v_flex,
 };
@@ -286,26 +286,51 @@ impl RequestTabView {
             select
         });
         let body_raw_text_input = cx.new(|cx| {
-            let mut state = InputState::new(window, cx);
+            let mut state = InputState::new(window, cx)
+                .multi_line(true)
+                .rows(10)
+                .searchable(true)
+                .soft_wrap(true);
             if let BodyType::RawText { content } = &initial.body {
                 state.set_value(content.clone(), window, cx);
             }
             state
         });
         let body_raw_json_input = cx.new(|cx| {
-            let mut state = InputState::new(window, cx);
+            let mut state = InputState::new(window, cx)
+                .code_editor("json")
+                .line_number(true)
+                .indent_guides(true)
+                .tab_size(TabSize {
+                    tab_size: 4,
+                    hard_tabs: false,
+                })
+                .searchable(true)
+                .soft_wrap(false);
             if let BodyType::RawJson { content } = &initial.body {
                 state.set_value(content.clone(), window, cx);
             }
             state
         });
         let pre_request_input = cx.new(|cx| {
-            let mut state = InputState::new(window, cx);
+            let mut state = InputState::new(window, cx)
+                .code_editor("javascript")
+                .multi_line(true)
+                .rows(10)
+                .line_number(true)
+                .searchable(true)
+                .soft_wrap(false);
             state.set_value(initial.scripts.pre_request.clone(), window, cx);
             state
         });
         let tests_input = cx.new(|cx| {
-            let mut state = InputState::new(window, cx);
+            let mut state = InputState::new(window, cx)
+                .code_editor("javascript")
+                .multi_line(true)
+                .rows(10)
+                .line_number(true)
+                .searchable(true)
+                .soft_wrap(false);
             state.set_value(initial.scripts.tests.clone(), window, cx);
             state
         });
@@ -2550,6 +2575,8 @@ impl Render for RequestTabView {
                     .map(|row| (row.id, row.enabled, row.key_input.clone(), row.value_input.clone()))
                     .collect::<Vec<_>>();
                 v_flex()
+                    .w_full()
+                    .items_stretch()
                     .gap_2()
                     .child(
                         div()
@@ -2564,11 +2591,13 @@ impl Render for RequestTabView {
                             .text_color(gpui::hsla(0., 0., 0.45, 1.))
                             .child(es_fluent::localize("request_tab_body_none_hint", None))
                             .into_any_element(),
-                        BodyType::RawText { .. } => Input::new(&self.body_raw_text_input)
-                            .large()
+                        BodyType::RawText { .. } => div()
+                            .w_full()
+                            .child(Input::new(&self.body_raw_text_input).w_full().h(px(220.)))
                             .into_any_element(),
-                        BodyType::RawJson { .. } => Input::new(&self.body_raw_json_input)
-                            .large()
+                        BodyType::RawJson { .. } => div()
+                            .w_full()
+                            .child(Input::new(&self.body_raw_json_input).w_full().h(px(220.)))
                             .into_any_element(),
                         BodyType::UrlEncoded { .. } => v_flex()
                             .gap_2()
@@ -2639,7 +2668,11 @@ impl Render for RequestTabView {
                         .text_color(gpui::hsla(0., 0., 0.45, 1.))
                         .child(es_fluent::localize("request_tab_pre_request_label", None)),
                 )
-                .child(Input::new(&self.pre_request_input).large())
+                .child(
+                    div()
+                        .w_full()
+                        .child(Input::new(&self.pre_request_input).h(px(240.))),
+                )
                 .into_any_element(),
             RequestSectionTab::Tests => v_flex()
                 .gap_2()
@@ -2649,7 +2682,11 @@ impl Render for RequestTabView {
                         .text_color(gpui::hsla(0., 0., 0.45, 1.))
                         .child(es_fluent::localize("request_tab_tests_label", None)),
                 )
-                .child(Input::new(&self.tests_input).large())
+                .child(
+                    div()
+                        .w_full()
+                        .child(Input::new(&self.tests_input).h(px(240.))),
+                )
                 .into_any_element(),
         };
 
@@ -2830,11 +2867,13 @@ impl Render for RequestTabView {
             )
             .child(
                 v_flex()
+                    .w_full()
+                    .items_stretch()
                     .gap_2()
                     .p_3()
                     .rounded(px(6.))
                     .border_1()
-                    .child(section_content),
+                    .child(div().w_full().child(section_content)),
             )
             .when(
                 matches!(save_status, SaveStatus::SaveFailed { .. }),
