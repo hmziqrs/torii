@@ -580,34 +580,36 @@ fn render_completed_response(
         );
 
     // -- HTML Preview via embedded WebView ------------------------------------
+    // -- HTML Preview via on-demand WebView ----------------------------------
     let is_preview_active = view.active_response_tab == ResponseTab::Preview;
-    if is_preview_active && is_html {
+    if is_preview_active && is_html && !html_body_for_preview.is_empty() {
         view.ensure_html_webview(window, cx);
-    }
-    if let Some(webview) = &view.html_webview {
-        if is_preview_active && is_html && !html_body_for_preview.is_empty() {
+        if let Some(webview) = &view.html_webview {
             webview.update(cx, |w, _| {
                 let _ = w.raw().load_html(&html_body_for_preview);
                 w.show();
             });
-        } else {
-            webview.update(cx, |w, _| w.hide());
         }
+    } else {
+        // Drop the webview when leaving the Preview tab
+        view.html_webview = None;
     }
-    let preview_content = if is_html && view.html_webview.is_some() {
+    let preview_content = if is_html && is_preview_active && view.html_webview.is_some() {
         div()
             .h(px(400.))
             .child(view.html_webview.clone().unwrap())
-    } else if is_html {
+    } else if is_html && html_body_for_preview.is_empty() {
         div()
             .text_sm()
             .text_color(gpui::hsla(0., 0., 0.5, 1.))
             .child(es_fluent::localize("request_tab_response_preview_empty", None))
-    } else {
+    } else if !is_html {
         div()
             .text_sm()
             .text_color(gpui::hsla(0., 0., 0.5, 1.))
             .child(es_fluent::localize("request_tab_response_preview_not_html", None))
+    } else {
+        div()
     };
 
     let active_content = match view.active_response_tab {

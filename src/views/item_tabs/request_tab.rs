@@ -1945,7 +1945,7 @@ impl RequestTabView {
         }
     }
 
-    /// Lazily create the HTML webview if it doesn't exist yet.
+    /// Create a fresh HTML webview for on-demand preview rendering.
     fn ensure_html_webview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.html_webview.is_some() {
             return;
@@ -1954,14 +1954,13 @@ impl RequestTabView {
         let Ok(window_handle) = window.window_handle() else {
             return;
         };
-        let wry_webview = lb_wry::WebViewBuilder::new()
+        let Some(wry_webview) = lb_wry::WebViewBuilder::new()
             .build_as_child(&window_handle)
-            .ok();
-        if let Some(wry_webview) = wry_webview {
-            let webview = cx.new(|cx| WebView::new(wry_webview, window, cx));
-            webview.update(cx, |w, _| w.hide());
-            self.html_webview = Some(webview);
-        }
+            .ok()
+        else {
+            return;
+        };
+        self.html_webview = Some(cx.new(|cx| WebView::new(wry_webview, window, cx)));
     }
 
     fn current_preview_bytes(&self) -> usize {
