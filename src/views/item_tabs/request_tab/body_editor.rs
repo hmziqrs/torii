@@ -1,5 +1,7 @@
 use super::*;
+use super::helpers::BodyKind;
 use super::kv_editor::render_kv_table;
+use gpui_component::radio::{Radio, RadioGroup};
 
 // ---------------------------------------------------------------------------
 // Body editor rendering — extracted from RequestTabView::render
@@ -27,17 +29,43 @@ pub(super) fn render_body_editor(
         cx,
     );
 
+    let selected = match &request.body {
+        BodyType::None => Some(0),
+        BodyType::RawText { .. } => Some(1),
+        BodyType::RawJson { .. } => Some(2),
+        BodyType::UrlEncoded { .. } => Some(3),
+        BodyType::FormData { .. } => Some(4),
+        BodyType::BinaryFile { .. } => Some(5),
+    };
+
+    let view_entity = cx.entity().clone();
+    let radio_strip = RadioGroup::horizontal("body-type-group")
+        .selected_index(selected)
+        .on_click(move |ix: &usize, _window, cx| {
+            let kind = match ix {
+                0 => BodyKind::None,
+                1 => BodyKind::RawText,
+                2 => BodyKind::RawJson,
+                3 => BodyKind::UrlEncoded,
+                4 => BodyKind::FormData,
+                _ => BodyKind::BinaryFile,
+            };
+            view_entity.update(cx, |this, cx| {
+                this.set_body_kind(kind, cx);
+            });
+        })
+        .child(Radio::new("body-none").label("none"))
+        .child(Radio::new("body-raw-text").label("raw text"))
+        .child(Radio::new("body-raw-json").label("raw json"))
+        .child(Radio::new("body-urlencoded").label("x-www-form-urlencoded"))
+        .child(Radio::new("body-formdata").label("form-data"))
+        .child(Radio::new("body-binary").label("binary"));
+
     v_flex()
         .w_full()
         .items_stretch()
         .gap_2()
-        .child(
-            div()
-                .text_xs()
-                .text_color(muted)
-                .child(es_fluent::localize("request_tab_body_type_label", None)),
-        )
-        .child(div().w_56().child(Select::new(&view.body_type_select)))
+        .child(radio_strip)
         .child(match &request.body {
             BodyType::None => div()
                 .text_xs()

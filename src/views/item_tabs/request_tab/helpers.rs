@@ -368,28 +368,6 @@ pub(super) fn api_key_location_from_index(index: usize) -> ApiKeyLocation {
     }
 }
 
-pub(super) fn body_kind_from_label(label: &str) -> BodyKind {
-    match label {
-        "Raw Text" => BodyKind::RawText,
-        "Raw JSON" => BodyKind::RawJson,
-        "URL Encoded" => BodyKind::UrlEncoded,
-        "Form Data" => BodyKind::FormData,
-        "Binary File" => BodyKind::BinaryFile,
-        _ => BodyKind::None,
-    }
-}
-
-pub(super) fn body_type_index(body: &BodyType) -> usize {
-    match body {
-        BodyType::None => 0,
-        BodyType::RawText { .. } => 1,
-        BodyType::RawJson { .. } => 2,
-        BodyType::UrlEncoded { .. } => 3,
-        BodyType::FormData { .. } => 4,
-        BodyType::BinaryFile { .. } => 5,
-    }
-}
-
 pub(super) fn latest_run_summary(exec_status: &ExecStatus) -> String {
     match exec_status {
         ExecStatus::Idle => es_fluent::localize("request_tab_latest_run_none", None).to_string(),

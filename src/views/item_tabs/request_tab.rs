@@ -109,7 +109,6 @@ pub struct RequestTabView {
     auth_api_key_name_input: Entity<InputState>,
     auth_api_key_value_ref_input: Entity<InputState>,
     auth_api_key_location_select: Entity<SelectState<Vec<&'static str>>>,
-    body_type_select: Entity<SelectState<Vec<&'static str>>>,
     body_raw_text_input: Entity<InputState>,
     body_raw_json_input: Entity<InputState>,
     pre_request_input: Entity<InputState>,
@@ -295,27 +294,6 @@ impl RequestTabView {
             };
             select.set_selected_index(
                 Some(gpui_component::IndexPath::default().row(row)),
-                window,
-                cx,
-            );
-            select
-        });
-        let body_type_select = cx.new(|cx| {
-            let mut select = SelectState::new(
-                vec![
-                    "None",
-                    "Raw Text",
-                    "Raw JSON",
-                    "URL Encoded",
-                    "Form Data",
-                    "Binary File",
-                ],
-                Some(gpui_component::IndexPath::default()),
-                window,
-                cx,
-            );
-            select.set_selected_index(
-                Some(gpui_component::IndexPath::default().row(body_type_index(&initial.body))),
                 window,
                 cx,
             );
@@ -528,22 +506,6 @@ impl RequestTabView {
             },
         ));
 
-        subscriptions.push(cx.subscribe_in(
-            &body_type_select,
-            window,
-            |this: &mut RequestTabView,
-             _: &Entity<SelectState<Vec<&'static str>>>,
-             event: &SelectEvent<Vec<&'static str>>,
-             _window: &mut Window,
-             cx| {
-                let SelectEvent::Confirm(kind) = event;
-                let Some(kind) = kind.clone() else {
-                    return;
-                };
-                this.set_body_kind(body_kind_from_label(kind), cx);
-            },
-        ));
-
         subscriptions.push(cx.subscribe(
             &body_raw_text_input,
             |this: &mut RequestTabView, state: Entity<InputState>, event: &InputEvent, cx| {
@@ -665,7 +627,6 @@ impl RequestTabView {
             auth_api_key_name_input,
             auth_api_key_value_ref_input,
             auth_api_key_location_select,
-            body_type_select,
             body_raw_text_input,
             body_raw_json_input,
             pre_request_input,
@@ -1779,12 +1740,15 @@ impl RequestTabView {
         self.set_auth_kind(self.selected_auth_kind(cx), cx);
     }
 
-    fn selected_body_kind(&self, cx: &App) -> BodyKind {
-        self.body_type_select
-            .read(cx)
-            .selected_value()
-            .map(|label| body_kind_from_label(label))
-            .unwrap_or(BodyKind::None)
+    fn selected_body_kind(&self, _cx: &App) -> BodyKind {
+        match &self.editor.draft().body {
+            BodyType::None => BodyKind::None,
+            BodyType::RawText { .. } => BodyKind::RawText,
+            BodyType::RawJson { .. } => BodyKind::RawJson,
+            BodyType::UrlEncoded { .. } => BodyKind::UrlEncoded,
+            BodyType::FormData { .. } => BodyKind::FormData,
+            BodyType::BinaryFile { .. } => BodyKind::BinaryFile,
+        }
     }
 
     fn set_body_kind(&mut self, kind: BodyKind, cx: &mut Context<Self>) {
@@ -1860,16 +1824,6 @@ impl RequestTabView {
         });
         self.auth_type_select.update(cx, |select, cx| {
             let ix = auth_type_index(&draft.auth);
-            if select.selected_index(cx).map(|it| it.row) != Some(ix) {
-                select.set_selected_index(
-                    Some(gpui_component::IndexPath::default().row(ix)),
-                    window,
-                    cx,
-                );
-            }
-        });
-        self.body_type_select.update(cx, |select, cx| {
-            let ix = body_type_index(&draft.body);
             if select.selected_index(cx).map(|it| it.row) != Some(ix) {
                 select.set_selected_index(
                     Some(gpui_component::IndexPath::default().row(ix)),
