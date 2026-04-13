@@ -49,6 +49,8 @@ pub struct AppRoot {
     request_draft_pages:
         std::collections::HashMap<RequestDraftId, Entity<request_tab::RequestTabView>>,
     _subscriptions: Vec<Subscription>,
+    /// Tracks the previously active tab so we can release webviews on tab switch.
+    previous_active_tab: Option<TabKey>,
 }
 
 impl AppRoot {
@@ -141,6 +143,7 @@ impl AppRoot {
             request_pages: std::collections::HashMap::new(),
             request_draft_pages: std::collections::HashMap::new(),
             _subscriptions: subscriptions,
+            previous_active_tab: None,
         }
     }
 
@@ -270,7 +273,30 @@ impl AppRoot {
         self.persist_session_state(cx);
     }
 
+    /// Release the HTML preview webview for a request tab, if applicable.
+    /// Safe to call with `None` or a non-request tab key — it will be a no-op.
+    fn release_html_webview_for_tab(
+        &mut self,
+        tab_key: Option<TabKey>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab_key) = tab_key else {
+            return;
+        };
+        let page = match tab_key.item().id {
+            Some(ItemId::Request(id)) => self.request_pages.get(&id).cloned(),
+            Some(ItemId::RequestDraft(id)) => self.request_draft_pages.get(&id).cloned(),
+            _ => None,
+        };
+        if let Some(page) = page {
+            page.update(cx, |tab, cx| {
+                tab.release_html_webview(cx);
+            });
+        }
+    }
+
     fn perform_close_tab(&mut self, tab_key: TabKey, cx: &mut Context<Self>) {
+        self.release_html_webview_for_tab(Some(tab_key), cx);
         self.session.update(cx, |session, cx| {
             session.close_tab(tab_key, cx);
         });
@@ -484,6 +510,7 @@ impl AppRoot {
                 if let Some(page) = self.request_pages.get(&id).cloned() {
                     let _ = page.update(cx, |tab, cx| {
                         tab.cancel_send(cx);
+                        tab.release_html_webview(cx);
                     });
                 }
                 self.request_pages.remove(&id);
@@ -994,6 +1021,15 @@ impl Render for AppRoot {
                 tabs,
             )
         };
+
+        // Release the HTML preview webview when switching away from a request tab.
+        // The response panel only cleans up the webview during its own render, but an
+        // inactive tab's render is never called — so we must do it here on tab switch.
+        if self.previous_active_tab != active_tab {
+            self.release_html_webview_for_tab(self.previous_active_tab, cx);
+            self.previous_active_tab = active_tab;
+        }
+
         let weak_root = cx.entity().downgrade();
 
         v_flex()

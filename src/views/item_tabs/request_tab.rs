@@ -1963,6 +1963,22 @@ impl RequestTabView {
         self.html_webview = Some(cx.new(|cx| WebView::new(wry_webview, window, cx)));
     }
 
+    /// Release the HTML preview webview, hiding and dropping the native child view.
+    ///
+    /// This must be called when the tab becomes inactive or is closed; simply setting
+    /// `html_webview = None` during render is insufficient because the render function
+    /// for an inactive tab is never invoked, leaving the wry child view orphaned.
+    pub fn release_html_webview(&mut self, cx: &mut Context<Self>) {
+        if let Some(webview) = self.html_webview.take() {
+            webview.update(cx, |w, _| {
+                w.hide();
+            });
+            // Dropping the Entity<WebView> here decrements the Rc<wry::WebView>
+            // refcount; when it reaches zero the native WKWebView is removed
+            // from the window via removeFromSuperview (macOS) or equivalent.
+        }
+    }
+
     fn current_preview_bytes(&self) -> usize {
         match self.editor.exec_status() {
             ExecStatus::Completed { response } => match &response.body_ref {
