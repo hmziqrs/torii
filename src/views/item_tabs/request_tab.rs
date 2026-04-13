@@ -11,6 +11,7 @@ use gpui_component::{
     table::{Column, TableDelegate, TableState},
     v_flex,
 };
+use gpui_wry::WebView;
 
 use crate::{
     domain::{
@@ -135,6 +136,7 @@ pub struct RequestTabView {
     headers_kv_table: Entity<TableState<kv_editor::KvTableDelegate>>,
     body_urlencoded_kv_table: Entity<TableState<kv_editor::KvTableDelegate>>,
     body_form_text_kv_table: Entity<TableState<kv_editor::KvTableDelegate>>,
+    html_webview: Option<Entity<WebView>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -755,6 +757,7 @@ impl RequestTabView {
                 .col_movable(false)
                 .sortable(false)
             }),
+            html_webview: None,
             _subscriptions: subscriptions,
         };
         this.rebuild_kv_rows(KvTarget::Params, &initial.params, window, cx);
@@ -1939,6 +1942,25 @@ impl RequestTabView {
 
         if self.input_sync_guard.leave_and_take_deferred() {
             cx.notify();
+        }
+    }
+
+    /// Lazily create the HTML webview if it doesn't exist yet.
+    fn ensure_html_webview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.html_webview.is_some() {
+            return;
+        }
+        use raw_window_handle::HasWindowHandle;
+        let Ok(window_handle) = window.window_handle() else {
+            return;
+        };
+        let wry_webview = lb_wry::WebViewBuilder::new()
+            .build_as_child(&window_handle)
+            .ok();
+        if let Some(wry_webview) = wry_webview {
+            let webview = cx.new(|cx| WebView::new(wry_webview, window, cx));
+            webview.update(cx, |w, _| w.hide());
+            self.html_webview = Some(webview);
         }
     }
 

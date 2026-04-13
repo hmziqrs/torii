@@ -269,6 +269,7 @@ request_tab_response_size = 大小
 request_tab_response_total_time = 总耗时
 request_tab_response_body_empty = 响应体为空。
 request_tab_response_preview_empty = 无 HTML 内容可预览。
+request_tab_response_preview_not_html = 预览仅适用于 HTML 响应。
 request_tab_response_headers_empty = 无响应头。
 request_tab_response_headers_col_name = 名称
 request_tab_response_headers_col_value = 值

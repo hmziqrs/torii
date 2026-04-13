@@ -11,6 +11,9 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", features = [
 ] }
 gpui-component = { git = "https://github.com/longbridge/gpui-component" }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component" }
+gpui-wry = { git = "https://github.com/longbridge/gpui-component" }
+lb-wry = { version = "0.53.3", package = "lb-wry" }
+raw-window-handle = { version = "0.6", features = ["std"] }
 anyhow = "1"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
@@ -62,6 +65,9 @@ gpui.workspace = true
 gpui_platform.workspace = true
 gpui-component.workspace = true
 gpui-component-assets.workspace = true
+gpui-wry.workspace = true
+lb-wry.workspace = true
+raw-window-handle.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true

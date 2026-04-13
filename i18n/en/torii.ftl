@@ -269,6 +269,7 @@ request_tab_response_size = Size
 request_tab_response_total_time = Total
 request_tab_response_body_empty = Response body is empty.
 request_tab_response_preview_empty = No HTML content to preview.
+request_tab_response_preview_not_html = Preview is only available for HTML responses.
 request_tab_response_headers_empty = No response headers.
 request_tab_response_headers_col_name = Name
 request_tab_response_headers_col_value = Value

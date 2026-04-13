@@ -1,7 +1,6 @@
 use super::*;
 use crate::domain::response::ResponseHeaderRow;
 use gpui_component::table::DataTable;
-use gpui_component::text::html;
 
 // ---------------------------------------------------------------------------
 // Table delegates for response headers and cookies
@@ -348,7 +347,7 @@ pub(super) fn render_response_panel(
 fn render_completed_response(
     view: &mut RequestTabView,
     resp: &crate::domain::response::ResponseSummary,
-    _window: &mut Window,
+    window: &mut Window,
     cx: &mut Context<RequestTabView>,
 ) -> gpui::Div {
     let status_color = status_code_color(resp.status_code);
@@ -580,20 +579,35 @@ fn render_completed_response(
                 })),
         );
 
-    let preview_content = if is_html && !html_body_for_preview.is_empty() {
+    // -- HTML Preview via embedded WebView ------------------------------------
+    let is_preview_active = view.active_response_tab == ResponseTab::Preview;
+    if is_preview_active && is_html {
+        view.ensure_html_webview(window, cx);
+    }
+    if let Some(webview) = &view.html_webview {
+        if is_preview_active && is_html && !html_body_for_preview.is_empty() {
+            webview.update(cx, |w, _| {
+                let _ = w.raw().load_html(&html_body_for_preview);
+                w.show();
+            });
+        } else {
+            webview.update(cx, |w, _| w.hide());
+        }
+    }
+    let preview_content = if is_html && view.html_webview.is_some() {
         div()
             .h(px(400.))
-            .child(
-                html(SharedString::from(html_body_for_preview))
-                    .p_3()
-                    .scrollable(true)
-                    .selectable(true),
-            )
-    } else {
+            .child(view.html_webview.clone().unwrap())
+    } else if is_html {
         div()
             .text_sm()
             .text_color(gpui::hsla(0., 0., 0.5, 1.))
             .child(es_fluent::localize("request_tab_response_preview_empty", None))
+    } else {
+        div()
+            .text_sm()
+            .text_color(gpui::hsla(0., 0., 0.5, 1.))
+            .child(es_fluent::localize("request_tab_response_preview_not_html", None))
     };
 
     let active_content = match view.active_response_tab {
