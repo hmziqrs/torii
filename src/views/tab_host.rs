@@ -1,7 +1,7 @@
 use gpui::{
     AnyElement, App, AppContext as _, ClickEvent, InteractiveElement as _, IntoElement,
     ParentElement, Render, SharedString, StatefulInteractiveElement as _, StyleRefinement,
-    Styled as _, Window, div, rgb,
+    Styled as _, Window, div, px, rgb,
 };
 use gpui_component::{
     Icon, IconName, Selectable as _, Sizable as _, Size,
@@ -165,6 +165,7 @@ impl Render for DragTabPreview {
 
 fn build_tab(title: SharedString, icon: IconName, selected: bool) -> Tab {
     Tab::new()
+        .w(px(160.))
         .label(title)
         .prefix(div().pl_2().child(Icon::new(icon).size_3p5()))
         .selected(selected)

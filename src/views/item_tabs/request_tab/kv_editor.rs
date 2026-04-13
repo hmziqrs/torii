@@ -1,4 +1,5 @@
 use super::*;
+use gpui_component::IconName;
 use gpui_component::table::DataTable;
 
 // ---------------------------------------------------------------------------
@@ -102,18 +103,16 @@ impl TableDelegate for KvTableDelegate {
             1 => div()
                 .child(
                     Input::new(&row.key_input)
-                        .appearance(true)
-                        .bordered(true)
-                        .rounded(px(0.)),
+                        .appearance(false)
+                        .bordered(false),
                 )
                 .into_any_element(),
             // Value input
             2 => div()
                 .child(
                     Input::new(&row.value_input)
-                        .appearance(true)
-                        .bordered(true)
-                        .rounded(px(0.)),
+                        .appearance(false)
+                        .bordered(false),
                 )
                 .into_any_element(),
             // Remove button
@@ -167,17 +166,26 @@ pub(super) fn render_kv_table(
         state.refresh(cx);
     });
 
+    // Dynamic height that grows with rows, capped at 8 visible
+    let row_height: f32 = 32.;
+    let header_height: f32 = 36.;
+    let max_rows_visible = 8;
+    let rows_visible = (rows.len() + 1).min(max_rows_visible);
+    let table_height = header_height + rows_visible as f32 * row_height;
+
     let target_for_add = target;
     v_flex()
         .gap_2()
         .child(
             div()
-                .h(px(200.))
+                .h(px(table_height))
                 .child(DataTable::new(table).bordered(true)),
         )
         .child(
             Button::new(prefix)
-                .outline()
+                .ghost()
+                .small()
+                .icon(IconName::Plus)
                 .label(es_fluent::localize("request_tab_kv_add_row", None))
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.add_kv_row(target_for_add, window, cx);

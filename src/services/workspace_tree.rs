@@ -239,6 +239,134 @@ impl WorkspaceCatalog {
         }
     }
 
+    /// Walk the tree top-down to locate the target item, collecting path segments.
+    /// Returns an empty vec for Settings/About or if the item isn't found.
+    pub fn find_breadcrumb_path(&self, item: ItemKey) -> Vec<String> {
+        let Some(id) = &item.id else {
+            return Vec::new();
+        };
+        match item.kind {
+            ItemKind::Workspace => {
+                if let ItemId::Workspace(wid) = id {
+                    if let Some(ws) = self.workspaces.iter().find(|w| w.id == *wid) {
+                        return vec![ws.name.clone()];
+                    }
+                }
+            }
+            ItemKind::Collection => {
+                if let ItemId::Collection(cid) = id {
+                    if let Some(ws) = &self.selected_workspace {
+                        let ws_name = ws.workspace.name.clone();
+                        if let Some(col) = ws.collections.iter().find(|c| c.collection.id == *cid) {
+                            return vec![ws_name, col.collection.name.clone()];
+                        }
+                    }
+                }
+            }
+            ItemKind::Folder => {
+                if let ItemId::Folder(fid) = id {
+                    if let Some(ws) = &self.selected_workspace {
+                        let ws_name = ws.workspace.name.clone();
+                        for col in &ws.collections {
+                            if let Some(folder) = col.find_folder_tree(*fid) {
+                                return vec![
+                                    ws_name.clone(),
+                                    col.collection.name.clone(),
+                                    folder.folder.name.clone(),
+                                ];
+                            }
+                        }
+                    }
+                }
+            }
+            ItemKind::Request => {
+                if let ItemId::Request(rid) = id {
+                    if let Some(ws) = &self.selected_workspace {
+                        let ws_name = ws.workspace.name.clone();
+                        for col in &ws.collections {
+                            if let Some(path) =
+                                Self::find_request_path(&ws_name, col, *rid)
+                            {
+                                return path;
+                            }
+                        }
+                    }
+                }
+            }
+            ItemKind::Environment => {
+                if let ItemId::Environment(eid) = id {
+                    if let Some(ws) = &self.selected_workspace {
+                        let ws_name = ws.workspace.name.clone();
+                        if let Some(env) = ws.environments.iter().find(|e| e.id == *eid) {
+                            return vec![ws_name, env.name.clone()];
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        Vec::new()
+    }
+
+    fn find_request_path(
+        ws_name: &str,
+        col: &CollectionTree,
+        request_id: crate::domain::ids::RequestId,
+    ) -> Option<Vec<String>> {
+        for item in &col.children {
+            match item {
+                TreeItem::Request(r) if r.id == request_id => {
+                    return Some(vec![
+                        ws_name.to_string(),
+                        col.collection.name.clone(),
+                        r.name.clone(),
+                    ]);
+                }
+                TreeItem::Folder(folder) => {
+                    if let Some(path) = Self::find_request_in_folder(
+                        ws_name,
+                        &col.collection.name,
+                        folder,
+                        request_id,
+                    ) {
+                        return Some(path);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    fn find_request_in_folder(
+        ws_name: &str,
+        col_name: &str,
+        folder: &FolderTree,
+        request_id: crate::domain::ids::RequestId,
+    ) -> Option<Vec<String>> {
+        for item in &folder.children {
+            match item {
+                TreeItem::Request(r) if r.id == request_id => {
+                    return Some(vec![
+                        ws_name.to_string(),
+                        col_name.to_string(),
+                        folder.folder.name.clone(),
+                        r.name.clone(),
+                    ]);
+                }
+                TreeItem::Folder(child) => {
+                    if let Some(path) =
+                        Self::find_request_in_folder(ws_name, col_name, child, request_id)
+                    {
+                        return Some(path);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
     pub fn delete_closure(&self, item: ItemKey) -> Vec<ItemKey> {
         let mut keys = vec![item];
         if let Some(workspace) = &self.selected_workspace {

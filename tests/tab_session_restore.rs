@@ -58,6 +58,7 @@ fn tab_session_repo_roundtrip_and_restore_skip_missing_items() -> Result<()> {
         window_layout: WindowLayoutState {
             sidebar_collapsed: true,
             sidebar_width_px: 312.0,
+            sidebar_section: Default::default(),
         },
         created_at: 1,
         updated_at: 1,

@@ -285,6 +285,7 @@ fn load_snapshot(
                 window_layout: WindowLayoutState {
                     sidebar_collapsed: row.get("sidebar_collapsed"),
                     sidebar_width_px: row.get::<f64, _>("sidebar_width_px") as f32,
+                    sidebar_section: Default::default(),
                 },
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
