@@ -206,8 +206,10 @@ the tab and in a breadcrumb, not as an H1-style input dominating the top of the 
 
 **Fix**
 - Remove the name label row and the large name input from the top of the editor.
-- Keep the name editable via the Settings dialog (`open_settings_dialog`) that already exists.
+- Move the name field into the Settings dialog (`open_settings_dialog`), which currently only
+  has timeout and follow-redirects. Add a name input as the first field in that dialog.
 - The tab title (`TabPresentation.title`) already shows the name — no information is lost.
+- The dirty indicator moves to the action buttons row (§4.3) next to Save.
 
 ---
 
@@ -289,57 +291,45 @@ Active tab should look like a tab: same background as the content area, with a b
 accent (underline-style). Inactive tabs are plain text, no border, with a hover state.
 
 **Fix**
-Rewrite `section_tab_button` and `response_tab_button` in `helpers.rs`:
+
+`gpui_component::Button` implements `Styled`, so it supports `.border_b_2()` and
+`.border_color(...)` directly. Use `.ghost()` as the base style and add a bottom accent for
+the active tab. The theme is accessed via `ActiveTheme` (already imported throughout the
+codebase as `use gpui_component::ActiveTheme as _`), which provides `cx.theme().primary`
+and `cx.theme().muted_foreground` as `Hsla` values.
+
+The signature of `section_tab_button` / `response_tab_button` changes to accept `cx: &App`
+for theme access:
 
 ```rust
 pub(super) fn section_tab_button(
     id: &'static str,
     label: String,
     active: bool,
-    on_click: impl Fn(...) + 'static,
-) -> impl IntoElement {
-    div()
-        .id(id)
-        .px_3()
-        .py_1p5()
-        .text_sm()
-        .cursor_pointer()
-        .when(active, |el| {
-            el.border_b_2()
-              .border_color(cx.theme().primary)   // accent underline
-              .font_weight(FontWeight::MEDIUM)
-        })
-        .when(!active, |el| {
-            el.text_color(cx.theme().muted_foreground)
-              .hover(|el| el.text_color(cx.theme().foreground))
-        })
-        .on_click(on_click)
-        .child(label)
+    cx: &App,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+) -> Button {
+    if active {
+        Button::new(id)
+            .ghost()
+            .label(label)
+            .border_b_2()
+            .border_color(cx.theme().primary)
+            .font_weight(FontWeight::MEDIUM)
+            .on_click(on_click)
+    } else {
+        Button::new(id)
+            .ghost()
+            .label(label)
+            .text_color(cx.theme().muted_foreground)
+            .on_click(on_click)
+    }
 }
 ```
 
-Note: `section_tab_button` currently takes `cx` implicitly through the listener. The signature
-needs `cx: &mut Context<RequestTabView>` to access the theme, or use hard-coded colours that
-match the theme (e.g. `gpui::blue()` for the underline). A simpler approach:
-
-```rust
-if active {
-    Button::new(id)
-        .ghost()
-        .label(label)
-        .border_b_2()                       // custom bottom border
-        .border_color(gpui::blue())
-        .on_click(on_click)
-} else {
-    Button::new(id)
-        .ghost()
-        .label(label)
-        .on_click(on_click)
-}
-```
-
-The border approach requires that `Button` supports chained style overrides via `Styled`. Check
-if `gpui_component::Button` passes through `Styled` — if not, wrap in a `div` instead.
+All call sites in `request_tab.rs` `Render::render` already have `cx` available as
+`&mut Context<RequestTabView>` which derefs to `&App`. Update both `section_tab_button`
+and `response_tab_button` to the same signature.
 
 ---
 
@@ -448,45 +438,49 @@ For "raw", a secondary row of radio buttons selects Text vs JSON:
 
 **Implementation**
 
+`gpui_component::radio::{Radio, RadioGroup}` provides:
+- `Radio::new(id).label(text).checked(bool).on_click(fn)`
+- `RadioGroup::horizontal(id).selected_index(ix).on_click(fn).child(radio)`
+
+`RadioGroup::horizontal` is the right primitive — it manages mutual exclusion and lays out
+radios in a wrapping `h_flex`.
+
 - Remove `body_type_select: Entity<SelectState<Vec<&'static str>>>` from `RequestTabView`.
 - Remove the `body_type_select` subscription.
-- In `render_body_editor`, replace `Select` with an `h_flex` of `Radio` buttons:
+- In `render_body_editor`, replace `Select` with `RadioGroup::horizontal`:
 
 ```rust
-use gpui_component::radio::Radio;
+use gpui_component::radio::{Radio, RadioGroup};
 
-h_flex()
-    .gap_4()
-    .child(Radio::new("body-none").label("none")
-        .checked(matches!(body, BodyType::None))
-        .on_click(cx.listener(|this, checked, _, cx| {
-            if *checked { this.set_body_kind(BodyKind::None, cx); }
-        })))
-    .child(Radio::new("body-raw-text").label("raw text")
-        .checked(matches!(body, BodyType::RawText { .. }))
-        .on_click(cx.listener(|this, checked, _, cx| {
-            if *checked { this.set_body_kind(BodyKind::RawText, cx); }
-        })))
-    .child(Radio::new("body-raw-json").label("raw json")
-        .checked(matches!(body, BodyType::RawJson { .. }))
-        .on_click(cx.listener(|this, checked, _, cx| {
-            if *checked { this.set_body_kind(BodyKind::RawJson, cx); }
-        })))
-    .child(Radio::new("body-urlencoded").label("x-www-form-urlencoded")
-        .checked(matches!(body, BodyType::UrlEncoded { .. }))
-        .on_click(cx.listener(|this, checked, _, cx| {
-            if *checked { this.set_body_kind(BodyKind::UrlEncoded, cx); }
-        })))
-    .child(Radio::new("body-formdata").label("form-data")
-        .checked(matches!(body, BodyType::FormData { .. }))
-        .on_click(cx.listener(|this, checked, _, cx| {
-            if *checked { this.set_body_kind(BodyKind::FormData, cx); }
-        })))
-    .child(Radio::new("body-binary").label("binary")
-        .checked(matches!(body, BodyType::BinaryFile { .. }))
-        .on_click(cx.listener(|this, checked, _, cx| {
-            if *checked { this.set_body_kind(BodyKind::BinaryFile, cx); }
-        })))
+// Determine selected index from body type
+let selected = match &request.body {
+    BodyType::None => Some(0),
+    BodyType::RawText { .. } => Some(1),
+    BodyType::RawJson { .. } => Some(2),
+    BodyType::UrlEncoded { .. } => Some(3),
+    BodyType::FormData { .. } => Some(4),
+    BodyType::BinaryFile { .. } => Some(5),
+};
+
+RadioGroup::horizontal("body-type-group")
+    .selected_index(selected)
+    .on_click(cx.listener(|this, ix: &usize, _, cx| {
+        let kind = match ix {
+            0 => BodyKind::None,
+            1 => BodyKind::RawText,
+            2 => BodyKind::RawJson,
+            3 => BodyKind::UrlEncoded,
+            4 => BodyKind::FormData,
+            _ => BodyKind::BinaryFile,
+        };
+        this.set_body_kind(kind, cx);
+    }))
+    .child(Radio::new("body-none").label("none"))
+    .child(Radio::new("body-raw-text").label("raw text"))
+    .child(Radio::new("body-raw-json").label("raw json"))
+    .child(Radio::new("body-urlencoded").label("x-www-form-urlencoded"))
+    .child(Radio::new("body-formdata").label("form-data"))
+    .child(Radio::new("body-binary").label("binary"))
 ```
 
 - Remove `body_type_label` sub-heading ("Body Type:") — the radio strip is self-describing.
@@ -515,6 +509,7 @@ Workspace Name  /  Collection Name  /  [Folder Name /]  Request Name
   `catalog.find_breadcrumb_path(active_tab.item())`.
 - Add `find_breadcrumb_path(item: ItemKey) -> Vec<SharedString>` to `WorkspaceCatalog`.
 - Only show for Request/Folder/Collection/Environment items; return empty for Settings/About/Workspace.
+- The `/` separator is universal and does not need a Fluent key.
 
 ```rust
 fn render_breadcrumbs(active: Option<TabKey>, catalog: &WorkspaceCatalog) -> AnyElement {
@@ -538,6 +533,13 @@ fn render_breadcrumbs(active: Option<TabKey>, catalog: &WorkspaceCatalog) -> Any
 }
 ```
 
+**Complexity note**: `WorkspaceCatalog` stores the tree as parent-to-child
+(`WorkspaceTree > CollectionTree > FolderTree > RequestItem`) with no parent back-pointers.
+`find_breadcrumb_path` must walk the tree top-down to locate the target item, collecting
+path segments along the way. `find_collection()`, `find_folder_tree()`, and `find_request()`
+already exist — chain them with a recursive descent that accumulates the path. Budget ~30 min
+for this method.
+
 ---
 
 ## 6. Summary of Files to Touch
@@ -551,6 +553,8 @@ fn render_breadcrumbs(active: Option<TabKey>, catalog: &WorkspaceCatalog) -> Any
 | `src/views/item_tabs/request_tab/helpers.rs` | Rewrite `section_tab_button` / `response_tab_button` as underline-style |
 | `src/views/item_tabs/request_tab/body_editor.rs` | Replace Select with Radio strip, remove body-type label |
 | `src/views/item_tabs/request_tab/kv_editor.rs` | Dynamic table height, borderless input cells, ghost add-row button |
+| `src/views/item_tabs/request_tab/auth_editor.rs` | Replace hardcoded `gpui::hsla(...)` with `cx.theme()` colors |
+| `src/views/item_tabs/request_tab/response_panel.rs` | Replace hardcoded `gpui::hsla(...)` with `cx.theme()` colors |
 | `src/services/workspace_tree.rs` | Add `find_breadcrumb_path` to `WorkspaceCatalog` |
 | `i18n/en/torii.ftl` | No new strings required (all labels already exist or use inline literals) |
 | `i18n/zh-CN/torii.ftl` | Mirror any new keys |
@@ -560,11 +564,57 @@ fn render_breadcrumbs(active: Option<TabKey>, catalog: &WorkspaceCatalog) -> Any
 ## 7. Implementation Order
 
 1. **Request tab layout** (§4.1 + §4.2 + §4.3 + §4.5) — highest visual impact, self-contained
-2. **Section tab strip styling** (§4.4) — requires `helpers.rs` only
-3. **Body type radio buttons** (§4.7) — `body_editor.rs` + `request_tab.rs`
-4. **KV editor** (§4.6) — `kv_editor.rs`
-5. **Sidebar collapsed width** (§2.1) — `root.rs` one-liner
-6. **Sidebar section switcher** (§2.3) — `root.rs` + `window_layout.rs`
-7. **Sidebar full-width highlight** (§2.2) — `root.rs` wrapper divs
-8. **Tab bar fixed width** (§3.1) — `tab_host.rs`
-9. **Breadcrumbs** (§5) — `root.rs` + `workspace_tree.rs`
+2. **Theme-aware colors** (§8) — systematic pass replacing hardcoded HSLA with `cx.theme()`; unblocks dark mode
+3. **Section tab strip styling** (§4.4) — requires `helpers.rs` only
+4. **Body type radio buttons** (§4.7) — `body_editor.rs` + `request_tab.rs`
+5. **KV editor** (§4.6) — `kv_editor.rs`
+6. **Sidebar collapsed width** (§2.1) — `root.rs` one-liner
+7. **Sidebar section switcher** (§2.3) — `root.rs` + `window_layout.rs`
+8. **Sidebar full-width highlight** (§2.2) — `root.rs` wrapper divs
+9. **Tab bar fixed width** (§3.1) — `tab_host.rs`
+10. **Breadcrumbs** (§5) — `root.rs` + `workspace_tree.rs`
+
+---
+
+## 8. Theme-Aware Colors (Dark Mode Compatibility)
+
+**Current behaviour**
+The request editor and response panel use hardcoded `gpui::hsla(...)` values throughout:
+```rust
+.text_color(gpui::hsla(0., 0., 0.45, 1.))   // "muted text" — invisible on dark backgrounds
+.text_color(gpui::hsla(0., 0., 0.5, 1.))      // "secondary text"
+.bg(gpui::hsla(0., 0., 0.97, 1.))             // "preview background"
+```
+These look correct in light mode but become invisible or wrong in dark mode. The app already
+supports dark mode (`menu_appearance_dark`, `ThemeMode::Dark`).
+
+**Target behaviour**
+All UI colors should come from the `gpui_component` theme, which automatically switches with
+the active theme mode. The theme provides:
+
+| Hardcoded | Theme equivalent | Purpose |
+|-----------|-----------------|---------|
+| `gpui::hsla(0., 0., 0.45, 1.)` | `cx.theme().muted_foreground` | Labels, secondary text |
+| `gpui::hsla(0., 0., 0.5, 1.)` | `cx.theme().muted_foreground` | Hints, empty state |
+| `gpui::hsla(0., 0., 0.97, 1.)` | `cx.theme().background` | Preview panels, code blocks |
+| `gpui::hsla(30./360., 0.9, 0.38, 1.)` | `cx.theme().warning` or keep as accent | Legacy warning |
+| `gpui::red()` | `cx.theme().destructive` | Errors, dirty indicator |
+
+**Fix**
+Systematic find-and-replace across the request tab sub-modules:
+
+1. `helpers.rs` — `status_code_color`, `latest_run_summary`, `response_body_preview_text`,
+   `classified_error_display`, all helper functions that construct colored elements
+2. `auth_editor.rs` — label colors, hint text
+3. `body_editor.rs` — label colors, hint text, form field labels
+4. `response_panel.rs` — status color, size/time labels, empty states, tab buttons, error
+   detail text, body preview background
+5. `kv_editor.rs` — no hardcoded colors (uses `DataTable` and `Input` which are theme-aware)
+
+Each file needs `use gpui_component::ActiveTheme as _` (most already have it via the parent
+module's imports). The `ActiveTheme` trait is implemented on `App` / `Window` / `Context<T>`
+and accessed as `cx.theme()`.
+
+**Note**: `gpui::red()` for the dirty indicator and error colors is acceptable as a constant
+— it's a semantic color, not a theme token. But prefer `cx.theme().destructive` if available
+for consistency with the rest of the component library.
