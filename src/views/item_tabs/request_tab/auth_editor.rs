@@ -7,21 +7,22 @@ use super::*;
 pub(super) fn render_auth_editor(
     view: &RequestTabView,
     request: &RequestItem,
-    _cx: &mut Context<RequestTabView>,
+    cx: &mut Context<RequestTabView>,
 ) -> gpui::Div {
+    let muted = cx.theme().muted_foreground;
     v_flex()
         .gap_2()
         .child(
             div()
                 .text_xs()
-                .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                .text_color(muted)
                 .child(es_fluent::localize("request_tab_auth_type_label", None)),
         )
         .child(div().w_56().child(Select::new(&view.auth_type_select)))
         .child(match &request.auth {
             AuthType::None => div()
                 .text_xs()
-                .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                .text_color(muted)
                 .child(es_fluent::localize("request_tab_auth_none_hint", None))
                 .into_any_element(),
             AuthType::Basic { .. } => v_flex()
@@ -29,14 +30,14 @@ pub(super) fn render_auth_editor(
                 .child(
                     div()
                         .text_xs()
-                        .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                        .text_color(muted)
                         .child(es_fluent::localize("request_tab_auth_basic_username", None)),
                 )
                 .child(Input::new(&view.auth_basic_username_input).large())
                 .child(
                     div()
                         .text_xs()
-                        .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                        .text_color(muted)
                         .child(es_fluent::localize("request_tab_auth_basic_password", None)),
                 )
                 .child(
@@ -50,7 +51,7 @@ pub(super) fn render_auth_editor(
                 .child(
                     div()
                         .text_xs()
-                        .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                        .text_color(muted)
                         .child(es_fluent::localize("request_tab_auth_bearer_token", None)),
                 )
                 .child(
@@ -64,14 +65,14 @@ pub(super) fn render_auth_editor(
                 .child(
                     div()
                         .text_xs()
-                        .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                        .text_color(muted)
                         .child(es_fluent::localize("request_tab_auth_api_key_name", None)),
                 )
                 .child(Input::new(&view.auth_api_key_name_input).large())
                 .child(
                     div()
                         .text_xs()
-                        .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                        .text_color(muted)
                         .child(es_fluent::localize("request_tab_auth_api_key_value", None)),
                 )
                 .child(
@@ -82,7 +83,7 @@ pub(super) fn render_auth_editor(
                 .child(
                     div()
                         .text_xs()
-                        .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                        .text_color(muted)
                         .child(es_fluent::localize("request_tab_auth_api_key_location", None)),
                 )
                 .child(

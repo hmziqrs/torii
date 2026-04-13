@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use gpui::{prelude::*, *};
 use gpui_component::{
-    Disableable as _, Sizable as _, WindowExt as _,
+    ActiveTheme as _, Disableable as _, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
     h_flex,
@@ -1588,10 +1588,12 @@ impl RequestTabView {
     }
 
     fn open_settings_dialog(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let name_input = self.name_input.clone();
         let timeout_input = self.timeout_input.clone();
         let follow_redirects_input = self.follow_redirects_input.clone();
 
-        window.open_dialog(cx, move |dialog, _, _| {
+        window.open_dialog(cx, move |dialog, _, cx| {
+            let muted = cx.theme().muted_foreground;
             dialog
                 .title(es_fluent::localize("request_tab_settings_label", None))
                 .overlay_closable(true)
@@ -1599,13 +1601,28 @@ impl RequestTabView {
                 .child(
                     v_flex()
                         .gap_3()
+                        // Name field (moved from top of editor §4.1)
                         .child(
                             v_flex()
                                 .gap_2()
                                 .child(
                                     div()
                                         .text_xs()
-                                        .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                                        .text_color(muted)
+                                        .child(es_fluent::localize(
+                                            "request_tab_name_label",
+                                            None,
+                                        )),
+                                )
+                                .child(Input::new(&name_input).large()),
+                        )
+                        .child(
+                            v_flex()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(muted)
                                         .child(es_fluent::localize(
                                             "request_tab_timeout_label",
                                             None,
@@ -1619,7 +1636,7 @@ impl RequestTabView {
                                 .child(
                                     div()
                                         .text_xs()
-                                        .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                                        .text_color(muted)
                                         .child(es_fluent::localize(
                                             "request_tab_follow_redirects_label",
                                             None,
@@ -2058,7 +2075,7 @@ impl Render for RequestTabView {
                 .child(
                     div()
                         .text_xs()
-                        .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                        .text_color(cx.theme().muted_foreground)
                         .child(es_fluent::localize("request_tab_pre_request_label", None)),
                 )
                 .child(
@@ -2072,7 +2089,7 @@ impl Render for RequestTabView {
                 .child(
                     div()
                         .text_xs()
-                        .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                        .text_color(cx.theme().muted_foreground)
                         .child(es_fluent::localize("request_tab_tests_label", None)),
                 )
                 .child(
@@ -2094,41 +2111,38 @@ impl Render for RequestTabView {
             .on_action(cx.listener(Self::handle_duplicate_request))
             .on_action(cx.listener(Self::handle_focus_url_bar))
             .on_action(cx.listener(Self::handle_toggle_body_search))
-            .child(
-                h_flex()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(gpui::hsla(0., 0., 0.45, 1.))
-                            .child(es_fluent::localize("request_tab_name_label", None)),
-                    )
-                    .child(dirty_indicator),
-            )
-            .child(Input::new(&self.name_input).large())
+            // §4.2: Unified URL bar — method, URL, and Send at equal height
             .child(
                 h_flex()
                     .gap_2()
-                    .items_end()
-                    .child(div().w_40().child(Select::new(&self.method_select)))
+                    .items_center()
+                    .h(px(36.))
+                    .child(div().w(px(120.)).child(Select::new(&self.method_select).large()))
                     .child(div().flex_1().child(Input::new(&self.url_input).large()))
                     .child(
                         Button::new("request-send")
                             .primary()
+                            .large()
                             .label(es_fluent::localize("request_tab_action_send", None))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.send(cx);
                             })),
                     ),
             )
+            // §4.3: Compressed action buttons + latest run + settings in one row
             .child(
                 h_flex()
                     .gap_2()
+                    .items_center()
                     .flex_wrap()
+                    // Dirty indicator (moved from §4.1 name row)
+                    .when(is_dirty, |el| {
+                        el.child(dirty_indicator)
+                    })
+                    // Save — always visible, ghost style
                     .child(
                         Button::new("request-save")
-                            .primary()
+                            .ghost()
                             .label(es_fluent::localize("request_tab_action_save", None))
                             .on_click(cx.listener(|this, _, window, cx| match this.save(cx) {
                                 Ok(()) => {
@@ -2140,9 +2154,10 @@ impl Render for RequestTabView {
                                 Err(err) => window.push_notification(err, cx),
                             })),
                     )
+                    // Duplicate — ghost
                     .child(
                         Button::new("request-duplicate")
-                            .outline()
+                            .ghost()
                             .label(es_fluent::localize("request_tab_action_duplicate", None))
                             .on_click(cx.listener(
                                 |this, _, window, cx| match this.duplicate(cx) {
@@ -2156,37 +2171,45 @@ impl Render for RequestTabView {
                                 },
                             )),
                     )
-                    .child(
-                        Button::new("request-cancel")
-                            .outline()
-                            .label(es_fluent::localize("request_tab_action_cancel", None))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.cancel_send(cx);
-                            })),
+                    // Cancel — only when sending/streaming
+                    .when(
+                        matches!(self.editor.exec_status(), ExecStatus::Sending | ExecStatus::Streaming),
+                        |el| {
+                            el.child(
+                                Button::new("request-cancel")
+                                    .ghost()
+                                    .label(es_fluent::localize("request_tab_action_cancel", None))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.cancel_send(cx);
+                                    })),
+                            )
+                        },
                     )
-                    .child(
-                        Button::new("request-reload")
-                            .ghost()
-                            .label(es_fluent::localize("request_tab_action_reload", None))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.reload_baseline(cx);
-                            })),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .justify_between()
-                    .items_center()
+                    // Reload — only when a baseline exists
+                    .when(self.editor.baseline().is_some(), |el| {
+                        el.child(
+                            Button::new("request-reload")
+                                .ghost()
+                                .label(es_fluent::localize("request_tab_action_reload", None))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.reload_baseline(cx);
+                                })),
+                        )
+                    })
+                    // Spacer to push latest run + settings to the right
+                    .child(div().flex_1())
+                    // Latest run summary
                     .child(
                         div()
                             .text_xs()
-                            .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                            .text_color(cx.theme().muted_foreground)
                             .child(format!(
                                 "{}: {}",
                                 es_fluent::localize("request_tab_latest_run_label", None),
                                 latest_run
                             )),
                     )
+                    // Settings
                     .child(
                         Button::new("request-settings-open")
                             .ghost()
@@ -2204,6 +2227,7 @@ impl Render for RequestTabView {
                         "request-tab-params",
                         es_fluent::localize("request_tab_params_label", None).to_string(),
                         self.active_section == RequestSectionTab::Params,
+                        cx,
                         cx.listener(|this, _, _, cx| {
                             this.set_active_section(RequestSectionTab::Params, cx);
                         }),
@@ -2212,6 +2236,7 @@ impl Render for RequestTabView {
                         "request-tab-auth",
                         es_fluent::localize("request_tab_auth_label", None).to_string(),
                         self.active_section == RequestSectionTab::Auth,
+                        cx,
                         cx.listener(|this, _, _, cx| {
                             this.set_active_section(RequestSectionTab::Auth, cx);
                         }),
@@ -2220,6 +2245,7 @@ impl Render for RequestTabView {
                         "request-tab-headers",
                         es_fluent::localize("request_tab_headers_label", None).to_string(),
                         self.active_section == RequestSectionTab::Headers,
+                        cx,
                         cx.listener(|this, _, _, cx| {
                             this.set_active_section(RequestSectionTab::Headers, cx);
                         }),
@@ -2228,6 +2254,7 @@ impl Render for RequestTabView {
                         "request-tab-body",
                         es_fluent::localize("request_tab_body_label", None).to_string(),
                         self.active_section == RequestSectionTab::Body,
+                        cx,
                         cx.listener(|this, _, _, cx| {
                             this.set_active_section(RequestSectionTab::Body, cx);
                         }),
@@ -2236,6 +2263,7 @@ impl Render for RequestTabView {
                         "request-tab-scripts",
                         es_fluent::localize("request_tab_scripts_label", None).to_string(),
                         self.active_section == RequestSectionTab::Scripts,
+                        cx,
                         cx.listener(|this, _, _, cx| {
                             this.set_active_section(RequestSectionTab::Scripts, cx);
                         }),
@@ -2244,19 +2272,18 @@ impl Render for RequestTabView {
                         "request-tab-tests",
                         es_fluent::localize("request_tab_tests_label", None).to_string(),
                         self.active_section == RequestSectionTab::Tests,
+                        cx,
                         cx.listener(|this, _, _, cx| {
                             this.set_active_section(RequestSectionTab::Tests, cx);
                         }),
                     )),
             )
+            // §4.5: Section content flows directly, no border box
             .child(
                 v_flex()
                     .w_full()
                     .items_stretch()
-                    .gap_2()
-                    .p_3()
-                    .rounded(px(6.))
-                    .border_1()
+                    .pt_2()
                     .child(div().w_full().child(section_content)),
             )
             .when(
@@ -2270,12 +2297,10 @@ impl Render for RequestTabView {
                 },
             )
             .child(preflight_panel)
+            // Response panel — no border box
             .child(
                 v_flex()
                     .gap_2()
-                    .p_3()
-                    .rounded(px(6.))
-                    .border_1()
                     .child(
                         div()
                             .text_sm()

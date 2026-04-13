@@ -4,12 +4,23 @@ pub(super) fn section_tab_button(
     id: &'static str,
     label: String,
     active: bool,
+    cx: &App,
     on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Button {
     if active {
-        Button::new(id).primary().label(label).on_click(on_click)
+        Button::new(id)
+            .ghost()
+            .label(label)
+            .border_b_2()
+            .border_color(cx.theme().primary)
+            .font_weight(FontWeight::MEDIUM)
+            .on_click(on_click)
     } else {
-        Button::new(id).ghost().label(label).on_click(on_click)
+        Button::new(id)
+            .ghost()
+            .label(label)
+            .text_color(cx.theme().muted_foreground)
+            .on_click(on_click)
     }
 }
 
@@ -17,12 +28,23 @@ pub(super) fn response_tab_button(
     id: &'static str,
     label: String,
     active: bool,
+    cx: &App,
     on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Button {
     if active {
-        Button::new(id).primary().label(label).on_click(on_click)
+        Button::new(id)
+            .ghost()
+            .label(label)
+            .border_b_2()
+            .border_color(cx.theme().primary)
+            .font_weight(FontWeight::MEDIUM)
+            .on_click(on_click)
     } else {
-        Button::new(id).ghost().label(label).on_click(on_click)
+        Button::new(id)
+            .ghost()
+            .label(label)
+            .text_color(cx.theme().muted_foreground)
+            .on_click(on_click)
     }
 }
 

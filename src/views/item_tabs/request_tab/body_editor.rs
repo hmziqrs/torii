@@ -11,6 +11,7 @@ pub(super) fn render_body_editor(
     _window: &mut Window,
     cx: &mut Context<RequestTabView>,
 ) -> gpui::Div {
+    let muted = cx.theme().muted_foreground;
     let urlencoded_table = render_kv_table(
         &view.body_urlencoded_kv_table,
         KvTarget::BodyUrlEncoded,
@@ -33,14 +34,14 @@ pub(super) fn render_body_editor(
         .child(
             div()
                 .text_xs()
-                .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                .text_color(muted)
                 .child(es_fluent::localize("request_tab_body_type_label", None)),
         )
         .child(div().w_56().child(Select::new(&view.body_type_select)))
         .child(match &request.body {
             BodyType::None => div()
                 .text_xs()
-                .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                .text_color(muted)
                 .child(es_fluent::localize("request_tab_body_none_hint", None))
                 .into_any_element(),
             BodyType::RawText { .. } => div()
@@ -57,14 +58,14 @@ pub(super) fn render_body_editor(
                 .child(
                     div()
                         .text_xs()
-                        .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                        .text_color(muted)
                         .child(es_fluent::localize("request_tab_body_form_text_fields", None)),
                 )
                 .child(form_text_table)
                 .child(
                     div()
                         .text_xs()
-                        .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                        .text_color(muted)
                         .child(es_fluent::localize("request_tab_body_form_file_fields", None)),
                 )
                 .children(file_fields.iter().enumerate().map(|(index, field)| {

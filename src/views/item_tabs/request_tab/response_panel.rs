@@ -53,7 +53,7 @@ impl TableDelegate for HeadersTableDelegate {
         row_ix: usize,
         col_ix: usize,
         _window: &mut Window,
-        _cx: &mut Context<TableState<Self>>,
+        cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
         let row = &self.rows[row_ix];
         match col_ix {
@@ -66,7 +66,7 @@ impl TableDelegate for HeadersTableDelegate {
             _ => div()
                 .font_family("monospace")
                 .text_sm()
-                .text_color(gpui::hsla(0., 0., 0.35, 1.))
+                .text_color(cx.theme().muted_foreground)
                 .child(row.value.clone())
                 .into_any_element(),
         }
@@ -232,13 +232,13 @@ impl TableDelegate for TimingTableDelegate {
         row_ix: usize,
         col_ix: usize,
         _window: &mut Window,
-        _cx: &mut Context<TableState<Self>>,
+        cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
         let row = &self.rows[row_ix];
         match col_ix {
             0 => div()
                 .text_sm()
-                .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                .text_color(cx.theme().muted_foreground)
                 .child(row.phase.clone())
                 .into_any_element(),
             _ => div()
@@ -259,23 +259,25 @@ pub(super) fn render_response_panel(
     window: &mut Window,
     cx: &mut Context<RequestTabView>,
 ) -> gpui::Div {
+    let muted = cx.theme().muted_foreground;
+
     match view.editor.exec_status() {
         ExecStatus::Idle => div().child(
             div()
                 .text_sm()
-                .text_color(gpui::hsla(0., 0., 0.5, 1.))
+                .text_color(muted)
                 .child(es_fluent::localize("request_tab_response_empty", None)),
         ),
         ExecStatus::Sending => div().child(
             div()
                 .text_sm()
-                .text_color(gpui::hsla(0., 0., 0.5, 1.))
+                .text_color(muted)
                 .child(es_fluent::localize("request_tab_sending", None)),
         ),
         ExecStatus::Streaming => div().child(
             div()
                 .text_sm()
-                .text_color(gpui::hsla(0., 0., 0.5, 1.))
+                .text_color(muted)
                 .child(es_fluent::localize("request_tab_streaming", None)),
         ),
         ExecStatus::Completed { .. } => {
@@ -305,7 +307,7 @@ pub(super) fn render_response_panel(
                     div()
                         .text_xs()
                         .font_family("monospace")
-                        .text_color(gpui::hsla(0., 0., 0.45, 1.))
+                        .text_color(muted)
                         .child(if expanded { detail.clone() } else { summary.clone() }),
                 )
                 .child(
@@ -350,6 +352,8 @@ fn render_completed_response(
     window: &mut Window,
     cx: &mut Context<RequestTabView>,
 ) -> gpui::Div {
+    let muted = cx.theme().muted_foreground;
+    let bg = cx.theme().background;
     let status_color = status_code_color(resp.status_code);
     let status_size = format_bytes(resp.body_ref.size_bytes());
 
@@ -402,7 +406,7 @@ fn render_completed_response(
     let mut body_content = if looks_like_image(resp.media_type.as_deref()) {
         div()
             .text_sm()
-            .text_color(gpui::hsla(0., 0., 0.5, 1.))
+            .text_color(muted)
             .child(es_fluent::localize(
                 "request_tab_response_image_preview_todo",
                 None,
@@ -412,14 +416,14 @@ fn render_completed_response(
             .mt_2()
             .p_3()
             .rounded(px(4.))
-            .bg(gpui::hsla(0., 0., 0.97, 1.))
+            .bg(bg)
             .text_sm()
             .font_family("monospace")
             .child(body_preview)
     } else {
         div()
             .text_sm()
-            .text_color(gpui::hsla(0., 0., 0.5, 1.))
+            .text_color(muted)
             .child(es_fluent::localize("request_tab_response_body_empty", None))
     };
 
@@ -438,7 +442,7 @@ fn render_completed_response(
                     .child(
                         div()
                             .text_xs()
-                            .text_color(gpui::hsla(0., 0., 0.5, 1.))
+                            .text_color(muted)
                             .child(format!(
                                 "{} {}",
                                 body_matches.len(),
@@ -452,7 +456,7 @@ fn render_completed_response(
     let headers_content = if header_rows.is_empty() {
         div()
             .text_sm()
-            .text_color(gpui::hsla(0., 0., 0.5, 1.))
+            .text_color(muted)
             .child(es_fluent::localize(
                 "request_tab_response_headers_empty",
                 None,
@@ -482,7 +486,7 @@ fn render_completed_response(
     let cookies_content = if cookies.is_empty() {
         div()
             .text_sm()
-            .text_color(gpui::hsla(0., 0., 0.5, 1.))
+            .text_color(muted)
             .child(es_fluent::localize(
                 "request_tab_response_cookies_empty",
                 None,
@@ -601,12 +605,12 @@ fn render_completed_response(
     } else if is_html && html_body_for_preview.is_empty() {
         div()
             .text_sm()
-            .text_color(gpui::hsla(0., 0., 0.5, 1.))
+            .text_color(muted)
             .child(es_fluent::localize("request_tab_response_preview_empty", None))
     } else if !is_html {
         div()
             .text_sm()
-            .text_color(gpui::hsla(0., 0., 0.5, 1.))
+            .text_color(muted)
             .child(es_fluent::localize("request_tab_response_preview_not_html", None))
     } else {
         div()
@@ -636,7 +640,7 @@ fn render_completed_response(
                 .gap_2()
                 .items_center()
                 .text_xs()
-                .text_color(gpui::hsla(0., 0., 0.5, 1.))
+                .text_color(muted)
                 .child(format!(
                     "{}: {}",
                     es_fluent::localize("request_tab_response_size", None),
@@ -659,6 +663,7 @@ fn render_completed_response(
                     "request-response-tab-body",
                     es_fluent::localize("request_tab_response_tab_body", None).to_string(),
                     view.active_response_tab == ResponseTab::Body,
+                    cx,
                     cx.listener(|this, _, _, cx| {
                         this.set_active_response_tab(ResponseTab::Body, cx);
                     }),
@@ -668,6 +673,7 @@ fn render_completed_response(
                         "request-response-tab-preview",
                         es_fluent::localize("request_tab_response_tab_preview", None).to_string(),
                         view.active_response_tab == ResponseTab::Preview,
+                        cx,
                         cx.listener(|this, _, _, cx| {
                             this.set_active_response_tab(ResponseTab::Preview, cx);
                         }),
@@ -677,6 +683,7 @@ fn render_completed_response(
                     "request-response-tab-headers",
                     es_fluent::localize("request_tab_response_tab_headers", None).to_string(),
                     view.active_response_tab == ResponseTab::Headers,
+                    cx,
                     cx.listener(|this, _, _, cx| {
                         this.set_active_response_tab(ResponseTab::Headers, cx);
                     }),
@@ -685,6 +692,7 @@ fn render_completed_response(
                     "request-response-tab-cookies",
                     es_fluent::localize("request_tab_response_tab_cookies", None).to_string(),
                     view.active_response_tab == ResponseTab::Cookies,
+                    cx,
                     cx.listener(|this, _, _, cx| {
                         this.set_active_response_tab(ResponseTab::Cookies, cx);
                     }),
@@ -693,6 +701,7 @@ fn render_completed_response(
                     "request-response-tab-timing",
                     es_fluent::localize("request_tab_response_tab_timing", None).to_string(),
                     view.active_response_tab == ResponseTab::Timing,
+                    cx,
                     cx.listener(|this, _, _, cx| {
                         this.set_active_response_tab(ResponseTab::Timing, cx);
                     }),
