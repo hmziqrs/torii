@@ -235,7 +235,7 @@ Blob/file storage should cover:
 - `Phase 1`: completed
 - `Phase 2`: completed on 2026-04-11
 - `Phase 3`: completed on 2026-04-12
-- `Phase 3.5`: pending
+- `Phase 3.5`: completed on 2026-04-13
 
 Phase 2 completion summary:
 
@@ -259,6 +259,27 @@ Phase 3 completion summary:
 - `TokioRuntimeGlobal` registered as GPUI global, async I/O via `tokio::fs` and `spawn_blocking`
 - FormData and BinaryFile body execution fully implemented
 - all validation gates passing: unit, integration, performance, security, and observability
+
+Phase 3.5 completion summary:
+
+- tabbed response panel with Body/Headers/Cookies/Timing/Preview tabs
+- response metadata bar with color-coded status, formatted size, and total time
+- classified error display (DNS, connection refused, timeout, TLS, transport) with expandable detail
+- response body actions: copy to clipboard (text types), save-to-file (streaming for DiskBlob), body search
+- XML/HTML pretty-print alongside existing JSON pretty-print
+- HTML Preview tab with on-demand wry WebView for full CSS support; webview created on tab entry, dropped on exit
+- key-value editor upgraded to DataTable with TableDelegate: params, headers, URL-encoded body, form-data text fields
+- auth structured editor with type dropdown + per-type panels (None/Basic/Bearer/API Key) + secret mask-toggle
+- body structured editor with type dropdown + per-type panels including file-backed body UX (pick/replace/clear/confirm for >100 MB)
+- streamed request-body construction for large binary/form-data sends
+- method selector dropdown replacing freeform text input
+- keyboard shortcuts: save, send, cancel, duplicate, focus URL bar, toggle body search
+- file decomposition: request_tab.rs split into sub-modules (response_panel, auth_editor, body_editor, kv_editor, helpers, state)
+
+Skipped from original Phase 3.5 scope:
+
+- image preview: requires a GPUI byte-to-Image-to-RenderImage rendering prototype that has not been validated yet. Decoding image bytes into a renderable GPUI element needs investigation of `use_render_image` or equivalent byte-loading paths. Deferred until a concrete rendering approach is proven.
+- full-content blob scan search: the current body search operates on the materialized preview text and full-body text cache. A chunked blob-backed search path that navigates match snippets without materializing the entire response body into hot state is deferred to a later phase. The in-preview search is sufficient for typical API debugging; full-content search at scale can be revisited when response payloads routinely exceed the 32 MiB per-tab cap.
 
 ## Phase 0 (P0): Foundation and State Contract
 
