@@ -423,7 +423,7 @@ Goal: make the request-response loop actually usable day-to-day, not just lifecy
 
 Phase 3 made send/save/cancel safe at the state and persistence layer, but the response panel is a single flat dump and the request editor uses bare text inputs for every section. This phase closes the gap between "the lifecycle works" and "a developer can actually use this to debug an API."
 
-Detailed execution document: [docs/phase-3.5.md](docs/phase-3.5.md)
+Detailed execution document: [docs/completed/phase-3.5.md](docs/completed/phase-3.5.md)
 
 Scope:
 
