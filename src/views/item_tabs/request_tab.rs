@@ -137,6 +137,7 @@ pub struct RequestTabView {
     body_form_text_kv_table: Entity<TableState<kv_editor::KvTableDelegate>>,
     html_webview: Option<Entity<WebView>>,
     _subscriptions: Vec<Subscription>,
+    draft_dirty: bool,
 }
 
 #[derive(Debug, Default)]
@@ -720,6 +721,7 @@ impl RequestTabView {
             }),
             html_webview: None,
             _subscriptions: subscriptions,
+            draft_dirty: true,
         };
         this.rebuild_kv_rows(KvTarget::Params, &initial.params, window, cx);
         this.rebuild_kv_rows(KvTarget::Headers, &initial.headers, window, cx);
@@ -1971,9 +1973,21 @@ impl Focusable for RequestTabView {
     }
 }
 
+impl RequestTabView {
+    /// Mark the draft as changed so the next render syncs inputs from it.
+    /// Call this when the draft is replaced externally (e.g., tab switch).
+    pub fn mark_draft_dirty(&mut self, cx: &mut Context<Self>) {
+        self.draft_dirty = true;
+        cx.notify();
+    }
+}
+
 impl Render for RequestTabView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.sync_inputs_from_draft(window, cx);
+        if self.draft_dirty {
+            self.sync_inputs_from_draft(window, cx);
+            self.draft_dirty = false;
+        }
         let draft = self.editor.draft().clone();
         let save_status = self.editor.save_status().clone();
         let is_dirty = matches!(
