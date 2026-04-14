@@ -91,9 +91,9 @@ impl TableDelegate for KvTableDelegate {
                     .child(
                         Checkbox::new((self.prefix, id))
                             .checked(enabled)
-                            .on_click(move |checked, _window, cx| {
+                            .on_click(move |checked, window, cx| {
                                 view.update(cx, |this, cx| {
-                                    this.set_kv_row_enabled(target, id, *checked, cx);
+                                    this.set_kv_row_enabled(target, id, *checked, window, cx);
                                 });
                             }),
                     )

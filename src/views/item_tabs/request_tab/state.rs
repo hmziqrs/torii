@@ -44,19 +44,21 @@ impl RequestTabView {
             state
         });
 
-        self._subscriptions.push(cx.subscribe(
+        self._subscriptions.push(cx.subscribe_in(
             &key_input,
-            move |this: &mut RequestTabView, _: Entity<InputState>, event: &InputEvent, cx| {
+            window,
+            move |this: &mut RequestTabView, _: &Entity<InputState>, event: &InputEvent, window: &mut Window, cx| {
                 if let InputEvent::Change = event {
-                    this.on_kv_rows_changed(target, cx);
+                    this.on_kv_rows_changed(target, window, cx);
                 }
             },
         ));
-        self._subscriptions.push(cx.subscribe(
+        self._subscriptions.push(cx.subscribe_in(
             &value_input,
-            move |this: &mut RequestTabView, _: Entity<InputState>, event: &InputEvent, cx| {
+            window,
+            move |this: &mut RequestTabView, _: &Entity<InputState>, event: &InputEvent, window: &mut Window, cx| {
                 if let InputEvent::Change = event {
-                    this.on_kv_rows_changed(target, cx);
+                    this.on_kv_rows_changed(target, window, cx);
                 }
             },
         ));
@@ -171,7 +173,12 @@ impl RequestTabView {
             .collect()
     }
 
-    pub(super) fn on_kv_rows_changed(&mut self, target: KvTarget, cx: &mut Context<Self>) {
+    pub(super) fn on_kv_rows_changed(
+        &mut self,
+        target: KvTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if target == KvTarget::Params && self.input_sync_guard.is_active() {
             self.input_sync_guard.deferred = true;
             return;
@@ -188,6 +195,10 @@ impl RequestTabView {
                 );
                 if self.editor.draft().url != next_url {
                     self.editor.draft_mut().url = next_url;
+                    // Sync URL input to match the draft (params changed → URL rebuilt)
+                    self.url_input.update(cx, |s, cx| {
+                        s.set_value(self.editor.draft().url.clone(), window, cx);
+                    });
                 }
             }
             KvTarget::Headers => {
@@ -256,7 +267,7 @@ impl RequestTabView {
             self.kv_rows_mut(target).remove(ix);
         }
         self.ensure_trailing_empty_row(target, window, cx);
-        self.on_kv_rows_changed(target, cx);
+        self.on_kv_rows_changed(target, window, cx);
     }
 
     pub(super) fn set_kv_row_enabled(
@@ -264,11 +275,12 @@ impl RequestTabView {
         target: KvTarget,
         id: u64,
         enabled: bool,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(row) = self.kv_rows_mut(target).iter_mut().find(|row| row.id == id) {
             row.enabled = enabled;
-            self.on_kv_rows_changed(target, cx);
+            self.on_kv_rows_changed(target, window, cx);
         }
     }
 

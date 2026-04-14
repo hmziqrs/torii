@@ -407,9 +407,10 @@ impl RequestTabView {
             },
         ));
 
-        subscriptions.push(cx.subscribe(
+        subscriptions.push(cx.subscribe_in(
             &url_input,
-            |this: &mut RequestTabView, state: Entity<InputState>, event: &InputEvent, cx| {
+            window,
+            |this: &mut RequestTabView, state: &Entity<InputState>, event: &InputEvent, window: &mut Window, cx: &mut Context<Self>| {
                 if let InputEvent::Change = event {
                     if this.input_sync_guard.is_active() {
                         this.input_sync_guard.deferred = true;
@@ -433,6 +434,8 @@ impl RequestTabView {
                             this.editor.draft_mut().params = merged;
                         }
                         this.editor.refresh_save_status();
+                        // Sync params KV rows to match the updated draft params
+                        this.sync_kv_rows_with_draft(KvTarget::Params, window, cx);
                         cx.notify();
                     }
                 }
