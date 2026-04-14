@@ -1,7 +1,7 @@
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme as _, Icon, IconName, Root, Sizable as _, WindowExt as _,
-    button::{Button, ButtonVariants as _},
+    button::{Button, ButtonRounded, ButtonVariants as _},
     h_flex,
     menu::PopupMenuItem,
     resizable::{h_resizable, resizable_panel},
@@ -34,6 +34,7 @@ use crate::{
     title_bar::AppTitleBar,
     views::{
         AboutPage, SettingsPage,
+        http_method::method_badge,
         item_tabs::{collection_tab, environment_tab, folder_tab, request_tab, workspace_tab},
         tab_host::{TabPresentation, render_empty_state, render_tab_bar},
     },
@@ -1153,6 +1154,17 @@ impl Render for AppRoot {
                                             } else {
                                                 Vec::new()
                                             };
+                                            // Look up HTTP method if the active tab is a Request.
+                                            let request_method = active_tab.and_then(|key| {
+                                                if let (ItemKind::Request, Some(ItemId::Request(rid))) =
+                                                    (key.item().kind, key.item().id)
+                                                {
+                                                    self.catalog.find_request_method(rid)
+                                                } else {
+                                                    None
+                                                }
+                                            });
+                                            let last_idx = parts.len().saturating_sub(1);
                                             if parts.is_empty() {
                                                 None
                                             } else {
@@ -1160,14 +1172,34 @@ impl Render for AppRoot {
                                                     h_flex()
                                                         .px_4()
                                                         .py_1()
-                                                        .gap_1()
+                                                        .gap_0p5()
+                                                        .items_center()
                                                         .text_xs()
-                                                        .text_color(cx.theme().muted_foreground)
                                                         .children(parts.iter().enumerate().map(|(i, part)| {
+                                                            let is_last = i == last_idx;
+                                                            let method = if is_last { request_method.clone() } else { None };
                                                             h_flex()
-                                                                .gap_1()
-                                                                .when(i > 0, |el| el.child(div().child("/")))
-                                                                .child(div().child(part.clone()))
+                                                                .gap_0p5()
+                                                                .items_center()
+                                                                .when(i > 0, |el| {
+                                                                    el.child(
+                                                                        div()
+                                                                            .text_color(cx.theme().muted_foreground)
+                                                                            .child(">"),
+                                                                    )
+                                                                })
+                                                                .when_some(method, |el, m| {
+                                                                    el.child(method_badge(&m))
+                                                                })
+                                                                .child(
+                                                                    Button::new(SharedString::from(format!(
+                                                                        "breadcrumb-{i}"
+                                                                    )))
+                                                                    .ghost()
+                                                                    .rounded(ButtonRounded::Small)
+                                                                    .label(part.clone())
+                                                                    .on_click(|_, _, _| {}),
+                                                                )
                                                         })),
                                                 )
                                             }

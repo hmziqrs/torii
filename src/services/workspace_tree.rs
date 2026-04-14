@@ -308,6 +308,16 @@ impl WorkspaceCatalog {
         Vec::new()
     }
 
+    /// Returns the HTTP method string for the given request, or None if not found.
+    pub fn find_request_method(&self, id: crate::domain::ids::RequestId) -> Option<String> {
+        self.selected_workspace.as_ref().and_then(|ws| {
+            ws.collections
+                .iter()
+                .find_map(|col| col.find_request(id))
+                .map(|r| r.method.clone())
+        })
+    }
+
     fn find_request_path(
         ws_name: &str,
         col: &CollectionTree,
