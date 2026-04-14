@@ -1,12 +1,16 @@
+use std::time::Duration;
+
 use gpui::{
     AnyElement, App, AppContext as _, ClickEvent, InteractiveElement as _, IntoElement,
     ParentElement, Render, SharedString, StatefulInteractiveElement as _, StyleRefinement,
     Styled as _, Window, div, px, rgb,
 };
+use gpui::prelude::FluentBuilder as _;
 use gpui_component::{
-    Icon, IconName, Selectable as _, Sizable as _, Size,
+    ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _, Size,
     button::{Button, ButtonVariants as _},
     h_flex,
+    hover_card::HoverCard,
     tab::{Tab, TabBar},
     v_flex,
 };
@@ -20,6 +24,8 @@ pub struct TabPresentation {
     pub title: SharedString,
     pub icon: IconName,
     pub selected: bool,
+    /// Secondary line shown in the hover card (e.g. "GET https://…" for requests).
+    pub hover_subtitle: Option<SharedString>,
 }
 
 #[derive(Clone)]
@@ -37,15 +43,31 @@ pub fn render_tab_bar(
     on_close: impl Fn(TabKey, &mut Window, &mut App) + Clone + 'static,
     on_toggle_sidebar: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     on_reorder: impl Fn(usize, usize, &mut Window, &mut App) + Clone + 'static,
+    _window: &mut Window,
+    cx: &mut App,
 ) -> AnyElement {
-    let selected_index = tabs.iter().position(|tab| tab.selected).unwrap_or_default();
+    let border_color = cx.theme().border;
+    let tab_bar_bg = cx.theme().tab_bar;
+    let tab_foreground = cx.theme().tab_foreground;
 
-    TabBar::new("workspace-tabs")
+    h_flex()
+        .group("tab-bar")
         .w_full()
-        .with_size(Size::Small)
-        .menu(true)
-        .selected_index(selected_index)
-        .prefix(
+        .items_center()
+        .relative()
+        .bg(tab_bar_bg)
+        .text_color(tab_foreground)
+        .child(
+            // Bottom border line (matches TabBar Tab variant)
+            div()
+                .absolute()
+                .left_0()
+                .bottom_0()
+                .size_full()
+                .border_b_1()
+                .border_color(border_color),
+        )
+        .child(
             h_flex().mx_1().gap_1().child(
                 Button::new("toggle-sidebar")
                     .ghost()
@@ -58,58 +80,99 @@ pub fn render_tab_bar(
                     .on_click(on_toggle_sidebar),
             ),
         )
-        .children(tabs.iter().map(|tab| {
-            let key = tab.key;
-            let close_key = tab.key;
-            let index = tab.index;
-            let on_select = on_select.clone();
-            let on_close = on_close.clone();
-            let on_reorder = on_reorder.clone();
+        .child(
+            h_flex()
+                .id("tabs-scroll")
+                .flex_1()
+                .overflow_x_scroll()
+                .child(
+                    h_flex().children(tabs.iter().map(|tab| {
+                        let key = tab.key;
+                        let close_key = tab.key;
+                        let index = tab.index;
+                        let on_select = on_select.clone();
+                        let on_close = on_close.clone();
+                        let on_reorder = on_reorder.clone();
+                        let hover_title = tab.title.clone();
+                        let hover_subtitle = tab.hover_subtitle.clone();
 
-            build_tab(tab.title.clone(), tab.icon.clone(), tab.selected)
-                .selected(tab.selected)
-                .on_drag(
-                    DraggedTab {
-                        from: index,
-                        title: tab.title.clone(),
-                        icon: tab.icon.clone(),
-                        selected: tab.selected,
-                    },
-                    |drag: &DraggedTab, _, _, cx: &mut App| {
-                        cx.new(|_| {
-                            DragTabPreview::new(
-                                drag.title.clone(),
-                                drag.icon.clone(),
-                                drag.selected,
+                        let tab_el = build_tab(tab.title.clone(), tab.icon.clone(), tab.selected)
+                            .on_drag(
+                                DraggedTab {
+                                    from: index,
+                                    title: tab.title.clone(),
+                                    icon: tab.icon.clone(),
+                                    selected: tab.selected,
+                                },
+                                |drag: &DraggedTab, _, _, cx: &mut App| {
+                                    cx.new(|_| {
+                                        DragTabPreview::new(
+                                            drag.title.clone(),
+                                            drag.icon.clone(),
+                                            drag.selected,
+                                        )
+                                    })
+                                },
                             )
-                        })
-                    },
-                )
-                .drag_over::<DraggedTab>({
-                    let index = index;
-                    move |style: StyleRefinement, dragged: &DraggedTab, _, _| {
-                        let mut style = style.border_color(rgb(0x2563EB));
-                        if index < dragged.from {
-                            style = style.border_l_2();
-                        } else if index > dragged.from {
-                            style = style.border_r_2();
-                        }
-                        style
-                    }
-                })
-                .on_drop(move |dragged: &DraggedTab, window, cx| {
-                    on_reorder(dragged.from, index, window, cx);
-                })
-                .suffix(close_tab_button(
-                    format!("close-tab-{key:?}"),
-                    move |_, window, cx| {
-                        on_close(close_key, window, cx);
-                    },
-                ))
-                .on_click(move |_, window, cx| {
-                    on_select(key, window, cx);
-                })
-        }))
+                            .drag_over::<DraggedTab>({
+                                let index = index;
+                                move |style: StyleRefinement, dragged: &DraggedTab, _, _| {
+                                    let mut style = style.border_color(rgb(0x2563EB));
+                                    if index < dragged.from {
+                                        style = style.border_l_2();
+                                    } else if index > dragged.from {
+                                        style = style.border_r_2();
+                                    }
+                                    style
+                                }
+                            })
+                            .on_drop(move |dragged: &DraggedTab, window, cx| {
+                                on_reorder(dragged.from, index, window, cx);
+                            })
+                            .suffix(close_tab_button(
+                                format!("close-tab-{key:?}"),
+                                move |_, window, cx| {
+                                    on_close(close_key, window, cx);
+                                },
+                            ))
+                            .on_click(move |_, window, cx| {
+                                on_select(key, window, cx);
+                            });
+
+                        HoverCard::new(SharedString::from(format!("tab-hc-{}", index)))
+                            .open_delay(Duration::from_millis(500))
+                            .close_delay(Duration::from_millis(200))
+                            .trigger(tab_el)
+                            .content(move |_state, _window, cx| {
+                                let theme = cx.theme();
+                                v_flex()
+                                    .min_w(px(160.))
+                                    .max_w(px(320.))
+                                    .gap_1()
+                                    .p_2()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .text_color(theme.foreground)
+                                            .child(hover_title.clone()),
+                                    )
+                                    .when_some(hover_subtitle.clone(), |this: gpui::Div, sub| {
+                                        this.child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(theme.muted_foreground)
+                                                .whitespace_nowrap()
+                                                .overflow_hidden()
+                                                .text_ellipsis()
+                                                .child(sub),
+                                        )
+                                    })
+                            })
+                            .into_any_element()
+                    })),
+                ),
+        )
         .into_any_element()
 }
 
@@ -166,8 +229,15 @@ impl Render for DragTabPreview {
 fn build_tab(title: SharedString, icon: IconName, selected: bool) -> Tab {
     Tab::new()
         .w(px(160.))
-        .label(title)
         .prefix(div().pl_2().child(Icon::new(icon).size_3p5()))
+        .child(
+            div()
+                .flex_1()
+                .whitespace_nowrap()
+                .overflow_hidden()
+                .text_ellipsis()
+                .child(title),
+        )
         .selected(selected)
         .with_size(Size::Small)
 }

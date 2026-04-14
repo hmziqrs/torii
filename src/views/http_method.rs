@@ -5,13 +5,13 @@ use gpui::{FontWeight, Hsla, IntoElement, div, hsla, prelude::*};
 // ---------------------------------------------------------------------------
 
 /// The network protocol used by a request.
-/// Use this for badges and icons; derive from a method/protocol field.
+/// GraphQL is intentionally absent — it is HTTP at the transport level and
+/// only differs in UI/workflow, not in how the connection works.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RequestProtocol {
     Http,
     WebSocket,
     Grpc,
-    GraphQL,
 }
 
 impl RequestProtocol {
@@ -21,7 +21,6 @@ impl RequestProtocol {
         match method.to_ascii_uppercase().as_str() {
             "WS" | "WEBSOCKET" => Self::WebSocket,
             "GRPC" | "GRPC_UNARY" | "GRPC_STREAMING" => Self::Grpc,
-            "GRAPHQL" => Self::GraphQL,
             _ => Self::Http,
         }
     }
@@ -32,7 +31,6 @@ impl RequestProtocol {
             Self::Http => "HTTP",
             Self::WebSocket => "WS",
             Self::Grpc => "gRPC",
-            Self::GraphQL => "GQL",
         }
     }
 
@@ -42,7 +40,6 @@ impl RequestProtocol {
             Self::Http => hsla(217. / 360., 0.91, 0.60, 1.),      // blue
             Self::WebSocket => hsla(142. / 360., 0.71, 0.45, 1.), // green
             Self::Grpc => hsla(262. / 360., 0.83, 0.58, 1.),      // purple
-            Self::GraphQL => hsla(316. / 360., 0.73, 0.52, 1.),   // pink
         }
     }
 }

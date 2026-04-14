@@ -34,7 +34,7 @@ use crate::{
     title_bar::AppTitleBar,
     views::{
         AboutPage, SettingsPage,
-        http_method::method_badge,
+        http_method::{RequestProtocol, protocol_badge},
         item_tabs::{collection_tab, environment_tab, folder_tab, request_tab, workspace_tab},
         tab_host::{TabPresentation, render_empty_state, render_tab_bar},
     },
@@ -1002,15 +1002,22 @@ impl Render for AppRoot {
                 .iter()
                 .enumerate()
                 .map(|(index, tab)| {
-                    let (title, dirty) = match tab.key.item().id {
+                    let (title, dirty, hover_subtitle) = match tab.key.item().id {
                         Some(ItemId::RequestDraft(draft_id)) => self
                             .request_draft_pages
                             .get(&draft_id)
                             .map(|p| {
                                 let page = p.read(cx);
+                                let draft = page.editor().draft();
+                                let subtitle = if draft.url.is_empty() {
+                                    None
+                                } else {
+                                    Some(format!("{} {}", draft.method, draft.url))
+                                };
                                 (
-                                    page.editor().draft().name.clone(),
+                                    draft.name.clone(),
                                     page.has_unsaved_changes(),
+                                    subtitle,
                                 )
                             })
                             .unwrap_or_else(|| {
@@ -1018,6 +1025,7 @@ impl Render for AppRoot {
                                     es_fluent::localize("request_tab_draft_title", None)
                                         .to_string(),
                                     false,
+                                    None,
                                 )
                             }),
                         Some(ItemId::Request(request_id)) => {
@@ -1030,13 +1038,29 @@ impl Render for AppRoot {
                                 .get(&request_id)
                                 .map(|p| p.read(cx).has_unsaved_changes())
                                 .unwrap_or(false);
-                            (base, dirty)
+                            let subtitle = self
+                                .catalog
+                                .selected_workspace()
+                                .and_then(|ws| {
+                                    ws.collections
+                                        .iter()
+                                        .find_map(|c| c.find_request(request_id))
+                                })
+                                .and_then(|r| {
+                                    if r.url.is_empty() {
+                                        None
+                                    } else {
+                                        Some(format!("{} {}", r.method, r.url))
+                                    }
+                                });
+                            (base, dirty, subtitle)
                         }
                         _ => (
                             self.catalog
                                 .find_title(tab.key.item())
                                 .unwrap_or_else(|| es_fluent::localize("tab_missing_short", None)),
                             false,
+                            None,
                         ),
                     };
                     let title = if dirty { format!("* {title}") } else { title };
@@ -1046,6 +1070,7 @@ impl Render for AppRoot {
                         title: title.into(),
                         icon: self.catalog.find_icon(tab.key.item()),
                         selected: active_tab == Some(tab.key),
+                        hover_subtitle: hover_subtitle.map(Into::into),
                     }
                 })
                 .collect::<Vec<_>>();
@@ -1146,6 +1171,8 @@ impl Render for AppRoot {
                                                     this.reorder_tabs(from, to, cx);
                                                 });
                                             },
+                                            window,
+                                            cx,
                                         ))
                                         // Breadcrumbs — show path for active tab
                                         .children({
@@ -1154,12 +1181,14 @@ impl Render for AppRoot {
                                             } else {
                                                 Vec::new()
                                             };
-                                            // Look up HTTP method if the active tab is a Request.
-                                            let request_method = active_tab.and_then(|key| {
+                                            // Derive protocol from the request method when active tab is a Request.
+                                            let protocol = active_tab.and_then(|key| {
                                                 if let (ItemKind::Request, Some(ItemId::Request(rid))) =
                                                     (key.item().kind, key.item().id)
                                                 {
-                                                    self.catalog.find_request_method(rid)
+                                                    self.catalog
+                                                        .find_request_method(rid)
+                                                        .map(|m| RequestProtocol::from_method(&m))
                                                 } else {
                                                     None
                                                 }
@@ -1171,31 +1200,31 @@ impl Render for AppRoot {
                                                 Some(
                                                     h_flex()
                                                         .px_4()
-                                                        .py_1()
-                                                        .gap_0p5()
+                                                        .py_px()
+                                                        .gap_px()
                                                         .items_center()
-                                                        .text_xs()
                                                         .children(parts.iter().enumerate().map(|(i, part)| {
                                                             let is_last = i == last_idx;
-                                                            let method = if is_last { request_method.clone() } else { None };
+                                                            let proto = if is_last { protocol } else { None };
                                                             h_flex()
-                                                                .gap_0p5()
+                                                                .gap_px()
                                                                 .items_center()
                                                                 .when(i > 0, |el| {
                                                                     el.child(
-                                                                        div()
-                                                                            .text_color(cx.theme().muted_foreground)
-                                                                            .child(">"),
+                                                                        Icon::new(IconName::ChevronRight)
+                                                                            .small()
+                                                                            .text_color(cx.theme().muted_foreground),
                                                                     )
                                                                 })
-                                                                .when_some(method, |el, m| {
-                                                                    el.child(method_badge(&m))
+                                                                .when_some(proto, |el, p| {
+                                                                    el.child(protocol_badge(p))
                                                                 })
                                                                 .child(
                                                                     Button::new(SharedString::from(format!(
                                                                         "breadcrumb-{i}"
                                                                     )))
                                                                     .ghost()
+                                                                    .xsmall()
                                                                     .rounded(ButtonRounded::Small)
                                                                     .label(part.clone())
                                                                     .on_click(|_, _, _| {}),
