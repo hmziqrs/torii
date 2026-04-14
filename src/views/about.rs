@@ -1,11 +1,15 @@
 use gpui::{prelude::*, *};
 use gpui_component::{
+    // ui::{IndexPath},
+    IndexPath,
+    select::{Select, SelectState},
     ActiveTheme as _, Sizable as _,
     input::{Input, InputState},
     v_flex,
 };
 
 pub struct AboutPage {
+    select: Entity<SelectState<Vec<String>>>,
     input: Entity<InputState>,
 }
 
@@ -17,12 +21,22 @@ impl AboutPage {
             state
         });
 
-        Self { input }
+        let select = cx.new(|cx| {
+            SelectState::new(
+                vec!["Apple".into(), "Orange".into(), "Banana".into()],
+                Some(IndexPath::default()), // Select first item
+                window,
+                cx,
+            )
+        });
+
+        Self { input, select }
     }
 }
 
 impl Render for AboutPage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+
         v_flex()
             .size_full()
             .items_center()
@@ -39,5 +53,6 @@ impl Render for AboutPage {
                     .child(es_fluent::localize("about_version", None)),
             )
             .child(div().w(px(360.)).child(Input::new(&self.input).large()))
+            .child(Select::new(&self.select))
     }
 }
