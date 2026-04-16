@@ -80,12 +80,10 @@ pub(super) fn render_auth_editor(
                         .large()
                         .mask_toggle(),
                 )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(muted)
-                        .child(es_fluent::localize("request_tab_auth_api_key_location", None)),
-                )
+                .child(div().text_xs().text_color(muted).child(es_fluent::localize(
+                    "request_tab_auth_api_key_location",
+                    None,
+                )))
                 .child(
                     div()
                         .w_56()

@@ -267,7 +267,11 @@ impl RequestTabView {
             }),
             params_kv_table: cx.new(|cx| {
                 TableState::new(
-                    kv_editor::KvTableDelegate::new(this_entity.clone(), KvTarget::Params, "params"),
+                    kv_editor::KvTableDelegate::new(
+                        this_entity.clone(),
+                        KvTarget::Params,
+                        "params",
+                    ),
                     window,
                     cx,
                 )
@@ -279,7 +283,11 @@ impl RequestTabView {
             }),
             headers_kv_table: cx.new(|cx| {
                 TableState::new(
-                    kv_editor::KvTableDelegate::new(this_entity.clone(), KvTarget::Headers, "headers"),
+                    kv_editor::KvTableDelegate::new(
+                        this_entity.clone(),
+                        KvTarget::Headers,
+                        "headers",
+                    ),
                     window,
                     cx,
                 )
@@ -291,7 +299,11 @@ impl RequestTabView {
             }),
             body_urlencoded_kv_table: cx.new(|cx| {
                 TableState::new(
-                    kv_editor::KvTableDelegate::new(this_entity.clone(), KvTarget::BodyUrlEncoded, "body-urlencoded"),
+                    kv_editor::KvTableDelegate::new(
+                        this_entity.clone(),
+                        KvTarget::BodyUrlEncoded,
+                        "body-urlencoded",
+                    ),
                     window,
                     cx,
                 )
@@ -303,7 +315,11 @@ impl RequestTabView {
             }),
             body_form_text_kv_table: cx.new(|cx| {
                 TableState::new(
-                    kv_editor::KvTableDelegate::new(this_entity.clone(), KvTarget::BodyFormDataText, "body-form-text"),
+                    kv_editor::KvTableDelegate::new(
+                        this_entity.clone(),
+                        KvTarget::BodyFormDataText,
+                        "body-form-text",
+                    ),
                     window,
                     cx,
                 )
@@ -318,6 +334,10 @@ impl RequestTabView {
             kv_subscriptions: Vec::new(),
             draft_dirty: true,
             response_tables_dirty: false,
+            params_kv_dirty: true,
+            headers_kv_dirty: true,
+            body_urlencoded_kv_dirty: true,
+            body_form_text_kv_dirty: true,
         };
         this.rebuild_kv_rows(KvTarget::Params, &initial.params, window, cx);
         this.rebuild_kv_rows(KvTarget::Headers, &initial.headers, window, cx);

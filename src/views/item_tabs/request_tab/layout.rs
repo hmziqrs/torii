@@ -39,24 +39,36 @@ pub(super) fn render_request_tab(
     let latest_run = latest_run_summary(view.editor.exec_status());
 
     let section_content = match view.active_section {
-        RequestSectionTab::Params => kv_editor::render_kv_table(
-            &view.params_kv_table,
-            KvTarget::Params,
-            "params",
-            &view.params_rows,
-            cx,
-        )
-        .into_any_element(),
-        RequestSectionTab::Auth => auth_editor::render_auth_editor(view, &draft, cx).into_any_element(),
-        RequestSectionTab::Headers => kv_editor::render_kv_table(
-            &view.headers_kv_table,
-            KvTarget::Headers,
-            "headers",
-            &view.headers_rows,
-            cx,
-        )
-        .into_any_element(),
-        RequestSectionTab::Body => body_editor::render_body_editor(view, &draft, window, cx).into_any_element(),
+        RequestSectionTab::Params => {
+            let dirty = std::mem::take(&mut view.params_kv_dirty);
+            kv_editor::render_kv_table(
+                &view.params_kv_table,
+                KvTarget::Params,
+                "params",
+                &view.params_rows,
+                dirty,
+                cx,
+            )
+            .into_any_element()
+        }
+        RequestSectionTab::Auth => {
+            auth_editor::render_auth_editor(view, &draft, cx).into_any_element()
+        }
+        RequestSectionTab::Headers => {
+            let dirty = std::mem::take(&mut view.headers_kv_dirty);
+            kv_editor::render_kv_table(
+                &view.headers_kv_table,
+                KvTarget::Headers,
+                "headers",
+                &view.headers_rows,
+                dirty,
+                cx,
+            )
+            .into_any_element()
+        }
+        RequestSectionTab::Body => {
+            body_editor::render_body_editor(view, &draft, window, cx).into_any_element()
+        }
         RequestSectionTab::Scripts => v_flex()
             .gap_2()
             .child(
@@ -103,7 +115,11 @@ pub(super) fn render_request_tab(
                 .gap_2()
                 .items_center()
                 .h(px(36.))
-                .child(div().w(px(120.)).child(Select::new(&view.method_select).large()))
+                .child(
+                    div()
+                        .w(px(120.))
+                        .child(Select::new(&view.method_select).large()),
+                )
                 .child(div().flex_1().child(Input::new(&view.url_input).large()))
                 .child(
                     Button::new("request-send")
@@ -150,7 +166,10 @@ pub(super) fn render_request_tab(
                         })),
                 )
                 .when(
-                    matches!(view.editor.exec_status(), ExecStatus::Sending | ExecStatus::Streaming),
+                    matches!(
+                        view.editor.exec_status(),
+                        ExecStatus::Sending | ExecStatus::Streaming
+                    ),
                     |el| {
                         el.child(
                             Button::new("request-cancel")

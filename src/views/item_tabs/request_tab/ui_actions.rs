@@ -48,25 +48,19 @@ impl RequestTabView {
                             v_flex()
                                 .gap_2()
                                 .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(muted)
-                                        .child(es_fluent::localize("request_tab_timeout_label", None)),
+                                    div().text_xs().text_color(muted).child(es_fluent::localize(
+                                        "request_tab_timeout_label",
+                                        None,
+                                    )),
                                 )
                                 .child(Input::new(&timeout_input).large()),
                         )
                         .child(
                             v_flex()
                                 .gap_2()
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(muted)
-                                        .child(es_fluent::localize(
-                                            "request_tab_follow_redirects_label",
-                                            None,
-                                        )),
-                                )
+                                .child(div().text_xs().text_color(muted).child(
+                                    es_fluent::localize("request_tab_follow_redirects_label", None),
+                                ))
                                 .child(Input::new(&follow_redirects_input).large()),
                         ),
                 )

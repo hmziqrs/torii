@@ -1,6 +1,6 @@
-use super::*;
 use super::helpers::BodyKind;
 use super::kv_editor::render_kv_table;
+use super::*;
 use gpui_component::radio::{Radio, RadioGroup};
 
 // ---------------------------------------------------------------------------
@@ -14,11 +14,14 @@ pub(super) fn render_body_editor(
     cx: &mut Context<RequestTabView>,
 ) -> gpui::Div {
     let muted = cx.theme().muted_foreground;
+    let urlencoded_dirty = std::mem::take(&mut view.body_urlencoded_kv_dirty);
+    let form_text_dirty = std::mem::take(&mut view.body_form_text_kv_dirty);
     let urlencoded_table = render_kv_table(
         &view.body_urlencoded_kv_table,
         KvTarget::BodyUrlEncoded,
         "body-urlencoded",
         &view.body_urlencoded_rows,
+        urlencoded_dirty,
         cx,
     );
     let form_text_table = render_kv_table(
@@ -26,6 +29,7 @@ pub(super) fn render_body_editor(
         KvTarget::BodyFormDataText,
         "body-form-text",
         &view.body_form_text_rows,
+        form_text_dirty,
         cx,
     );
 
@@ -83,19 +87,15 @@ pub(super) fn render_body_editor(
             BodyType::UrlEncoded { .. } => urlencoded_table.into_any_element(),
             BodyType::FormData { file_fields, .. } => v_flex()
                 .gap_3()
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(muted)
-                        .child(es_fluent::localize("request_tab_body_form_text_fields", None)),
-                )
+                .child(div().text_xs().text_color(muted).child(es_fluent::localize(
+                    "request_tab_body_form_text_fields",
+                    None,
+                )))
                 .child(form_text_table)
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(muted)
-                        .child(es_fluent::localize("request_tab_body_form_file_fields", None)),
-                )
+                .child(div().text_xs().text_color(muted).child(es_fluent::localize(
+                    "request_tab_body_form_file_fields",
+                    None,
+                )))
                 .children(file_fields.iter().enumerate().map(|(index, field)| {
                     let file_label = field
                         .file_name

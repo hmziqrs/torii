@@ -31,6 +31,7 @@ use crate::{
 
 mod auth_editor;
 mod auth_secret_ops;
+mod body_file_state;
 mod body_editor;
 mod helpers;
 mod init;
@@ -38,9 +39,9 @@ mod kv_editor;
 mod layout;
 mod request_ops;
 mod response_panel;
-mod sync;
 mod state;
 mod subscriptions;
+mod sync;
 mod ui_actions;
 
 use helpers::*;
@@ -152,6 +153,14 @@ pub struct RequestTabView {
     /// `render_completed_response` pushes parsed header/cookie/timing rows into
     /// the table entities exactly once per new response rather than every frame.
     response_tables_dirty: bool,
+    /// Per-target dirty flags for the KV editor tables. Set whenever rows are
+    /// added, removed, or rebuilt for that target. Cleared in `render_kv_table`
+    /// after the delegate is updated. Prevents `entity.update + refresh` on every
+    /// render frame — see idle-cpu-audit.md RLA-4.
+    params_kv_dirty: bool,
+    headers_kv_dirty: bool,
+    body_urlencoded_kv_dirty: bool,
+    body_form_text_kv_dirty: bool,
 }
 
 #[derive(Debug, Default)]
@@ -278,7 +287,6 @@ impl RequestTabView {
         }
         cx.notify();
     }
-
 }
 
 impl Focusable for RequestTabView {

@@ -61,7 +61,11 @@ impl RequestTabView {
         subscriptions.push(cx.subscribe_in(
             url_input,
             window,
-            |this: &mut RequestTabView, state: &Entity<InputState>, event: &InputEvent, window: &mut Window, cx: &mut Context<Self>| {
+            |this: &mut RequestTabView,
+             state: &Entity<InputState>,
+             event: &InputEvent,
+             window: &mut Window,
+             cx: &mut Context<Self>| {
                 if let InputEvent::Change = event {
                     if this.input_sync_guard.is_active() {
                         this.input_sync_guard.deferred = true;
@@ -165,7 +169,9 @@ impl RequestTabView {
             |this: &mut RequestTabView, state: Entity<InputState>, event: &InputEvent, cx| {
                 if let InputEvent::Change = event {
                     let content = state.read(cx).value().to_string();
-                    if let BodyType::RawText { content: existing } = &mut this.editor.draft_mut().body {
+                    if let BodyType::RawText { content: existing } =
+                        &mut this.editor.draft_mut().body
+                    {
                         if *existing != content {
                             *existing = content;
                             this.editor.refresh_save_status();
@@ -180,7 +186,9 @@ impl RequestTabView {
             |this: &mut RequestTabView, state: Entity<InputState>, event: &InputEvent, cx| {
                 if let InputEvent::Change = event {
                     let content = state.read(cx).value().to_string();
-                    if let BodyType::RawJson { content: existing } = &mut this.editor.draft_mut().body {
+                    if let BodyType::RawJson { content: existing } =
+                        &mut this.editor.draft_mut().body
+                    {
                         if *existing != content {
                             *existing = content;
                             this.editor.refresh_save_status();

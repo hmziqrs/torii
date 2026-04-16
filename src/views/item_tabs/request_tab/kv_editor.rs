@@ -31,15 +31,21 @@ impl KvTableDelegate {
         Self {
             rows: Vec::new(),
             columns: vec![
-                Column::new("", "").width(px(40.)).resizable(false).movable(false),
+                Column::new("", "")
+                    .width(px(40.))
+                    .resizable(false)
+                    .movable(false),
                 Column::new("key", es_fluent::localize("request_tab_kv_col_key", None))
                     .width(px(200.))
                     .resizable(true)
                     .movable(false),
-                Column::new("value", es_fluent::localize("request_tab_kv_col_value", None))
-                    .width(px(300.))
-                    .resizable(true)
-                    .movable(false),
+                Column::new(
+                    "value",
+                    es_fluent::localize("request_tab_kv_col_value", None),
+                )
+                .width(px(300.))
+                .resizable(true)
+                .movable(false),
                 Column::new("", "")
                     .width(px(80.))
                     .resizable(false)
@@ -88,24 +94,18 @@ impl TableDelegate for KvTableDelegate {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(
-                        Checkbox::new((self.prefix, id))
-                            .checked(enabled)
-                            .on_click(move |checked, window, cx| {
-                                view.update(cx, |this, cx| {
-                                    this.set_kv_row_enabled(target, id, *checked, window, cx);
-                                });
-                            }),
-                    )
+                    .child(Checkbox::new((self.prefix, id)).checked(enabled).on_click(
+                        move |checked, window, cx| {
+                            view.update(cx, |this, cx| {
+                                this.set_kv_row_enabled(target, id, *checked, window, cx);
+                            });
+                        },
+                    ))
                     .into_any_element()
             }
             // Key input
             1 => div()
-                .child(
-                    Input::new(&row.key_input)
-                        .appearance(false)
-                        .bordered(false),
-                )
+                .child(Input::new(&row.key_input).appearance(false).bordered(false))
                 .into_any_element(),
             // Value input
             2 => div()
@@ -148,23 +148,27 @@ pub(super) fn render_kv_table(
     target: KvTarget,
     prefix: &'static str,
     rows: &[KeyValueEditorRow],
+    dirty: bool,
     cx: &mut Context<RequestTabView>,
 ) -> gpui::Div {
-    // Push current row data into the delegate
-    let delegate_rows: Vec<KvDelegateRow> = rows
-        .iter()
-        .map(|r| KvDelegateRow {
-            id: r.id,
-            enabled: r.enabled,
-            key_input: r.key_input.clone(),
-            value_input: r.value_input.clone(),
-        })
-        .collect();
-
-    table.update(cx, |state, cx| {
-        state.delegate_mut().set_rows(delegate_rows);
-        state.refresh(cx);
-    });
+    // Only push row data into the delegate when the row list actually changed
+    // (add/remove/rebuild). Doing this unconditionally every render causes
+    // entity.update + state.refresh(cx) per frame — see idle-cpu-audit.md RLA-4.
+    if dirty {
+        let delegate_rows: Vec<KvDelegateRow> = rows
+            .iter()
+            .map(|r| KvDelegateRow {
+                id: r.id,
+                enabled: r.enabled,
+                key_input: r.key_input.clone(),
+                value_input: r.value_input.clone(),
+            })
+            .collect();
+        table.update(cx, |state, cx| {
+            state.delegate_mut().set_rows(delegate_rows);
+            state.refresh(cx);
+        });
+    }
 
     // Dynamic height that grows with rows, capped at 8 visible
     let row_height: f32 = 32.;

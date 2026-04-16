@@ -63,7 +63,11 @@ impl RequestTabView {
             AuthKind::None => AuthType::None,
             AuthKind::Basic => {
                 let username = self.auth_basic_username_input.read(cx).value().to_string();
-                let password_value = self.auth_basic_password_ref_input.read(cx).value().to_string();
+                let password_value = self
+                    .auth_basic_password_ref_input
+                    .read(cx)
+                    .value()
+                    .to_string();
                 AuthType::Basic {
                     username,
                     password_secret_ref: self.upsert_auth_secret_value(
@@ -74,14 +78,26 @@ impl RequestTabView {
                 }
             }
             AuthKind::Bearer => {
-                let token_value = self.auth_bearer_token_ref_input.read(cx).value().to_string();
+                let token_value = self
+                    .auth_bearer_token_ref_input
+                    .read(cx)
+                    .value()
+                    .to_string();
                 AuthType::Bearer {
-                    token_secret_ref: self.upsert_auth_secret_value("bearer_token", token_value, cx),
+                    token_secret_ref: self.upsert_auth_secret_value(
+                        "bearer_token",
+                        token_value,
+                        cx,
+                    ),
                 }
             }
             AuthKind::ApiKey => {
                 let key_name = self.auth_api_key_name_input.read(cx).value().to_string();
-                let value_raw = self.auth_api_key_value_ref_input.read(cx).value().to_string();
+                let value_raw = self
+                    .auth_api_key_value_ref_input
+                    .read(cx)
+                    .value()
+                    .to_string();
                 let location_ix = self
                     .auth_api_key_location_select
                     .read(cx)
@@ -224,7 +240,9 @@ impl RequestTabView {
             }
             AuthType::Bearer { token_secret_ref } => {
                 let token_value = self.read_secret_value(token_secret_ref, cx);
-                if self.auth_bearer_token_ref_input.read(cx).value().as_ref() != token_value.as_str() {
+                if self.auth_bearer_token_ref_input.read(cx).value().as_ref()
+                    != token_value.as_str()
+                {
                     self.auth_bearer_token_ref_input.update(cx, |s, cx| {
                         s.set_value(token_value.clone(), window, cx);
                     });
@@ -241,7 +259,8 @@ impl RequestTabView {
                     });
                 }
                 let value_raw = self.read_secret_value(value_secret_ref, cx);
-                if self.auth_api_key_value_ref_input.read(cx).value().as_ref() != value_raw.as_str() {
+                if self.auth_api_key_value_ref_input.read(cx).value().as_ref() != value_raw.as_str()
+                {
                     self.auth_api_key_value_ref_input.update(cx, |s, cx| {
                         s.set_value(value_raw.clone(), window, cx);
                     });
