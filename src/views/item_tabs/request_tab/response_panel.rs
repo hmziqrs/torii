@@ -361,15 +361,65 @@ fn render_completed_response(
     let (header_rows, header_format) = parse_response_header_rows(resp.headers_json.as_deref());
     let cookies = parse_set_cookie_rows(&header_rows);
 
-    // Feed data into the table delegates
-    view.headers_table.update(cx, |state, cx| {
-        state.delegate_mut().set_rows(header_rows.clone());
-        state.refresh(cx);
-    });
-    view.cookies_table.update(cx, |state, cx| {
-        state.delegate_mut().set_rows(cookies.clone());
-        state.refresh(cx);
-    });
+    // Push rows into the table entities only when the response has changed.
+    // Doing this unconditionally inside render() violates the render-purity rule
+    // (state_management.md §4.13) and caused a cascade: every incidental re-render
+    // of RequestTabView re-parsed headers and triggered entity updates on three tables.
+    // The flag is set to `true` in request_ops.rs / request_pages.rs when the
+    // exec status transitions to Completed. See idle-cpu-audit.md Bug #1.
+    if view.response_tables_dirty {
+        view.response_tables_dirty = false;
+        let timing_rows = vec![
+            TimingRow {
+                phase: es_fluent::localize("request_tab_response_timing_total", None).to_string(),
+                value: resp.total_ms
+                    .map(|ms| format!("{ms} ms"))
+                    .unwrap_or_else(|| "—".to_string()),
+            },
+            TimingRow {
+                phase: es_fluent::localize("request_tab_response_timing_ttfb", None).to_string(),
+                value: resp.ttfb_ms
+                    .map(|ms| format!("{ms} ms"))
+                    .unwrap_or_else(|| "—".to_string()),
+            },
+            TimingRow {
+                phase: es_fluent::localize("request_tab_response_timing_dispatched_at", None).to_string(),
+                value: format_unix_ms(resp.dispatched_at_unix_ms),
+            },
+            TimingRow {
+                phase: es_fluent::localize("request_tab_response_timing_first_byte_at", None).to_string(),
+                value: format_unix_ms(resp.first_byte_at_unix_ms),
+            },
+            TimingRow {
+                phase: es_fluent::localize("request_tab_response_timing_completed_at", None).to_string(),
+                value: format_unix_ms(resp.completed_at_unix_ms),
+            },
+            TimingRow {
+                phase: es_fluent::localize("request_tab_response_timing_dns", None).to_string(),
+                value: "—".to_string(),
+            },
+            TimingRow {
+                phase: es_fluent::localize("request_tab_response_timing_tcp", None).to_string(),
+                value: "—".to_string(),
+            },
+            TimingRow {
+                phase: es_fluent::localize("request_tab_response_timing_tls", None).to_string(),
+                value: "—".to_string(),
+            },
+        ];
+        view.headers_table.update(cx, |state, cx| {
+            state.delegate_mut().set_rows(header_rows.clone());
+            state.refresh(cx);
+        });
+        view.cookies_table.update(cx, |state, cx| {
+            state.delegate_mut().set_rows(cookies.clone());
+            state.refresh(cx);
+        });
+        view.timing_table.update(cx, |state, cx| {
+            state.delegate_mut().set_rows(timing_rows);
+            state.refresh(cx);
+        });
+    }
 
     let load_full_button = match &resp.body_ref {
         BodyRef::DiskBlob { blob_id, .. } => {
@@ -494,49 +544,6 @@ fn render_completed_response(
     } else {
         div().h(px(200.)).child(DataTable::new(&view.cookies_table).bordered(true))
     };
-
-    let timing_rows = vec![
-        TimingRow {
-            phase: es_fluent::localize("request_tab_response_timing_total", None).to_string(),
-            value: resp.total_ms
-                .map(|ms| format!("{ms} ms"))
-                .unwrap_or_else(|| "—".to_string()),
-        },
-        TimingRow {
-            phase: es_fluent::localize("request_tab_response_timing_ttfb", None).to_string(),
-            value: resp.ttfb_ms
-                .map(|ms| format!("{ms} ms"))
-                .unwrap_or_else(|| "—".to_string()),
-        },
-        TimingRow {
-            phase: es_fluent::localize("request_tab_response_timing_dispatched_at", None).to_string(),
-            value: format_unix_ms(resp.dispatched_at_unix_ms),
-        },
-        TimingRow {
-            phase: es_fluent::localize("request_tab_response_timing_first_byte_at", None).to_string(),
-            value: format_unix_ms(resp.first_byte_at_unix_ms),
-        },
-        TimingRow {
-            phase: es_fluent::localize("request_tab_response_timing_completed_at", None).to_string(),
-            value: format_unix_ms(resp.completed_at_unix_ms),
-        },
-        TimingRow {
-            phase: es_fluent::localize("request_tab_response_timing_dns", None).to_string(),
-            value: "—".to_string(),
-        },
-        TimingRow {
-            phase: es_fluent::localize("request_tab_response_timing_tcp", None).to_string(),
-            value: "—".to_string(),
-        },
-        TimingRow {
-            phase: es_fluent::localize("request_tab_response_timing_tls", None).to_string(),
-            value: "—".to_string(),
-        },
-    ];
-    view.timing_table.update(cx, |state, cx| {
-        state.delegate_mut().set_rows(timing_rows);
-        state.refresh(cx);
-    });
 
     let timing_content = div().h(px(280.)).child(DataTable::new(&view.timing_table).bordered(true));
 

@@ -44,7 +44,7 @@ impl RequestTabView {
             state
         });
 
-        self._subscriptions.push(cx.subscribe_in(
+        self.kv_subscriptions.push(cx.subscribe_in(
             &key_input,
             window,
             move |this: &mut RequestTabView, _: &Entity<InputState>, event: &InputEvent, window: &mut Window, cx| {
@@ -53,7 +53,7 @@ impl RequestTabView {
                 }
             },
         ));
-        self._subscriptions.push(cx.subscribe_in(
+        self.kv_subscriptions.push(cx.subscribe_in(
             &value_input,
             window,
             move |this: &mut RequestTabView, _: &Entity<InputState>, event: &InputEvent, window: &mut Window, cx| {
@@ -78,6 +78,11 @@ impl RequestTabView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Drop old KV subscriptions before creating new row entities.  Keeping them around
+        // would let _dead_ subscriptions (for dropped InputState entities) accumulate in the
+        // Vec without bound — see idle-cpu-audit.md Bug #2.
+        self.kv_subscriptions.clear();
+
         let normalized = if entries.is_empty() {
             vec![KeyValuePair {
                 key: String::new(),
@@ -184,10 +189,12 @@ impl RequestTabView {
             return;
         }
         let next = self.collect_meaningful_pairs(target, cx);
+        let mut draft_changed = false;
         match target {
             KvTarget::Params => {
                 if self.editor.draft().params != next {
                     self.editor.draft_mut().params = next;
+                    draft_changed = true;
                 }
                 let next_url = url_with_params(
                     self.editor.draft().url.as_str(),
@@ -195,7 +202,10 @@ impl RequestTabView {
                 );
                 if self.editor.draft().url != next_url {
                     self.editor.draft_mut().url = next_url;
-                    // Sync URL input to match the draft (params changed → URL rebuilt)
+                    draft_changed = true;
+                    // Sync URL input to match the draft (params changed → URL rebuilt).
+                    // Guard is in the url subscription handler: it checks draft.url == input
+                    // value before propagating, so this does not create a feedback loop.
                     self.url_input.update(cx, |s, cx| {
                         s.set_value(self.editor.draft().url.clone(), window, cx);
                     });
@@ -204,6 +214,7 @@ impl RequestTabView {
             KvTarget::Headers => {
                 if self.editor.draft().headers != next {
                     self.editor.draft_mut().headers = next;
+                    draft_changed = true;
                 }
             }
             KvTarget::BodyUrlEncoded => {
@@ -213,6 +224,7 @@ impl RequestTabView {
                 let next_body = BodyType::UrlEncoded { entries: next };
                 if self.editor.draft().body != next_body {
                     self.editor.draft_mut().body = next_body;
+                    draft_changed = true;
                 }
             }
             KvTarget::BodyFormDataText => {
@@ -229,11 +241,14 @@ impl RequestTabView {
                 };
                 if self.editor.draft().body != next_body {
                     self.editor.draft_mut().body = next_body;
+                    draft_changed = true;
                 }
             }
         }
-        self.editor.refresh_save_status();
-        cx.notify();
+        if draft_changed {
+            self.editor.refresh_save_status();
+            cx.notify();
+        }
     }
 
     pub(super) fn add_kv_row(

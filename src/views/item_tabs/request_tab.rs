@@ -35,10 +35,12 @@ mod body_editor;
 mod helpers;
 mod init;
 mod kv_editor;
+mod layout;
 mod request_ops;
 mod response_panel;
 mod state;
 mod subscriptions;
+mod ui_actions;
 
 use helpers::*;
 
@@ -141,7 +143,14 @@ pub struct RequestTabView {
     body_form_text_kv_table: Entity<TableState<kv_editor::KvTableDelegate>>,
     html_webview: Option<Entity<WebView>>,
     _subscriptions: Vec<Subscription>,
+    /// Subscriptions for KV row inputs — cleared and rebuilt on every `rebuild_kv_rows` call
+    /// to prevent unbounded accumulation as rows are replaced.
+    kv_subscriptions: Vec<Subscription>,
     draft_dirty: bool,
+    /// Set to `true` whenever the exec status transitions to Completed so that
+    /// `render_completed_response` pushes parsed header/cookie/timing rows into
+    /// the table entities exactly once per new response rather than every frame.
+    response_tables_dirty: bool,
 }
 
 #[derive(Debug, Default)]
@@ -267,91 +276,6 @@ impl RequestTabView {
                 .focus(window, cx);
         }
         cx.notify();
-    }
-
-    fn set_active_section(&mut self, section: RequestSectionTab, cx: &mut Context<Self>) {
-        if self.active_section != section {
-            self.active_section = section;
-            cx.notify();
-        }
-    }
-
-    fn set_active_response_tab(&mut self, tab: ResponseTab, cx: &mut Context<Self>) {
-        if self.active_response_tab != tab {
-            self.active_response_tab = tab;
-            cx.notify();
-        }
-    }
-
-    fn open_settings_dialog(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let name_input = self.name_input.clone();
-        let timeout_input = self.timeout_input.clone();
-        let follow_redirects_input = self.follow_redirects_input.clone();
-
-        window.open_dialog(cx, move |dialog, _, cx| {
-            let muted = cx.theme().muted_foreground;
-            dialog
-                .title(es_fluent::localize("request_tab_settings_label", None))
-                .overlay_closable(true)
-                .keyboard(true)
-                .child(
-                    v_flex()
-                        .gap_3()
-                        // Name field (moved from top of editor §4.1)
-                        .child(
-                            v_flex()
-                                .gap_2()
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(muted)
-                                        .child(es_fluent::localize(
-                                            "request_tab_name_label",
-                                            None,
-                                        )),
-                                )
-                                .child(Input::new(&name_input).large()),
-                        )
-                        .child(
-                            v_flex()
-                                .gap_2()
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(muted)
-                                        .child(es_fluent::localize(
-                                            "request_tab_timeout_label",
-                                            None,
-                                        )),
-                                )
-                                .child(Input::new(&timeout_input).large()),
-                        )
-                        .child(
-                            v_flex()
-                                .gap_2()
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(muted)
-                                        .child(es_fluent::localize(
-                                            "request_tab_follow_redirects_label",
-                                            None,
-                                        )),
-                                )
-                                .child(Input::new(&follow_redirects_input).large()),
-                        ),
-                )
-                .footer(
-                    h_flex().justify_end().child(
-                        Button::new("request-settings-close")
-                            .primary()
-                            .label(es_fluent::localize("request_tab_dirty_close_cancel", None))
-                            .on_click(move |_, window, cx| {
-                                window.close_dialog(cx);
-                            }),
-                    ),
-                )
-        });
     }
 
     fn selected_auth_kind(&self, cx: &App) -> AuthKind {
@@ -717,299 +641,7 @@ impl RequestTabView {
 
 impl Render for RequestTabView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.draft_dirty {
-            self.sync_inputs_from_draft(window, cx);
-            self.draft_dirty = false;
-        }
-        let draft = self.editor.draft().clone();
-        let save_status = self.editor.save_status().clone();
-        let is_dirty = matches!(
-            save_status,
-            SaveStatus::Dirty | SaveStatus::SaveFailed { .. } | SaveStatus::Saving
-        );
-
-        let dirty_indicator = if is_dirty {
-            div()
-                .text_xs()
-                .text_color(gpui::red())
-                .child(es_fluent::localize("request_tab_dirty", None))
-        } else {
-            div()
-        };
-
-        let response_panel = response_panel::render_response_panel(self, window, cx);
-
-        let preflight_panel = match self.editor.preflight_error() {
-            Some(err) => div().text_sm().text_color(gpui::red()).child(format!(
-                "{}: {}",
-                es_fluent::localize("request_tab_preflight", None),
-                err.message
-            )),
-            None => div(),
-        };
-
-        let latest_run = latest_run_summary(self.editor.exec_status());
-
-
-        let section_content = match self.active_section {
-            RequestSectionTab::Params => kv_editor::render_kv_table(
-                &self.params_kv_table,
-                KvTarget::Params,
-                "params",
-                &self.params_rows,
-                cx,
-            ).into_any_element(),
-            RequestSectionTab::Auth => auth_editor::render_auth_editor(self, &draft, cx)
-                .into_any_element(),
-            RequestSectionTab::Headers => kv_editor::render_kv_table(
-                &self.headers_kv_table,
-                KvTarget::Headers,
-                "headers",
-                &self.headers_rows,
-                cx,
-            ).into_any_element(),
-            RequestSectionTab::Body => body_editor::render_body_editor(
-                self, &draft, window, cx,
-            ).into_any_element(),
-            RequestSectionTab::Scripts => v_flex()
-                .gap_2()
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(es_fluent::localize("request_tab_pre_request_label", None)),
-                )
-                .child(
-                    div()
-                        .w_full()
-                        .child(Input::new(&self.pre_request_input).h(px(240.))),
-                )
-                .into_any_element(),
-            RequestSectionTab::Tests => v_flex()
-                .gap_2()
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(es_fluent::localize("request_tab_tests_label", None)),
-                )
-                .child(
-                    div()
-                        .w_full()
-                        .child(Input::new(&self.tests_input).h(px(240.))),
-                )
-                .into_any_element(),
-        };
-
-        v_flex()
-            .size_full()
-            .p_4()
-            .gap_3()
-            .track_focus(&self.focus_handle(cx))
-            .on_action(cx.listener(Self::handle_save_request))
-            .on_action(cx.listener(Self::handle_send_request))
-            .on_action(cx.listener(Self::handle_cancel_request))
-            .on_action(cx.listener(Self::handle_duplicate_request))
-            .on_action(cx.listener(Self::handle_focus_url_bar))
-            .on_action(cx.listener(Self::handle_toggle_body_search))
-            // §4.2: Unified URL bar — method, URL, and Send at equal height
-            .child(
-                h_flex()
-                    .gap_2()
-                    .items_center()
-                    .h(px(36.))
-                    .child(div().w(px(120.)).child(Select::new(&self.method_select).large()))
-                    .child(div().flex_1().child(Input::new(&self.url_input).large()))
-                    .child(
-                        Button::new("request-send")
-                            .primary()
-                            .large()
-                            .label(es_fluent::localize("request_tab_action_send", None))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.send(cx);
-                            })),
-                    ),
-            )
-            // §4.3: Compressed action buttons + latest run + settings in one row
-            .child(
-                h_flex()
-                    .gap_2()
-                    .items_center()
-                    .flex_wrap()
-                    // Dirty indicator (moved from §4.1 name row)
-                    .when(is_dirty, |el| {
-                        el.child(dirty_indicator)
-                    })
-                    // Save — always visible, ghost style
-                    .child(
-                        Button::new("request-save")
-                            .ghost()
-                            .label(es_fluent::localize("request_tab_action_save", None))
-                            .on_click(cx.listener(|this, _, window, cx| match this.save(cx) {
-                                Ok(()) => {
-                                    window.push_notification(
-                                        es_fluent::localize("request_tab_save_ok", None),
-                                        cx,
-                                    );
-                                }
-                                Err(err) => window.push_notification(err, cx),
-                            })),
-                    )
-                    // Duplicate — ghost
-                    .child(
-                        Button::new("request-duplicate")
-                            .ghost()
-                            .label(es_fluent::localize("request_tab_action_duplicate", None))
-                            .on_click(cx.listener(
-                                |this, _, window, cx| match this.duplicate(cx) {
-                                    Ok(_) => {
-                                        window.push_notification(
-                                            es_fluent::localize("request_tab_duplicate_ok", None),
-                                            cx,
-                                        );
-                                    }
-                                    Err(err) => window.push_notification(err, cx),
-                                },
-                            )),
-                    )
-                    // Cancel — only when sending/streaming
-                    .when(
-                        matches!(self.editor.exec_status(), ExecStatus::Sending | ExecStatus::Streaming),
-                        |el| {
-                            el.child(
-                                Button::new("request-cancel")
-                                    .ghost()
-                                    .label(es_fluent::localize("request_tab_action_cancel", None))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.cancel_send(cx);
-                                    })),
-                            )
-                        },
-                    )
-                    // Reload — only when a baseline exists
-                    .when(self.editor.baseline().is_some(), |el| {
-                        el.child(
-                            Button::new("request-reload")
-                                .ghost()
-                                .label(es_fluent::localize("request_tab_action_reload", None))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.reload_baseline(cx);
-                                })),
-                        )
-                    })
-                    // Spacer to push latest run + settings to the right
-                    .child(div().flex_1())
-                    // Latest run summary
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(format!(
-                                "{}: {}",
-                                es_fluent::localize("request_tab_latest_run_label", None),
-                                latest_run
-                            )),
-                    )
-                    // Settings
-                    .child(
-                        Button::new("request-settings-open")
-                            .ghost()
-                            .label(es_fluent::localize("request_tab_settings_label", None))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.open_settings_dialog(window, cx);
-                            })),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .gap_1()
-                    .flex_wrap()
-                    .child(section_tab_button(
-                        "request-tab-params",
-                        es_fluent::localize("request_tab_params_label", None).to_string(),
-                        self.active_section == RequestSectionTab::Params,
-                        cx,
-                        cx.listener(|this, _, _, cx| {
-                            this.set_active_section(RequestSectionTab::Params, cx);
-                        }),
-                    ))
-                    .child(section_tab_button(
-                        "request-tab-auth",
-                        es_fluent::localize("request_tab_auth_label", None).to_string(),
-                        self.active_section == RequestSectionTab::Auth,
-                        cx,
-                        cx.listener(|this, _, _, cx| {
-                            this.set_active_section(RequestSectionTab::Auth, cx);
-                        }),
-                    ))
-                    .child(section_tab_button(
-                        "request-tab-headers",
-                        es_fluent::localize("request_tab_headers_label", None).to_string(),
-                        self.active_section == RequestSectionTab::Headers,
-                        cx,
-                        cx.listener(|this, _, _, cx| {
-                            this.set_active_section(RequestSectionTab::Headers, cx);
-                        }),
-                    ))
-                    .child(section_tab_button(
-                        "request-tab-body",
-                        es_fluent::localize("request_tab_body_label", None).to_string(),
-                        self.active_section == RequestSectionTab::Body,
-                        cx,
-                        cx.listener(|this, _, _, cx| {
-                            this.set_active_section(RequestSectionTab::Body, cx);
-                        }),
-                    ))
-                    .child(section_tab_button(
-                        "request-tab-scripts",
-                        es_fluent::localize("request_tab_scripts_label", None).to_string(),
-                        self.active_section == RequestSectionTab::Scripts,
-                        cx,
-                        cx.listener(|this, _, _, cx| {
-                            this.set_active_section(RequestSectionTab::Scripts, cx);
-                        }),
-                    ))
-                    .child(section_tab_button(
-                        "request-tab-tests",
-                        es_fluent::localize("request_tab_tests_label", None).to_string(),
-                        self.active_section == RequestSectionTab::Tests,
-                        cx,
-                        cx.listener(|this, _, _, cx| {
-                            this.set_active_section(RequestSectionTab::Tests, cx);
-                        }),
-                    )),
-            )
-            // §4.5: Section content flows directly, no border box
-            .child(
-                v_flex()
-                    .w_full()
-                    .items_stretch()
-                    .pt_2()
-                    .child(div().w_full().child(section_content)),
-            )
-            .when(
-                matches!(save_status, SaveStatus::SaveFailed { .. }),
-                |el: gpui::Div| {
-                    if let SaveStatus::SaveFailed { error } = &save_status {
-                        el.child(div().text_sm().text_color(gpui::red()).child(error.clone()))
-                    } else {
-                        el
-                    }
-                },
-            )
-            .child(preflight_panel)
-            // Response panel — no border box
-            .child(
-                v_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .child(es_fluent::localize("request_tab_response_label", None)),
-                    )
-                    .child(response_panel),
-            )
+        layout::render_request_tab(self, window, cx)
     }
 }
 

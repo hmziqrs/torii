@@ -96,6 +96,7 @@ impl AppRoot {
                                 first_byte_at_unix_ms,
                                 completed_at_unix_ms,
                             });
+                        tab.mark_response_tables_dirty();
                     }
                     HistoryState::Failed => {
                         tab.editor_mut().restore_failed_response(

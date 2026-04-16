@@ -315,7 +315,9 @@ impl RequestTabView {
             }),
             html_webview: None,
             _subscriptions: subscriptions,
+            kv_subscriptions: Vec::new(),
             draft_dirty: true,
+            response_tables_dirty: false,
         };
         this.rebuild_kv_rows(KvTarget::Params, &initial.params, window, cx);
         this.rebuild_kv_rows(KvTarget::Headers, &initial.headers, window, cx);

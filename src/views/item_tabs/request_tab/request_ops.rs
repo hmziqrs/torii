@@ -231,7 +231,9 @@ impl RequestTabView {
                 this.loaded_full_body_text = None;
                 match result {
                     Ok(ExecOutcome::Completed(summary)) => {
-                        if !this.editor.complete_exec(summary, operation_id) {
+                        if this.editor.complete_exec(summary, operation_id) {
+                            this.response_tables_dirty = true;
+                        } else {
                             tracing::warn!(
                                 op_id = %operation_id,
                                 "late response ignored — operation no longer active"
@@ -522,5 +524,12 @@ impl RequestTabView {
             }
         }
         Ok(())
+    }
+
+    /// Mark the response tables (headers, cookies, timing) as needing a data push
+    /// on the next render.  Call this whenever the exec status transitions to
+    /// `Completed` from an external site (e.g., history restore in `request_pages.rs`).
+    pub fn mark_response_tables_dirty(&mut self) {
+        self.response_tables_dirty = true;
     }
 }
