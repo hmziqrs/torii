@@ -201,13 +201,20 @@ pub(super) fn render_preview_content(
     if is_preview_active && is_html && !html_body_for_preview.is_empty() {
         view.ensure_html_webview(window, cx);
         if let Some(webview) = &view.html_webview {
-            webview.update(cx, |w, _| {
-                let _ = w.raw().load_html(html_body_for_preview);
-                w.show();
-            });
+            // Only push HTML into WKWebView when the content actually changed —
+            // avoids per-render layout/paint passes. See idle-cpu-audit-2.md Bug 6.
+            if view.last_preview_html.as_deref() != Some(html_body_for_preview) {
+                view.last_preview_html = Some(html_body_for_preview.to_string());
+                webview.update(cx, |w, _| {
+                    let _ = w.raw().load_html(html_body_for_preview);
+                    w.show();
+                });
+            }
         }
-    } else {
-        view.html_webview = None;
+    } else if view.html_webview.is_some() {
+        // Use the proper release method instead of a raw entity drop during render —
+        // see idle-cpu-audit-2.md Bug 7.
+        view.release_html_webview(cx);
     }
 
     if is_html && is_preview_active && view.html_webview.is_some() {

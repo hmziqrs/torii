@@ -202,6 +202,7 @@ impl RequestTabView {
                 }) {
                     tracing::warn!(error = %err, "failed to update request tab for streaming progress");
                     telemetry::inc_async_update_failures("dropped_entity");
+                    break; // entity dropped — stop polling
                 }
             }
         })
@@ -531,5 +532,6 @@ impl RequestTabView {
     /// `Completed` from an external site (e.g., history restore in `request_pages.rs`).
     pub fn mark_response_tables_dirty(&mut self) {
         self.response_tables_dirty = true;
+        self.last_preview_html = None;
     }
 }

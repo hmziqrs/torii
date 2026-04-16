@@ -259,7 +259,6 @@ impl RequestTabView {
                         Some(false)
                     } else {
                         this.editor.refresh_save_status();
-                        cx.notify();
                         return;
                     };
                     if this.editor.draft().settings.follow_redirects != parsed {

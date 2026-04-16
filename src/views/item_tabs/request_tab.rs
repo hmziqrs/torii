@@ -105,6 +105,9 @@ pub struct RequestTabView {
     body_urlencoded_kv_table: Entity<TableState<kv_editor::KvTableDelegate>>,
     body_form_text_kv_table: Entity<TableState<kv_editor::KvTableDelegate>>,
     html_webview: Option<Entity<WebView>>,
+    /// Last HTML pushed into the webview via `load_html`. Compared on every render
+    /// to avoid pushing identical content into WKWebView — see idle-cpu-audit-2.md Bug 6.
+    last_preview_html: Option<String>,
     _subscriptions: Vec<Subscription>,
     /// Per-target subscriptions for KV row inputs. Only the target being rebuilt
     /// has its subscriptions cleared, so that rebuilding one target doesn't drop

@@ -330,6 +330,7 @@ impl RequestTabView {
                 .sortable(false)
             }),
             html_webview: None,
+            last_preview_html: None,
             _subscriptions: subscriptions,
             kv_subscriptions: HashMap::new(),
             draft_dirty: true,
