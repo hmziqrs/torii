@@ -11,10 +11,6 @@ pub(super) fn render_request_tab(
     }
     let draft = view.editor.draft().clone();
     let save_status = view.editor.save_status().clone();
-    let is_dirty = matches!(
-        save_status,
-        SaveStatus::Dirty | SaveStatus::SaveFailed { .. } | SaveStatus::Saving
-    );
 
     let is_inflight = matches!(
         view.editor.exec_status(),
@@ -73,11 +69,7 @@ pub(super) fn render_request_tab(
                     .text_color(cx.theme().muted_foreground)
                     .child(es_fluent::localize("request_tab_pre_request_label", None)),
             )
-            .child(
-                div()
-                    .w_full()
-                    .child(Input::new(&view.pre_request_input).h(px(240.))),
-            )
+            .child(div().w_full().child(Input::new(&view.pre_request_input).h(px(240.))))
             .into_any_element(),
         RequestSectionTab::Tests => v_flex()
             .gap_2()
@@ -87,16 +79,13 @@ pub(super) fn render_request_tab(
                     .text_color(cx.theme().muted_foreground)
                     .child(es_fluent::localize("request_tab_tests_label", None)),
             )
-            .child(
-                div()
-                    .w_full()
-                    .child(Input::new(&view.tests_input).h(px(240.))),
-            )
+            .child(div().w_full().child(Input::new(&view.tests_input).h(px(240.))))
             .into_any_element(),
     };
 
     v_flex()
         .size_full()
+        .overflow_hidden()
         .p_4()
         .gap_3()
         .track_focus(&view.focus_handle(cx))
@@ -106,6 +95,7 @@ pub(super) fn render_request_tab(
         .on_action(cx.listener(RequestTabView::handle_duplicate_request))
         .on_action(cx.listener(RequestTabView::handle_focus_url_bar))
         .on_action(cx.listener(RequestTabView::handle_toggle_body_search))
+        // URL bar — never shrinks
         .child({
             let url_focused = view
                 .url_input
@@ -116,6 +106,7 @@ pub(super) fn render_request_tab(
             h_flex()
                 .gap_2()
                 .items_center()
+                .flex_shrink_0()
                 .child(
                     h_flex()
                         .items_center()
@@ -182,10 +173,11 @@ pub(super) fn render_request_tab(
                     )
                 })
         })
+        // Section tabs — never shrinks, no wrapping
         .child(
             h_flex()
                 .gap_1()
-                .flex_wrap()
+                .flex_shrink_0()
                 .child(section_tab_button(
                     "request-tab-params",
                     es_fluent::localize("request_tab_params_label", None).to_string(),
@@ -244,6 +236,7 @@ pub(super) fn render_request_tab(
                 .child(
                     div()
                         .text_xs()
+                        .flex_shrink_0()
                         .text_color(cx.theme().muted_foreground)
                         .child(format!(
                             "{}: {}",
@@ -254,60 +247,68 @@ pub(super) fn render_request_tab(
                 .child(
                     Button::new("request-settings-open")
                         .ghost()
+                        .flex_shrink_0()
                         .label(es_fluent::localize("request_tab_settings_label", None))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.open_settings_dialog(window, cx);
                         })),
                 ),
         )
+        // Scrollable body: section content + banners + response
         .child(
-            v_flex()
-                .w_full()
-                .items_stretch()
-                .pt_2()
-                .child(div().w_full().child(section_content)),
-        )
-        .when(
-            matches!(save_status, SaveStatus::SaveFailed { .. }),
-            |el: gpui::Div| {
-                if let SaveStatus::SaveFailed { error } = &save_status {
-                    el.child(
-                        h_flex()
-                            .gap_2()
-                            .items_center()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(gpui::red())
-                                    .child(error.clone()),
-                            )
-                            .child(
-                                Button::new("request-reload")
-                                    .ghost()
-                                    .label(es_fluent::localize(
-                                        "request_tab_action_reload",
-                                        None,
-                                    ))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.reload_baseline(cx);
-                                    })),
-                            ),
-                    )
-                } else {
-                    el
-                }
-            },
-        )
-        .child(preflight_panel)
-        .child(
-            v_flex()
-                .gap_2()
+            div()
+                .id("request-tab-scroll")
+                .flex_1()
+                .flex_col()
+                .overflow_y_scroll()
+                .gap_3()
                 .child(
-                    div()
-                        .text_sm()
-                        .font_weight(gpui::FontWeight::MEDIUM)
-                        .child(es_fluent::localize("request_tab_response_label", None)),
+                    v_flex()
+                        .w_full()
+                        .child(section_content),
                 )
-                .child(response_panel),
+                .when(
+                    matches!(save_status, SaveStatus::SaveFailed { .. }),
+                    |el| {
+                        if let SaveStatus::SaveFailed { error } = &save_status {
+                            el.child(
+                                h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(gpui::red())
+                                            .child(error.clone()),
+                                    )
+                                    .child(
+                                        Button::new("request-reload")
+                                            .ghost()
+                                            .label(es_fluent::localize(
+                                                "request_tab_action_reload",
+                                                None,
+                                            ))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.reload_baseline(cx);
+                                            })),
+                                    ),
+                            )
+                        } else {
+                            el
+                        }
+                    },
+                )
+                .child(preflight_panel)
+                .child(
+                    v_flex()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .child(es_fluent::localize("request_tab_response_label", None)),
+                        )
+                        .child(response_panel),
+                ),
         )
 }

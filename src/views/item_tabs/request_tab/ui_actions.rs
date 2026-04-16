@@ -7,6 +7,11 @@ impl RequestTabView {
         cx: &mut Context<Self>,
     ) {
         if self.active_section != section {
+            tracing::debug!(
+                from = ?self.active_section,
+                to = ?section,
+                "request tab section switch"
+            );
             self.active_section = section;
             cx.notify();
         }

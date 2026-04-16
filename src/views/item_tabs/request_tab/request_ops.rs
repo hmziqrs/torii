@@ -39,12 +39,14 @@ impl RequestTabView {
                     "{} ({expected} -> {actual})",
                     es_fluent::localize("request_tab_save_conflict", None)
                 );
+                tracing::warn!(expected, actual, "save: revision conflict");
                 self.editor.fail_save(msg.clone());
                 cx.notify();
                 Err(msg)
             }
             Err(RequestRepoError::NotFound(_id)) => {
                 let msg = es_fluent::localize("request_tab_save_not_found", None).to_string();
+                tracing::warn!(request_id = ?self.editor.request_id(), "save: not found");
                 self.editor.fail_save(msg.clone());
                 cx.notify();
                 Err(msg)
@@ -54,6 +56,7 @@ impl RequestTabView {
                     "{}: {e}",
                     es_fluent::localize("request_tab_save_failed", None)
                 );
+                tracing::error!(error = %e, "save: storage error");
                 self.editor.fail_save(msg.clone());
                 cx.notify();
                 Err(msg)
@@ -140,6 +143,7 @@ impl RequestTabView {
         let workspace_id = match self.resolve_workspace_id(&services) {
             Some(id) => id,
             None => {
+                tracing::warn!(request_id = ?self.editor.request_id(), "send: no workspace id resolved");
                 self.editor.set_preflight_error(
                     es_fluent::localize("request_tab_no_workspace", None).to_string(),
                 );
@@ -150,6 +154,7 @@ impl RequestTabView {
 
         // Create pending history row with secret-safe snapshot
         let draft = self.editor.draft().clone();
+        tracing::debug!(method = %draft.method, url = %draft.url, "send");
         let history_entry = match services.request_execution.create_pending_history(
             workspace_id,
             self.editor.request_id(),
@@ -157,6 +162,7 @@ impl RequestTabView {
         ) {
             Ok(entry) => entry,
             Err(e) => {
+                tracing::error!(error = %e, request_id = ?self.editor.request_id(), "send: failed to create history entry");
                 self.editor.set_preflight_error(format!(
                     "{}: {e}",
                     es_fluent::localize("request_tab_history_create_failed", None)
