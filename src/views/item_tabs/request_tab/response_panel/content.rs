@@ -1,4 +1,3 @@
-use super::tables::TimingRow;
 use super::*;
 
 pub(super) fn render_completed_response(
@@ -16,64 +15,7 @@ pub(super) fn render_completed_response(
     let (header_rows, header_format) = parse_response_header_rows(resp.headers_json.as_deref());
     let cookies = parse_set_cookie_rows(&header_rows);
 
-    if view.response_tables_dirty {
-        view.response_tables_dirty = false;
-        let timing_rows = vec![
-            TimingRow {
-                phase: es_fluent::localize("request_tab_response_timing_total", None).to_string(),
-                value: resp
-                    .total_ms
-                    .map(|ms| format!("{ms} ms"))
-                    .unwrap_or_else(|| "—".to_string()),
-            },
-            TimingRow {
-                phase: es_fluent::localize("request_tab_response_timing_ttfb", None).to_string(),
-                value: resp
-                    .ttfb_ms
-                    .map(|ms| format!("{ms} ms"))
-                    .unwrap_or_else(|| "—".to_string()),
-            },
-            TimingRow {
-                phase: es_fluent::localize("request_tab_response_timing_dispatched_at", None)
-                    .to_string(),
-                value: format_unix_ms(resp.dispatched_at_unix_ms),
-            },
-            TimingRow {
-                phase: es_fluent::localize("request_tab_response_timing_first_byte_at", None)
-                    .to_string(),
-                value: format_unix_ms(resp.first_byte_at_unix_ms),
-            },
-            TimingRow {
-                phase: es_fluent::localize("request_tab_response_timing_completed_at", None)
-                    .to_string(),
-                value: format_unix_ms(resp.completed_at_unix_ms),
-            },
-            TimingRow {
-                phase: es_fluent::localize("request_tab_response_timing_dns", None).to_string(),
-                value: "—".to_string(),
-            },
-            TimingRow {
-                phase: es_fluent::localize("request_tab_response_timing_tcp", None).to_string(),
-                value: "—".to_string(),
-            },
-            TimingRow {
-                phase: es_fluent::localize("request_tab_response_timing_tls", None).to_string(),
-                value: "—".to_string(),
-            },
-        ];
-        view.headers_table.update(cx, |state, cx| {
-            state.delegate_mut().set_rows(header_rows.clone());
-            state.refresh(cx);
-        });
-        view.cookies_table.update(cx, |state, cx| {
-            state.delegate_mut().set_rows(cookies.clone());
-            state.refresh(cx);
-        });
-        view.timing_table.update(cx, |state, cx| {
-            state.delegate_mut().set_rows(timing_rows);
-            state.refresh(cx);
-        });
-    }
+    content_tabs::refresh_response_tables_if_dirty(view, resp, &header_rows, &cookies, cx);
 
     let load_full_button = match &resp.body_ref {
         BodyRef::DiskBlob { blob_id, .. } => {
@@ -101,128 +43,26 @@ pub(super) fn render_completed_response(
         _ => div(),
     };
 
-    let body_search_query = view.body_search_input.read(cx).value().to_string();
-    let body_matches = search_matches(&body_preview, &body_search_query);
-
     let is_html = looks_like_html(resp.media_type.as_deref());
     let html_body_for_preview = body_preview.clone();
-
-    let mut body_content = if looks_like_image(resp.media_type.as_deref()) {
-        div().text_sm().text_color(muted).child(es_fluent::localize(
-            "request_tab_response_image_preview_todo",
-            None,
-        ))
-    } else if !body_preview.is_empty() {
-        div()
-            .mt_2()
-            .p_3()
-            .rounded(px(4.))
-            .bg(bg)
-            .text_sm()
-            .font_family("monospace")
-            .child(body_preview)
-    } else {
-        div()
-            .text_sm()
-            .text_color(muted)
-            .child(es_fluent::localize("request_tab_response_body_empty", None))
-    };
-
-    if view.body_search_visible {
-        body_content = v_flex()
-            .gap_2()
-            .child(
-                h_flex()
-                    .gap_2()
-                    .items_center()
-                    .child(
-                        div()
-                            .flex_1()
-                            .child(Input::new(&view.body_search_input).large()),
-                    )
-                    .child(div().text_xs().text_color(muted).child(format!(
-                        "{} {}",
-                        body_matches.len(),
-                        es_fluent::localize("request_tab_search_matches", None)
-                    ))),
-            )
-            .child(body_content)
-    }
-
-    let headers_content = if header_rows.is_empty() {
-        div().text_sm().text_color(muted).child(es_fluent::localize(
-            "request_tab_response_headers_empty",
-            None,
-        ))
-    } else {
-        v_flex()
-            .gap_1()
-            .when(
-                matches!(header_format, Some(HeaderJsonFormat::LegacyObjectMap)),
-                |el: gpui::Div| {
-                    el.child(
-                        div()
-                            .text_xs()
-                            .text_color(gpui::hsla(30. / 360., 0.9, 0.38, 1.))
-                            .child(es_fluent::localize(
-                                "request_tab_response_headers_legacy_note",
-                                None,
-                            )),
-                    )
-                },
-            )
-            .child(
-                div()
-                    .h(px(200.))
-                    .child(DataTable::new(&view.headers_table).bordered(true)),
-            )
-    };
-
-    let cookies_content = if cookies.is_empty() {
-        div().text_sm().text_color(muted).child(es_fluent::localize(
-            "request_tab_response_cookies_empty",
-            None,
-        ))
-    } else {
-        div()
-            .h(px(200.))
-            .child(DataTable::new(&view.cookies_table).bordered(true))
-    };
-
-    let timing_content = div()
-        .h(px(280.))
-        .child(DataTable::new(&view.timing_table).bordered(true));
+    let body_content =
+        content_tabs::render_body_content(view, resp, body_preview.clone(), muted, bg, cx);
+    let headers_content =
+        content_tabs::render_headers_content(view, &header_rows, header_format, muted);
+    let cookies_content = content_tabs::render_cookies_content(view, &cookies, muted);
+    let timing_content = content_tabs::render_timing_content(view);
 
     let can_copy = is_text_like_media_type(resp.media_type.as_deref());
     let body_actions = actions::render_body_actions(view, can_copy, cx);
 
-    let is_preview_active = view.active_response_tab == ResponseTab::Preview;
-    if is_preview_active && is_html && !html_body_for_preview.is_empty() {
-        view.ensure_html_webview(window, cx);
-        if let Some(webview) = &view.html_webview {
-            webview.update(cx, |w, _| {
-                let _ = w.raw().load_html(&html_body_for_preview);
-                w.show();
-            });
-        }
-    } else {
-        view.html_webview = None;
-    }
-    let preview_content = if is_html && is_preview_active && view.html_webview.is_some() {
-        div().h(px(400.)).child(view.html_webview.clone().unwrap())
-    } else if is_html && html_body_for_preview.is_empty() {
-        div().text_sm().text_color(muted).child(es_fluent::localize(
-            "request_tab_response_preview_empty",
-            None,
-        ))
-    } else if !is_html {
-        div().text_sm().text_color(muted).child(es_fluent::localize(
-            "request_tab_response_preview_not_html",
-            None,
-        ))
-    } else {
-        div()
-    };
+    let preview_content = content_tabs::render_preview_content(
+        view,
+        is_html,
+        &html_body_for_preview,
+        muted,
+        window,
+        cx,
+    );
 
     let active_content = match view.active_response_tab {
         ResponseTab::Body => body_content.into_any_element(),

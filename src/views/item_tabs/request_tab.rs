@@ -31,11 +31,13 @@ use crate::{
 
 mod auth_editor;
 mod auth_secret_ops;
-mod body_file_state;
 mod body_editor;
+mod body_file_state;
 mod helpers;
 mod init;
 mod kv_editor;
+mod kv_rows_state;
+mod kv_sync_state;
 mod layout;
 mod request_ops;
 mod response_panel;

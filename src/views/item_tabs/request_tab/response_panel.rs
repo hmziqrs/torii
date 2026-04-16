@@ -3,6 +3,7 @@ use gpui_component::table::DataTable;
 
 mod actions;
 mod content;
+mod content_tabs;
 mod tables;
 
 pub(super) use tables::{CookiesTableDelegate, HeadersTableDelegate, TimingTableDelegate};
