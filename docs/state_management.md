@@ -1,6 +1,6 @@
 # GPUI State Management Research (V2)
 
-> Purpose: Correct factual issues in `STATE_MANAGEMENT_RESEARCH.md` and provide a scale-ready state architecture for a Postman-like desktop API client.
+> Purpose: Correct factual issues from the V1 state management research (removed in e25fbe2) and provide a scale-ready state architecture for a Postman-like desktop API client.
 > Date: 2026-04-10
 
 ---
@@ -275,6 +275,35 @@ Rules:
 - defer/queue follow-up updates when needed
 - include regression tests for reentrancy and lifecycle race conditions
 
+For render-specific reentrancy and feedback-loop concerns, see 4.13.
+
+## 4.13 Render purity and feedback-loop prevention
+
+`render()` must be a pure projection of state into UI. It must not cause state mutations that trigger re-renders. The incident report in `docs/diagnose/render-loop-prevention.md` documents the bug that motivated these rules. These rules apply to all `impl Render` blocks — currently 9 implementations in the project, with `RequestTabView` being the primary case where bidirectional sync makes them critical.
+
+Rules:
+
+- **`render()` must not call state-mutating methods that emit events.** This includes `set_value`, `cx.notify()`, `cx.subscribe()`, `cx.observe()`, `cx.spawn()`, or any entity `update()` that emits events. Each can trigger handlers that call `cx.notify()`, scheduling another render. `set_value` is especially dangerous because it unconditionally emits `InputEvent::Change` even when the new value equals the old — a call inside `render()` creates a loop even when nothing changed.
+  Codebase reference: `src/views/item_tabs/request_tab.rs:1990-1993` shows the controlled call site (guarded by `draft_dirty`), which is the narrow exception for one-time initialization — not a pattern to replicate for continuous sync.
+
+- **Bidirectional sync between UI elements must be event-driven, not render-driven.** When two UI elements must stay in sync (e.g., URL input and params editor), handle each direction in its own event handler (subscription callback). Never centralize sync inside `render()`.
+  Codebase reference: `src/views/item_tabs/request_tab.rs:410-443` — the URL input `Change` subscription parses query params and syncs the KV editor; `on_kv_rows_changed(Params)` rebuilds the URL and calls `set_value` on the URL input. Both directions live in event handlers.
+
+- **Always guard against no-op mutations in event handlers.** Before calling `set_value` or updating entity state, compare against the current value. If they match, return early without calling `cx.notify()`. This breaks feedback loops even when both sync directions fire.
+  Codebase reference: `src/views/item_tabs/request_tab.rs:1808` — equality guard before URL input `set_value`:
+  ```rust
+  if self.url_input.read(cx).value().as_ref() != draft.url.as_str() {
+      self.url_input.update(cx, |s, cx| {
+          s.set_value(draft.url.clone(), window, cx);
+      });
+  }
+  ```
+
+- **Use dirty flags for one-time state push into UI.** When model state must be pushed into input entities (e.g., on tab switch or initial load), use a boolean flag set when the model changes and cleared after syncing. This runs the sync exactly once instead of every frame.
+  Codebase reference: `src/views/item_tabs/request_tab.rs:140` (`draft_dirty: bool` field), `request_tab.rs:727` (initialized to `true`), `request_tab.rs:1982-1984` (`mark_draft_dirty()` method), `request_tab.rs:1990-1993` (consumed in render).
+
+- **`ReentrancyGuard` is a mitigation, not a cure.** The guard (`request_tab.rs:143-168`) prevents immediate re-entrancy during `sync_inputs_from_draft()` by deferring nested `cx.notify()` calls. However, the deferred notification fires on the next frame and restarts the cycle if the root cause (sync in render) is not addressed. Treat it as a safety net for subscription handlers that might be invoked during one-time initialization, not as a solution for render-loop problems.
+
 ---
 
 ## 5. Corrected Modeling Recommendations
@@ -371,6 +400,7 @@ This architecture is considered scale-ready only when:
 - Task lifecycle is explicit (`hold` or `detach`) with no accidental cancellation
 - Secrets are stored in platform credential storage, never plaintext in app DB/blobs
 - Large list UIs are virtualized and meet target frame-time thresholds
+- Render methods are free of state mutations, event emissions, and subscription installations; bidirectional sync patterns use event-driven handlers with equality guards
 
 ---
 
