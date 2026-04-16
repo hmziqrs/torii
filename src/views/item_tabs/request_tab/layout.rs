@@ -148,8 +148,11 @@ pub(super) fn render_request_tab(
                                 .overflow_hidden()
                                 .rounded_tr(cx.theme().radius)
                                 .rounded_br(cx.theme().radius)
-                                .when(url_focused, |el| {
-                                    el.border_1().border_color(cx.theme().ring)
+                                .border_1()
+                                .border_color(if url_focused {
+                                    cx.theme().ring
+                                } else {
+                                    cx.theme().transparent
                                 })
                                 .child(
                                     Input::new(&view.url_input)
