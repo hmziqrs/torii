@@ -351,6 +351,7 @@ impl AppRoot {
                         session.set_selected_workspace(fallback_workspace, cx);
                     }
                 });
+                self.refresh_catalog(cx);
                 self.persist_session_state(cx);
                 window.push_notification(es_fluent::localize("delete_success", None), cx);
             }
