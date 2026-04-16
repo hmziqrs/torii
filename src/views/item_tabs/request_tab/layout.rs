@@ -111,11 +111,6 @@ pub(super) fn render_request_tab(
         .on_action(cx.listener(RequestTabView::handle_focus_url_bar))
         .on_action(cx.listener(RequestTabView::handle_toggle_body_search))
         .child({
-            let method_focused = view
-                .method_select
-                .read(cx)
-                .focus_handle(cx)
-                .is_focused(window);
             let url_focused = view
                 .url_input
                 .read(cx)
@@ -140,9 +135,6 @@ pub(super) fn render_request_tab(
                                 .overflow_hidden()
                                 .rounded_tl(cx.theme().radius)
                                 .rounded_bl(cx.theme().radius)
-                                .when(method_focused, |el| {
-                                    el.border_1().border_color(cx.theme().ring)
-                                })
                                 .child(
                                     Select::new(&view.method_select)
                                         .large()
