@@ -114,18 +114,26 @@ impl AppRoot {
 
         let subscriptions = vec![cx.observe(&session, {
             let services = services.clone();
+            let mut last_workspace_id = selected_workspace_id;
             move |this, session, cx| {
                 let selected_workspace_id = session.read(cx).selected_workspace_id;
-                match load_workspace_catalog(
-                    &services.repos.workspace,
-                    &services.repos.collection,
-                    &services.repos.folder,
-                    &services.repos.request,
-                    &services.repos.environment,
-                    selected_workspace_id,
-                ) {
-                    Ok(catalog) => this.catalog = catalog,
-                    Err(err) => tracing::error!("failed to refresh workspace catalog: {err}"),
+                // Reload the catalog only when the selected workspace actually changed.
+                // The session observer fires for every session mutation (tab open/close,
+                // sidebar selection, etc.) — reloading on all of those runs 5 SQLite
+                // queries per interaction unnecessarily. See idle-cpu-audit.md RLA-2.
+                if selected_workspace_id != last_workspace_id {
+                    last_workspace_id = selected_workspace_id;
+                    match load_workspace_catalog(
+                        &services.repos.workspace,
+                        &services.repos.collection,
+                        &services.repos.folder,
+                        &services.repos.request,
+                        &services.repos.environment,
+                        selected_workspace_id,
+                    ) {
+                        Ok(catalog) => this.catalog = catalog,
+                        Err(err) => tracing::error!("failed to refresh workspace catalog: {err}"),
+                    }
                 }
                 cx.notify();
             }
@@ -300,11 +308,7 @@ impl Render for AppRoot {
                                 } else {
                                     Some(format!("{} {}", draft.method, draft.url))
                                 };
-                                (
-                                    draft.name.clone(),
-                                    page.has_unsaved_changes(),
-                                    subtitle,
-                                )
+                                (draft.name.clone(), page.has_unsaved_changes(), subtitle)
                             })
                             .unwrap_or_else(|| {
                                 (
@@ -554,4 +558,3 @@ impl Render for AppRoot {
 fn services(cx: &App) -> std::sync::Arc<AppServices> {
     cx.global::<AppServicesGlobal>().0.clone()
 }
-

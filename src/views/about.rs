@@ -1,10 +1,11 @@
 use gpui::{prelude::*, *};
 use gpui_component::{
+    ActiveTheme as _,
     // ui::{IndexPath},
     IndexPath,
-    select::{Select, SelectState},
-    ActiveTheme as _, Sizable as _,
+    Sizable as _,
     input::{Input, InputState},
+    select::{Select, SelectState},
     v_flex,
 };
 
@@ -36,7 +37,6 @@ impl AboutPage {
 
 impl Render for AboutPage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-
         v_flex()
             .size_full()
             .items_center()

@@ -1,10 +1,4 @@
-use gpui::prelude::*;
-use gpui::{Context, Entity, Window};
-use gpui_component::{
-    WindowExt as _,
-    button::{Button, ButtonVariants as _},
-    h_flex,
-};
+use super::{AppRoot, services};
 use crate::{
     domain::item_id::ItemId,
     session::{
@@ -13,7 +7,13 @@ use crate::{
     },
     views::item_tabs::request_tab,
 };
-use super::{AppRoot, services};
+use gpui::prelude::*;
+use gpui::{Context, Entity, Window};
+use gpui_component::{
+    WindowExt as _,
+    button::{Button, ButtonVariants as _},
+    h_flex,
+};
 
 impl AppRoot {
     fn set_selected_workspace_for_item(&mut self, item_key: ItemKey, cx: &mut Context<Self>) {

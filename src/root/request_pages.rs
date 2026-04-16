@@ -1,5 +1,4 @@
-use gpui::prelude::*;
-use gpui::{Context, Entity, Window};
+use super::{AppRoot, services};
 use crate::{
     domain::{
         history::HistoryState,
@@ -13,7 +12,8 @@ use crate::{
     },
     views::item_tabs::request_tab,
 };
-use super::{AppRoot, services};
+use gpui::prelude::*;
+use gpui::{Context, Entity, Window};
 
 impl AppRoot {
     pub(super) fn request_page(
@@ -116,8 +116,18 @@ impl AppRoot {
             });
         }
 
+        // Track last-seen baseline revision so the catalog is only reloaded when the
+        // request is actually saved (revision bumps).  Without this guard the observer
+        // fires on every keystroke → 5 SQLite queries + full AppRoot re-render per key.
+        // See idle-cpu-audit.md RLA-2.
+        let mut last_revision: Option<i64> = Some(request.meta.revision);
         let services_for_refresh = services.clone();
-        let subscription = cx.observe(&page, move |this, _, cx| {
+        let subscription = cx.observe(&page, move |this, page, cx| {
+            let current_revision = page.read(cx).editor().baseline().map(|b| b.meta.revision);
+            if current_revision == last_revision {
+                return;
+            }
+            last_revision = current_revision;
             let selected_workspace_id = this.session.read(cx).selected_workspace_id;
             if let Ok(catalog) = load_workspace_catalog(
                 &services_for_refresh.repos.workspace,
@@ -147,45 +157,65 @@ impl AppRoot {
         let draft_id = RequestDraftId::new();
         let page = cx.new(|cx| request_tab::RequestTabView::new_draft(collection_id, window, cx));
 
-        // Observe entity for draft→persisted transition and catalog refresh
+        // Observe entity for draft→persisted transition and catalog refresh.
+        // Track identity + revision so we only reload the catalog when structural
+        // changes happen (save / first save / rename) — not on every keystroke.
+        // See idle-cpu-audit.md RLA-2.
         let services = services(cx);
         let services_for_refresh = services.clone();
         let draft_id_for_observer = draft_id;
+        let mut last_identity: Option<EditorIdentity> = None;
+        let mut last_revision: Option<i64> = None;
         let subscription = cx.observe(&page, move |this, observed_page, cx| {
-            let identity = observed_page.read(cx).editor().identity().clone();
+            let current_identity = observed_page.read(cx).editor().identity().clone();
+            let current_revision = observed_page
+                .read(cx)
+                .editor()
+                .baseline()
+                .map(|b| b.meta.revision);
 
-            if let EditorIdentity::Persisted(request_id) = identity {
-                // Check if this draft hasn't been transitioned yet
-                if this
-                    .request_draft_pages
-                    .contains_key(&draft_id_for_observer)
-                {
-                    let old_key = TabKey::from(ItemKey::request_draft(draft_id_for_observer));
-                    let new_key = TabKey::from(ItemKey::request(request_id));
+            let identity_changed = Some(&current_identity) != last_identity.as_ref();
+            let revision_changed = current_revision != last_revision;
 
-                    this.session.update(cx, |session, cx| {
-                        session.tab_manager.replace_key(old_key, new_key);
-                        cx.notify();
-                    });
+            // Draft → persisted promotion: always handle regardless of other guards.
+            if identity_changed {
+                if let EditorIdentity::Persisted(request_id) = &current_identity {
+                    if this
+                        .request_draft_pages
+                        .contains_key(&draft_id_for_observer)
+                    {
+                        let old_key = TabKey::from(ItemKey::request_draft(draft_id_for_observer));
+                        let new_key = TabKey::from(ItemKey::request(*request_id));
 
-                    if let Some(page) = this.request_draft_pages.remove(&draft_id_for_observer) {
-                        this.request_pages.insert(request_id, page);
+                        this.session.update(cx, |session, cx| {
+                            session.tab_manager.replace_key(old_key, new_key);
+                            cx.notify();
+                        });
+
+                        if let Some(page) = this.request_draft_pages.remove(&draft_id_for_observer)
+                        {
+                            this.request_pages.insert(*request_id, page);
+                        }
                     }
                 }
+                last_identity = Some(current_identity);
             }
 
-            // Always refresh catalog
-            let selected_workspace_id = this.session.read(cx).selected_workspace_id;
-            if let Ok(catalog) = load_workspace_catalog(
-                &services_for_refresh.repos.workspace,
-                &services_for_refresh.repos.collection,
-                &services_for_refresh.repos.folder,
-                &services_for_refresh.repos.request,
-                &services_for_refresh.repos.environment,
-                selected_workspace_id,
-            ) {
-                this.catalog = catalog;
-                cx.notify();
+            // Reload catalog only when something structural changed.
+            if identity_changed || revision_changed {
+                last_revision = current_revision;
+                let selected_workspace_id = this.session.read(cx).selected_workspace_id;
+                if let Ok(catalog) = load_workspace_catalog(
+                    &services_for_refresh.repos.workspace,
+                    &services_for_refresh.repos.collection,
+                    &services_for_refresh.repos.folder,
+                    &services_for_refresh.repos.request,
+                    &services_for_refresh.repos.environment,
+                    selected_workspace_id,
+                ) {
+                    this.catalog = catalog;
+                    cx.notify();
+                }
             }
         });
         self._subscriptions.push(subscription);

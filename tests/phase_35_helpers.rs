@@ -9,8 +9,7 @@ mod common;
 
 use torii::domain::request::{AuthType, BodyType, KeyValuePair};
 use torii::domain::response::{
-    HeaderJsonFormat, ResponseHeaderRow, parse_response_header_rows,
-    serialize_response_header_rows,
+    HeaderJsonFormat, ResponseHeaderRow, parse_response_header_rows, serialize_response_header_rows,
 };
 
 // ---------------------------------------------------------------------------
@@ -20,9 +19,18 @@ use torii::domain::response::{
 #[test]
 fn header_rows_preserve_duplicate_names() {
     let rows = vec![
-        ResponseHeaderRow { name: "set-cookie".into(), value: "a=1".into() },
-        ResponseHeaderRow { name: "set-cookie".into(), value: "b=2".into() },
-        ResponseHeaderRow { name: "content-type".into(), value: "text/html".into() },
+        ResponseHeaderRow {
+            name: "set-cookie".into(),
+            value: "a=1".into(),
+        },
+        ResponseHeaderRow {
+            name: "set-cookie".into(),
+            value: "b=2".into(),
+        },
+        ResponseHeaderRow {
+            name: "content-type".into(),
+            value: "text/html".into(),
+        },
     ];
     let encoded = serialize_response_header_rows(&rows).unwrap();
     let (decoded, format) = parse_response_header_rows(Some(&encoded));

@@ -37,9 +37,9 @@ impl RequestProtocol {
     /// Semantic color for the protocol.
     pub fn color(self) -> Hsla {
         match self {
-            Self::Http => hsla(217. / 360., 0.91, 0.60, 1.),      // blue
+            Self::Http => hsla(217. / 360., 0.91, 0.60, 1.), // blue
             Self::WebSocket => hsla(142. / 360., 0.71, 0.45, 1.), // green
-            Self::Grpc => hsla(262. / 360., 0.83, 0.58, 1.),      // purple
+            Self::Grpc => hsla(262. / 360., 0.83, 0.58, 1.), // purple
         }
     }
 }

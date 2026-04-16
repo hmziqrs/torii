@@ -1,18 +1,14 @@
+use super::AppRoot;
+use crate::{
+    services::workspace_tree::{CollectionTree, FolderTree, TreeItem},
+    session::{item_key::ItemKey, window_layout::SidebarSection},
+};
 use gpui::prelude::*;
 use gpui_component::{
-    Sizable as _,
-    Icon, IconName,
+    Icon, IconName, Sizable as _,
     menu::PopupMenuItem,
     sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem},
 };
-use crate::{
-    services::workspace_tree::{CollectionTree, FolderTree, TreeItem},
-    session::{
-        item_key::ItemKey,
-        window_layout::SidebarSection,
-    },
-};
-use super::AppRoot;
 
 impl AppRoot {
     pub(super) fn render_sidebar(
@@ -69,7 +65,8 @@ impl AppRoot {
                                         .active(is_collections)
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.session.update(cx, |session, cx| {
-                                                session.window_layout.sidebar_section = SidebarSection::Collections;
+                                                session.window_layout.sidebar_section =
+                                                    SidebarSection::Collections;
                                                 cx.notify();
                                             });
                                         })),
@@ -80,7 +77,8 @@ impl AppRoot {
                                         .active(!is_collections)
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.session.update(cx, |session, cx| {
-                                                session.window_layout.sidebar_section = SidebarSection::Environments;
+                                                session.window_layout.sidebar_section =
+                                                    SidebarSection::Environments;
                                                 cx.notify();
                                             });
                                         })),
@@ -90,21 +88,20 @@ impl AppRoot {
                     // Collections section (gated)
                     .when(is_collections, |sidebar| {
                         sidebar.child(
-                            SidebarGroup::new(es_fluent::localize("sidebar_collections", None)).child(
-                                SidebarMenu::new().children(workspace.collections.iter().map(
-                                    |collection| {
+                            SidebarGroup::new(es_fluent::localize("sidebar_collections", None))
+                                .child(SidebarMenu::new().children(
+                                    workspace.collections.iter().map(|collection| {
                                         render_collection_menu_item(collection, active_key, cx)
-                                    },
+                                    }),
                                 )),
-                            ),
                         )
                     })
                     // Environments section (gated)
                     .when(!is_collections, |sidebar| {
                         sidebar.child(
-                            SidebarGroup::new(es_fluent::localize("sidebar_environments", None)).child(
-                                SidebarMenu::new().children(workspace.environments.iter().map(
-                                    |environment| {
+                            SidebarGroup::new(es_fluent::localize("sidebar_environments", None))
+                                .child(SidebarMenu::new().children(
+                                    workspace.environments.iter().map(|environment| {
                                         let item_key = ItemKey::environment(environment.id);
                                         let weak_root = weak_root.clone();
                                         SidebarMenuItem::new(environment.name.clone())
@@ -128,9 +125,8 @@ impl AppRoot {
                                                     }),
                                                 )
                                             })
-                                    },
+                                    }),
                                 )),
-                            ),
                         )
                     })
             })

@@ -1,11 +1,11 @@
-use gpui::{Context, Window};
-use gpui_component::WindowExt as _;
+use super::AppRoot;
 use crate::{
     app::{About, CloseTab, NewRequest, NextTab, PrevTab, ToggleSidebar},
     domain::item_id::ItemId,
     session::item_key::ItemKey,
 };
-use super::AppRoot;
+use gpui::{Context, Window};
+use gpui_component::WindowExt as _;
 
 impl AppRoot {
     pub(super) fn on_about_action(&mut self, _: &About, _: &mut Window, cx: &mut Context<Self>) {

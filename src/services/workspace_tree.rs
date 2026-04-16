@@ -284,9 +284,7 @@ impl WorkspaceCatalog {
                     if let Some(ws) = &self.selected_workspace {
                         let ws_name = ws.workspace.name.clone();
                         for col in &ws.collections {
-                            if let Some(path) =
-                                Self::find_request_path(&ws_name, col, *rid)
-                            {
+                            if let Some(path) = Self::find_request_path(&ws_name, col, *rid) {
                                 return path;
                             }
                         }
