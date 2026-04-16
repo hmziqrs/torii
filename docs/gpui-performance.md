@@ -20,10 +20,12 @@ fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement
     div()
 }
 
-// GOOD — only push data in when it actually changed (see dirty flags below)
+// BETTER — dirty flag makes it fire once per data change, not every frame
+// This is a narrow, acceptable exception for one-time initialization.
+// Prefer pushing data from the event handler itself (see Pattern 1).
 fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
     if self.rows_dirty {
-        self.rows_dirty = false;
+        self.rows_dirty = false; // cleared BEFORE update so re-render won't re-enter
         self.table.update(cx, |state, cx| {
             state.set_rows(self.cached_rows.clone());
             state.refresh(cx);
@@ -33,12 +35,29 @@ fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement
 }
 ```
 
+The prohibited list inside `render()` is broader than just `entity.update()`:
+`set_value`, `cx.notify()`, `cx.subscribe()`, `cx.observe()`, `cx.spawn()`, and any entity
+`update()` that emits events. Each can trigger handlers that schedule another render.
+`cx.subscribe()` and `cx.observe()` are especially easy to miss — called every frame, they
+accumulate subscriptions without bound.
+
 ---
 
 ## Pattern 1 — Dirty Flags for One-Time Data Push
 
-Use a boolean flag when you need to push computed data into a child entity.
-The flag is set in an event handler or constructor, cleared in render after the push.
+The cleanest approach is to push data from the event handler that caused the change —
+no render involvement at all:
+
+```rust
+fn on_data_received(&mut self, data: Data, cx: &mut Context<Self>) {
+    self.rows = build_rows(&data);
+    self.table.update(cx, |t, cx| { t.set_rows(self.rows.clone()); t.refresh(cx); });
+    cx.notify();
+}
+```
+
+When that isn't feasible (e.g., the data must be computed from render context), use a
+dirty flag. The flag is set in the event handler, cleared in render before the push:
 
 ```rust
 struct MyView {
@@ -46,13 +65,12 @@ struct MyView {
     table: Entity<TableState>,
 }
 
-// In render
-if self.data_dirty {
-    self.data_dirty = false;
+// In render — narrow exception; flag cleared before update so re-renders won't re-enter
+if std::mem::take(&mut self.data_dirty) {
     self.table.update(cx, |t, cx| { t.set_rows(self.rows.clone()); t.refresh(cx); });
 }
 
-// In the event handler that changes data
+// In the event handler
 fn on_data_received(&mut self, data: Data, cx: &mut Context<Self>) {
     self.rows = build_rows(&data);
     self.data_dirty = true;
@@ -60,7 +78,8 @@ fn on_data_received(&mut self, data: Data, cx: &mut Context<Self>) {
 }
 ```
 
-**Key:** `std::mem::take(&mut self.data_dirty)` is a clean way to read-and-clear in one expression.
+**Key:** `std::mem::take` reads and clears atomically. Clearing BEFORE the update means
+a re-render triggered by the update won't re-enter the block.
 
 ---
 
@@ -132,6 +151,11 @@ fn new(cx: &mut Context<Self>) -> Self {
     Self { draft_dirty: true, ... }
 }
 ```
+
+**`ReentrancyGuard` is a mitigation, not a cure.** A guard can suppress immediate
+re-entrancy during a one-time init sync, but if the root cause (sync running in render)
+is not removed, the deferred `cx.notify()` the guard emits fires on the next frame and
+restarts the cycle. Fix the root cause first; treat the guard as a last-resort safety net.
 
 ---
 
@@ -224,7 +248,24 @@ content actually differs from the currently applied value before notifying obser
 
 ## Pattern 7 — Async Task Hygiene
 
-When an async task holds a weak reference to an entity, break the loop on entity drop:
+**Task lifecycle must be explicit.** Dropping a `Task<T>` handle cancels the task silently.
+Either store it on the owning entity (long-lived operations) or call `.detach()` (true
+fire-and-forget). Never accidentally drop a Task by letting it fall out of scope.
+
+```rust
+struct MyView {
+    inflight: Option<Task<()>>, // stored → cancels when reassigned or entity drops
+}
+
+fn start_op(&mut self, cx: &mut Context<Self>) {
+    self.inflight = Some(cx.spawn(async move { /* ... */ }));
+    // detach for true fire-and-forget:
+    // cx.spawn(async move { /* ... */ }).detach();
+}
+```
+
+When consuming a channel in a spawned task, break on entity drop and guard with
+`operation_id` to drop stale results from cancelled operations:
 
 ```rust
 while let Some(event) = rx.recv().await {
@@ -237,8 +278,62 @@ while let Some(event) = rx.recv().await {
 }
 ```
 
-Also guard against processing stale results from cancelled operations by comparing an
-`operation_id` rather than checking entity liveness alone.
+---
+
+## Pattern 8 — Batch Notify for High-Throughput Streams
+
+Per-message `cx.notify()` in a WebSocket or streaming HTTP response causes UI invalidation
+on every incoming frame. At high throughput this saturates the render loop.
+
+```rust
+// BAD — notify on every message
+while let Some(msg) = stream.next().await {
+    entity.update(cx, |this, cx| {
+        this.messages.push(msg);
+        cx.notify(); // fires 100s of times/sec under load
+    }).ok();
+}
+
+// GOOD — batch into a ring buffer, notify on flush cadence
+// Network reader → bounded channel → UI flush task
+let (tx, mut rx) = mpsc::channel::<Message>(256);
+
+// Flush task: drain up to N messages, then notify once
+cx.spawn(async move {
+    loop {
+        let msg = rx.recv().await?;
+        entity.update(cx, |this, _| this.buffer.push(msg)).ok();
+        // drain any already-queued messages without extra awaits
+        while let Ok(msg) = rx.try_recv() {
+            entity.update(cx, |this, _| this.buffer.push(msg)).ok();
+        }
+        entity.update(cx, |_, cx| cx.notify()).ok(); // one notify per batch
+    }
+}).detach();
+```
+
+Also keep the visible message buffer bounded (ring buffer, not `Vec`) to prevent RSS growth
+during long sessions.
+
+---
+
+## Pattern 9 — Entity Reentrancy
+
+Do not re-enter a mutable update on the same entity from within its own active update path.
+GPUI will panic or silently no-op depending on context. Defer follow-up work instead:
+
+```rust
+// BAD — calls entity.update() on self from within self's update closure
+fn do_work(&mut self, cx: &mut Context<Self>) {
+    self.helper(cx); // if helper calls cx.update on Self, that's a re-entrant update
+}
+
+// GOOD — schedule follow-up via cx.notify() or a spawned task
+fn do_work(&mut self, cx: &mut Context<Self>) {
+    self.state = next_state;
+    cx.notify(); // render will observe the new state; no re-entrant update needed
+}
+```
 
 ---
 
@@ -246,10 +341,13 @@ Also guard against processing stale results from cancelled operations by compari
 
 Before shipping a new view or subscriber:
 
-- [ ] `render()` contains no `entity.update()`, `cx.notify()`, or external I/O
+- [ ] `render()` contains no `entity.update()`, `cx.notify()`, `cx.subscribe()`, `cx.observe()`, `cx.spawn()`, or external I/O
 - [ ] Every `cx.notify()` is inside an `if value_changed` guard
-- [ ] Bidirectional sync uses event handlers, not render
+- [ ] Bidirectional sync uses event handlers, not render; no `ReentrancyGuard` as a substitute fix
 - [ ] Row-rebuild helpers call `subscriptions.clear()` before creating new rows
 - [ ] Observers read only from the narrowest entity that carries the changed data
 - [ ] External side effects (webview, file, DB) are cached and compared before re-applying
+- [ ] High-throughput streams batch into a bounded buffer and call `cx.notify()` once per flush
+- [ ] Every `Task<T>` is either stored on an entity field or explicitly `.detach()`ed
 - [ ] Async tasks `break` on entity-drop error and check `operation_id` for staleness
+- [ ] No re-entrant mutable updates on the same entity within a single update path
