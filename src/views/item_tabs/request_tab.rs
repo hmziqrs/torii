@@ -35,18 +35,18 @@ mod body_editor;
 mod body_file_state;
 mod helpers;
 mod init;
+mod kv;
 mod kv_editor;
-mod kv_rows_state;
-mod kv_sync_state;
 mod layout;
 mod request_ops;
 mod response_panel;
-mod state;
 mod subscriptions;
 mod sync;
+mod types;
 mod ui_actions;
 
 use helpers::*;
+use types::*;
 
 // ---------------------------------------------------------------------------
 // Actions for request tab keyboard shortcuts
@@ -63,48 +63,6 @@ actions!(
         ToggleBodySearch
     ]
 );
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RequestSectionTab {
-    Params,
-    Auth,
-    Headers,
-    Body,
-    Scripts,
-    Tests,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ResponseTab {
-    Body,
-    Preview,
-    Headers,
-    Cookies,
-    Timing,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BodyFileTarget {
-    Binary,
-    FormDataIndex(usize),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum KvTarget {
-    Params,
-    Headers,
-    BodyUrlEncoded,
-    BodyFormDataText,
-}
-
-struct KeyValueEditorRow {
-    id: u64,
-    enabled: bool,
-    key_input: Entity<InputState>,
-    value_input: Entity<InputState>,
-}
-
-const LARGE_BODY_FILE_CONFIRM_BYTES: u64 = 100 * 1024 * 1024;
 
 pub struct RequestTabView {
     editor: RequestEditorState,
@@ -163,34 +121,6 @@ pub struct RequestTabView {
     headers_kv_dirty: bool,
     body_urlencoded_kv_dirty: bool,
     body_form_text_kv_dirty: bool,
-}
-
-#[derive(Debug, Default)]
-struct ReentrancyGuard {
-    active: bool,
-    deferred: bool,
-}
-
-impl ReentrancyGuard {
-    fn enter(&mut self) -> bool {
-        if self.active {
-            self.deferred = true;
-            return false;
-        }
-        self.active = true;
-        true
-    }
-
-    fn leave_and_take_deferred(&mut self) -> bool {
-        self.active = false;
-        let deferred = self.deferred;
-        self.deferred = false;
-        deferred
-    }
-
-    fn is_active(&self) -> bool {
-        self.active
-    }
 }
 
 impl RequestTabView {

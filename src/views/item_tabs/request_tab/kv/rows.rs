@@ -1,7 +1,7 @@
-use super::*;
+use super::super::*;
 
 impl RequestTabView {
-    pub(super) fn make_kv_row(
+    pub(in super::super) fn make_kv_row(
         &mut self,
         target: KvTarget,
         entry: KeyValuePair,
@@ -55,7 +55,7 @@ impl RequestTabView {
         }
     }
 
-    pub(super) fn rebuild_kv_rows(
+    pub(in super::super) fn rebuild_kv_rows(
         &mut self,
         target: KvTarget,
         entries: &[KeyValuePair],
@@ -85,7 +85,7 @@ impl RequestTabView {
         self.ensure_trailing_empty_row(target, window, cx);
     }
 
-    pub(super) fn ensure_trailing_empty_row(
+    pub(in super::super) fn ensure_trailing_empty_row(
         &mut self,
         target: KvTarget,
         window: &mut Window,
@@ -110,7 +110,11 @@ impl RequestTabView {
         }
     }
 
-    pub(super) fn collect_meaningful_pairs(&self, target: KvTarget, cx: &App) -> Vec<KeyValuePair> {
+    pub(in super::super) fn collect_meaningful_pairs(
+        &self,
+        target: KvTarget,
+        cx: &App,
+    ) -> Vec<KeyValuePair> {
         self.kv_rows(target)
             .iter()
             .filter_map(|row| {
@@ -129,7 +133,7 @@ impl RequestTabView {
             .collect()
     }
 
-    pub(super) fn add_kv_row(
+    pub(in super::super) fn add_kv_row(
         &mut self,
         target: KvTarget,
         window: &mut Window,
@@ -150,7 +154,7 @@ impl RequestTabView {
         cx.notify();
     }
 
-    pub(super) fn remove_kv_row(
+    pub(in super::super) fn remove_kv_row(
         &mut self,
         target: KvTarget,
         id: u64,
@@ -165,7 +169,7 @@ impl RequestTabView {
         self.on_kv_rows_changed(target, window, cx);
     }
 
-    pub(super) fn set_kv_row_enabled(
+    pub(in super::super) fn set_kv_row_enabled(
         &mut self,
         target: KvTarget,
         id: u64,

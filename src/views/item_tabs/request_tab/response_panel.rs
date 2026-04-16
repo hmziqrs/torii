@@ -2,6 +2,7 @@ use super::*;
 use gpui_component::table::DataTable;
 
 mod actions;
+mod chrome;
 mod content;
 mod content_tabs;
 mod tables;

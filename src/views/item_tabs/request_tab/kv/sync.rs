@@ -1,7 +1,7 @@
-use super::*;
+use super::super::*;
 
 impl RequestTabView {
-    pub(super) fn sync_kv_rows_with_draft(
+    pub(in super::super) fn sync_kv_rows_with_draft(
         &mut self,
         target: KvTarget,
         window: &mut Window,
@@ -35,7 +35,7 @@ impl RequestTabView {
         }
     }
 
-    pub(super) fn on_kv_rows_changed(
+    pub(in super::super) fn on_kv_rows_changed(
         &mut self,
         target: KvTarget,
         window: &mut Window,
