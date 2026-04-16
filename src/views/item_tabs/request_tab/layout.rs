@@ -110,7 +110,18 @@ pub(super) fn render_request_tab(
         .on_action(cx.listener(RequestTabView::handle_duplicate_request))
         .on_action(cx.listener(RequestTabView::handle_focus_url_bar))
         .on_action(cx.listener(RequestTabView::handle_toggle_body_search))
-        .child(
+        .child({
+            let method_focused = view
+                .method_select
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window);
+            let url_focused = view
+                .url_input
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window);
+
             h_flex()
                 .gap_2()
                 .items_center()
@@ -126,6 +137,12 @@ pub(super) fn render_request_tab(
                         .child(
                             div()
                                 .w(px(120.))
+                                .overflow_hidden()
+                                .rounded_tl(cx.theme().radius)
+                                .rounded_bl(cx.theme().radius)
+                                .when(method_focused, |el| {
+                                    el.border_1().border_color(cx.theme().ring)
+                                })
                                 .child(
                                     Select::new(&view.method_select)
                                         .large()
@@ -136,6 +153,12 @@ pub(super) fn render_request_tab(
                         .child(
                             div()
                                 .flex_1()
+                                .overflow_hidden()
+                                .rounded_tr(cx.theme().radius)
+                                .rounded_br(cx.theme().radius)
+                                .when(url_focused, |el| {
+                                    el.border_1().border_color(cx.theme().ring)
+                                })
                                 .child(
                                     Input::new(&view.url_input)
                                         .large()
@@ -147,12 +170,13 @@ pub(super) fn render_request_tab(
                     Button::new("request-send")
                         .primary()
                         .large()
+                        .h(px(44.))
                         .label(es_fluent::localize("request_tab_action_send", None))
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.send(cx);
                         })),
-                ),
-        )
+                )
+        })
         .child(
             h_flex()
                 .gap_2()
