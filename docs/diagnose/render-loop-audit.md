@@ -10,15 +10,15 @@ Three categories of render-loop and render-amplification bugs found. Two are **P
 
 | ID | Severity | Location | Pattern |
 |----|----------|----------|---------|
-| RLA-1 | P0 | `response_panel.rs`, `kv_editor.rs` | `TableState.refresh(cx)` in every render frame |
-| RLA-2 | P0 | `request_pages.rs`, `root/mod.rs` | Observer reloads full workspace catalog on every entity notification |
-| RLA-3 | P1 | `app.rs` | Theme file watcher may fire spuriously, cascading into 3 global observers |
-| RLA-4 | P1 | `kv_editor.rs` | Same table-refresh-in-render as RLA-1, for every KV table |
-| RLA-5 | P2 | `request_tab.rs` | Deferred ReentrancyGuard notification guarantees double-render |
+| RLA-1 | P0 | `response_panel.rs`, `kv_editor.rs` | `TableState.refresh(cx)` in every render frame | ✅ FIXED |
+| RLA-2 | P0 | `request_pages.rs`, `root/mod.rs` | Observer reloads full workspace catalog on every entity notification | ✅ FIXED |
+| RLA-3 | P1 | `app.rs` | Theme file watcher may fire spuriously, cascading into 3 global observers | ⏳ NOT FIXED |
+| RLA-4 | P1 | `kv_editor.rs` | Same table-refresh-in-render as RLA-1, for every KV table | ✅ FIXED |
+| RLA-5 | P2 | `request_tab.rs` | Deferred ReentrancyGuard notification guarantees double-render | ⏳ NOT FIXED |
 
 ---
 
-## 2. RLA-1: TableState.refresh() Called During Every Render
+## 2. RLA-1: TableState.refresh() Called During Every Render ✅ FIXED
 
 ### Severity: P0
 
@@ -76,9 +76,15 @@ if self.response_dirty {
 }
 ```
 
+**Implementation:**
+- `response_tables_dirty: bool` added to `RequestTabView` — `src/views/item_tabs/request_tab.rs:155`
+- Set `true` in `complete_exec` — `src/views/item_tabs/request_tab/request_ops.rs`
+- Set `true` after history restore — `src/root/request_pages.rs:99`
+- Guard + clear in render — `src/views/item_tabs/request_tab/response_panel/content.rs:19-76`
+
 ---
 
-## 3. RLA-2: Full Workspace Catalog Reload on Every Keystroke
+## 3. RLA-2: Full Workspace Catalog Reload on Every Keystroke ✅ FIXED
 
 ### Severity: P0
 
@@ -135,6 +141,11 @@ if this.catalog != new_catalog {
 }
 ```
 
+**Implementation:**
+- Session observer: `last_workspace_id` guard skips catalog reload unless workspace changed — `src/root/mod.rs:117-138`; `cx.notify()` always fires (needed for tab/sidebar UI updates)
+- Persisted request observer: `last_revision: Option<i64>` — returns early unless `baseline().meta.revision` changed — `src/root/request_pages.rs:123-143`
+- Draft request observer: `last_identity` + `last_revision` — catalog reload only on identity change or revision bump — `src/root/request_pages.rs:167-219`
+
 ---
 
 ## 4. RLA-3: Theme File Watcher May Fire Spuriously
@@ -163,7 +174,7 @@ macOS `FSEvents`/`kqueue` can generate spurious events from IDE file saves, git 
 
 ---
 
-## 5. RLA-4: KV Editor Table Refresh in Render Path
+## 5. RLA-4: KV Editor Table Refresh in Render Path ✅ FIXED
 
 ### Severity: P1
 
@@ -178,6 +189,13 @@ Same pattern as RLA-1. `render_kv_table()` calls `table.update(cx, |state, cx| {
 ### Fix
 
 Same approach as RLA-1 — dirty flag or subscription-driven update.
+
+**Implementation:**
+- Four per-target dirty flags added to `RequestTabView` — `src/views/item_tabs/request_tab.rs:160-163`: `params_kv_dirty`, `headers_kv_dirty`, `body_urlencoded_kv_dirty`, `body_form_text_kv_dirty`
+- `mark_kv_table_dirty(target)` helper — `src/views/item_tabs/request_tab/state.rs:4-11`
+- Called in `rebuild_kv_rows`, `add_kv_row`, `remove_kv_row`, `set_kv_row_enabled` — `src/views/item_tabs/request_tab/state.rs:103, 290, 304, 318`
+- `render_kv_table` accepts `dirty: bool`; only runs `table.update + state.refresh(cx)` when dirty — `src/views/item_tabs/request_tab/kv_editor.rs:146-171`
+- Call sites use `std::mem::take` to read-and-clear the flag — `src/views/item_tabs/request_tab/layout.rs:43-51, 58-67`; `src/views/item_tabs/request_tab/body_editor.rs`
 
 ---
 
@@ -231,12 +249,12 @@ New entities (`RequestTabView`, `WebView`) are created during the render path. B
 
 ## 8. Recommended Fix Order
 
-| Step | Fix | Expected Impact |
-|------|-----|-----------------|
-| 1 | RLA-1 + RLA-4: Move table refreshes out of render (dirty flags) | Eliminates continuous render loop on response tabs |
-| 2 | RLA-2: Stop observing RequestTabView for catalog reloads | Eliminates 5× SQLite + full re-render per keystroke |
-| 3 | RLA-3: Add change guard + debounce to theme watcher | Eliminates spurious theme cascade |
-| 4 | RLA-5: Audit deferred notify necessity | Reduces double-render to single-render |
-| 5 | Section 7 items: Move mutations/creation out of render | Prevents future regressions |
+| Step | Fix | Expected Impact | Status |
+|------|-----|-----------------|--------|
+| 1 | RLA-1 + RLA-4: Move table refreshes out of render (dirty flags) | Eliminates continuous render loop on response tabs | ✅ Done |
+| 2 | RLA-2: Stop observing RequestTabView for catalog reloads | Eliminates 5× SQLite + full re-render per keystroke | ✅ Done |
+| 3 | RLA-3: Add change guard + debounce to theme watcher | Eliminates spurious theme cascade | ⏳ Pending |
+| 4 | RLA-5: Audit deferred notify necessity | Reduces double-render to single-render | ⏳ Pending |
+| 5 | Section 7 items: Move mutations/creation out of render | Prevents future regressions | ⏳ Pending |
 
 After steps 1 and 2, idle CPU should drop to near-zero when no user interaction is occurring, and interactive CPU during typing should drop by roughly 80% (eliminating the catalog reload and table refresh overhead).

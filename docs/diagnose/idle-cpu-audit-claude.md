@@ -14,7 +14,7 @@ renders. Subscription accumulation (#2) compounds this over time.
 
 ---
 
-## Bug 1 — Response panel calls `entity.update()` 3× inside `render()` 🔴 CRITICAL
+## Bug 1 — Response panel calls `entity.update()` 3× inside `render()` 🔴 CRITICAL ✅ FIXED
 
 **Files:** `src/views/item_tabs/request_tab/response_panel.rs:365-372, 536-539`
 
@@ -49,26 +49,16 @@ entities when the response data actually changes (e.g., inside `restore_complete
 `restore_failed_response`, `restore_cancelled_response`). Same pattern as the `draft_dirty`
 flag used for input sync.
 
-```rust
-// In RequestTabView struct
-cached_header_rows: Option<Vec<ResponseHeaderRow>>,
-cached_cookie_rows: Option<Vec<CookieRow>>,
-cached_timing_rows: Option<Vec<TimingRow>>,
-
-// In restore_completed_response / on response update
-fn push_response_to_tables(&mut self, resp: &ResponseSummary, cx: &mut Context<Self>) {
-    let (header_rows, _) = parse_response_header_rows(resp.headers_json.as_deref());
-    let cookie_rows = parse_set_cookie_rows(&header_rows);
-    let timing_rows = build_timing_rows(resp);
-    self.headers_table.update(cx, |state, cx| { state.delegate_mut().set_rows(header_rows); state.refresh(cx); });
-    // ... same for cookies and timing
-}
-// render_completed_response() then only reads these cached values — no entity updates
-```
+**Implementation:**
+- `response_tables_dirty: bool` field added to `RequestTabView` struct — `src/views/item_tabs/request_tab.rs:155`
+- Initialized `false` in `src/views/item_tabs/request_tab/init.rs`
+- Set to `true` in `complete_exec` — `src/views/item_tabs/request_tab/request_ops.rs`
+- Set to `true` after history restore — `src/root/request_pages.rs:99`
+- Guard in render: `src/views/item_tabs/request_tab/response_panel/content.rs:19-76` — `table.update` + `state.refresh(cx)` only runs when `response_tables_dirty` is `true`, then flag is cleared
 
 ---
 
-## Bug 2 — Subscription leak in `make_kv_row` / `rebuild_kv_rows` 🔴 CRITICAL
+## Bug 2 — Subscription leak in `make_kv_row` / `rebuild_kv_rows` 🔴 CRITICAL ✅ FIXED
 
 **File:** `src/views/item_tabs/request_tab/state.rs:47-64, 74-96`
 
@@ -106,17 +96,14 @@ After a session of editing, `_subscriptions` can hold hundreds or thousands of d
 that is explicitly cleared before each `rebuild_kv_rows` call. Dropping the old
 `Subscription` objects lets GPUI clean them up.
 
-```rust
-pub(super) fn rebuild_kv_rows(&mut self, target: KvTarget, ...) {
-    // Drop old subscriptions for this target before creating new ones
-    self.kv_subscriptions.retain(|_| false); // or use a per-target Vec
-    // ... build new rows (make_kv_row pushes into kv_subscriptions instead of _subscriptions)
-}
-```
+**Implementation:**
+- `kv_subscriptions: Vec<Subscription>` field added to `RequestTabView` — `src/views/item_tabs/request_tab.rs:147`
+- `make_kv_row` pushes to `kv_subscriptions` instead of `_subscriptions` — `src/views/item_tabs/request_tab/state.rs:56, 69`
+- `rebuild_kv_rows` calls `self.kv_subscriptions.clear()` before creating new rows — `src/views/item_tabs/request_tab/state.rs:101`
 
 ---
 
-## Bug 3 — `on_kv_rows_changed` always calls `cx.notify()` 🟠 WARNING
+## Bug 3 — `on_kv_rows_changed` always calls `cx.notify()` 🟠 WARNING ✅ FIXED
 
 **File:** `src/views/item_tabs/request_tab/state.rs:236`
 
@@ -152,17 +139,13 @@ runs Bug #1 again: re-parsing headers and updating three table entities.
 **Fix:** Only call `cx.notify()` when the draft actually changed or when `refresh_save_status`
 produced a different result.
 
-```rust
-let draft_changed = /* compare before/after draft mutation */;
-self.editor.refresh_save_status();
-if draft_changed {
-    cx.notify();
-}
-```
+**Implementation:**
+- `draft_changed` local bool tracks whether any draft field was mutated — `src/views/item_tabs/request_tab/state.rs:211`
+- `cx.notify()` and `refresh_save_status()` only called when `draft_changed` is `true` — `src/views/item_tabs/request_tab/state.rs:267-270`
 
 ---
 
-## Bug 4 — AppRoot observers call `cx.notify()` unconditionally 🟡 MINOR
+## Bug 4 — AppRoot observers call `cx.notify()` unconditionally 🟡 MINOR ✅ FIXED (promoted to P0 by RLA-2)
 
 **Files:** `src/root/mod.rs:130`, `src/root/request_pages.rs:130, 167, 187`
 
@@ -185,12 +168,16 @@ cx.observe(&session, move |this, session, cx| {
 This causes one extra AppRoot render per user action (tab switch, sidebar click, request
 save). Not a loop, but unnecessary work on every interaction.
 
-**Fix:** Compare the new catalog against the existing one before notifying. A shallow
-comparison (workspace count, selected workspace ID) is sufficient for most cases.
+**Fix:** Track what actually changed (workspace ID, request revision, editor identity) and only reload the catalog + call `cx.notify()` when something structural changed.
+
+**Implementation:**
+- Session observer: `last_workspace_id` guard — catalog only reloaded when `selected_workspace_id` changes — `src/root/mod.rs:117-138`; `cx.notify()` still always fires for tab/sidebar changes
+- Persisted request observer: `last_revision: Option<i64>` guard — observer returns early unless `baseline().meta.revision` changed — `src/root/request_pages.rs:123-143`
+- Draft request observer: `last_identity` + `last_revision` guards — catalog reload gated on identity change (draft→persisted promotion) or revision bump — `src/root/request_pages.rs:167-219`
 
 ---
 
-## Bug 5 — Mutation inside `render()` in AppRoot 🟡 MINOR
+## Bug 5 — Mutation inside `render()` in AppRoot 🟡 MINOR ⏳ NOT FIXED
 
 **File:** `src/root/mod.rs:376-378`
 
