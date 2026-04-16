@@ -1,0 +1,330 @@
+use gpui::prelude::*;
+use gpui::{Context, Entity, Window};
+use gpui_component::{
+    WindowExt as _,
+    button::{Button, ButtonVariants as _},
+    h_flex,
+};
+use crate::{
+    domain::item_id::ItemId,
+    session::{
+        item_key::{ItemKey, ItemKind, TabKey},
+        request_editor_state::EditorIdentity,
+    },
+    views::item_tabs::request_tab,
+};
+use super::{AppRoot, services};
+
+impl AppRoot {
+    fn set_selected_workspace_for_item(&mut self, item_key: ItemKey, cx: &mut Context<Self>) {
+        let services = services(cx);
+        match services.session_restore.workspace_for_item(item_key) {
+            Ok(Some(workspace_id)) => {
+                self.session.update(cx, |session, cx| {
+                    session.set_selected_workspace(Some(workspace_id), cx)
+                });
+            }
+            Ok(None) => {}
+            Err(err) => tracing::error!("failed to resolve item workspace: {err}"),
+        }
+    }
+
+    pub(crate) fn open_item(&mut self, item_key: ItemKey, cx: &mut Context<Self>) {
+        if item_key.is_persisted() {
+            self.set_selected_workspace_for_item(item_key, cx);
+        }
+        self.session.update(cx, |session, cx| {
+            session.open_or_focus(item_key, cx);
+        });
+        self.persist_session_state(cx);
+    }
+
+    pub(super) fn focus_tab(&mut self, tab_key: TabKey, cx: &mut Context<Self>) {
+        self.set_selected_workspace_for_item(tab_key.item(), cx);
+        self.session.update(cx, |session, cx| {
+            session.focus_tab(tab_key, cx);
+        });
+        self.persist_session_state(cx);
+    }
+
+    /// Release the HTML preview webview for a request tab, if applicable.
+    /// Safe to call with `None` or a non-request tab key — it will be a no-op.
+    pub(super) fn release_html_webview_for_tab(
+        &mut self,
+        tab_key: Option<TabKey>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab_key) = tab_key else {
+            return;
+        };
+        let page = match tab_key.item().id {
+            Some(ItemId::Request(id)) => self.request_pages.get(&id).cloned(),
+            Some(ItemId::RequestDraft(id)) => self.request_draft_pages.get(&id).cloned(),
+            _ => None,
+        };
+        if let Some(page) = page {
+            page.update(cx, |tab, cx| {
+                tab.release_html_webview(cx);
+            });
+        }
+    }
+
+    fn perform_close_tab(&mut self, tab_key: TabKey, cx: &mut Context<Self>) {
+        self.release_html_webview_for_tab(Some(tab_key), cx);
+        self.session.update(cx, |session, cx| {
+            session.close_tab(tab_key, cx);
+        });
+        self.persist_session_state(cx);
+    }
+
+    pub(crate) fn close_tab(
+        &mut self,
+        tab_key: TabKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let request_id = match (tab_key.item().kind, tab_key.item().id) {
+            (ItemKind::Request, Some(ItemId::Request(id))) => Some(id),
+            _ => None,
+        };
+
+        let draft_id = match tab_key.item().id {
+            Some(ItemId::RequestDraft(id)) => Some(id),
+            _ => None,
+        };
+
+        let should_confirm_dirty = request_id
+            .and_then(|id| self.request_pages.get(&id))
+            .map(|page: &Entity<request_tab::RequestTabView>| page.read(cx).has_unsaved_changes())
+            .unwrap_or(false)
+            || draft_id
+                .and_then(|id| self.request_draft_pages.get(&id))
+                .map(|page: &Entity<request_tab::RequestTabView>| {
+                    page.read(cx).has_unsaved_changes()
+                })
+                .unwrap_or(false);
+
+        if !should_confirm_dirty {
+            self.perform_close_tab(tab_key, cx);
+            return;
+        }
+
+        let weak_root = cx.entity().downgrade();
+        let weak_root_save = weak_root.clone();
+        let weak_root_discard = weak_root.clone();
+        window.open_dialog(cx, move |dialog, _, _| {
+            dialog
+                .title(es_fluent::localize("request_tab_dirty_close_title", None))
+                .overlay_closable(false)
+                .keyboard(false)
+                .child(es_fluent::localize("request_tab_dirty_close_body", None))
+                .footer(
+                    h_flex()
+                        .justify_end()
+                        .gap_2()
+                        .child(
+                            Button::new("dirty-close-save")
+                                .primary()
+                                .label(es_fluent::localize("request_tab_dirty_close_save", None))
+                                .on_click({
+                                    let weak_root_save = weak_root_save.clone();
+                                    move |_, window, cx| {
+                                        let mut close_ok = false;
+                                        let mut err_msg = None;
+                                        let _ = weak_root_save.update(cx, |this, cx| {
+                                            match this.save_request_tab_by_key(tab_key, cx) {
+                                                Ok(Some(new_key)) => {
+                                                    // Draft was promoted — close using new key
+                                                    this.perform_close_tab(new_key, cx);
+                                                    close_ok = true;
+                                                }
+                                                Ok(None) => {
+                                                    this.perform_close_tab(tab_key, cx);
+                                                    close_ok = true;
+                                                }
+                                                Err(err) => err_msg = Some(err),
+                                            }
+                                        });
+
+                                        if let Some(err) = err_msg {
+                                            window.push_notification(err, cx);
+                                        }
+                                        if close_ok {
+                                            window.close_dialog(cx);
+                                        }
+                                    }
+                                }),
+                        )
+                        .child(
+                            Button::new("dirty-close-discard")
+                                .outline()
+                                .label(es_fluent::localize("request_tab_dirty_close_discard", None))
+                                .on_click({
+                                    let weak_root_discard = weak_root_discard.clone();
+                                    move |_, window, cx| {
+                                        let _ = weak_root_discard.update(cx, |this, cx| {
+                                            // Clean up draft entity if discarding a draft tab
+                                            if let Some(ItemId::RequestDraft(draft_id)) =
+                                                tab_key.item().id
+                                            {
+                                                this.request_draft_pages.remove(&draft_id);
+                                            }
+                                            this.perform_close_tab(tab_key, cx);
+                                        });
+                                        window.close_dialog(cx);
+                                    }
+                                }),
+                        )
+                        .child(
+                            Button::new("dirty-close-cancel")
+                                .ghost()
+                                .label(es_fluent::localize("request_tab_dirty_close_cancel", None))
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                }),
+                        ),
+                )
+        });
+    }
+
+    fn save_request_tab_by_key(
+        &mut self,
+        tab_key: TabKey,
+        cx: &mut Context<Self>,
+    ) -> Result<Option<TabKey>, String> {
+        let page = match tab_key.item().id {
+            Some(ItemId::Request(id)) => self.request_pages.get(&id).cloned(),
+            Some(ItemId::RequestDraft(draft_id)) => {
+                self.request_draft_pages.get(&draft_id).cloned()
+            }
+            _ => None,
+        };
+        let Some(page) = page else {
+            return Ok(None);
+        };
+
+        page.update(cx, |tab, cx| tab.save(cx))
+            .map_err(|err| format!("failed to update request tab while saving: {err}"))?;
+
+        // After save, the observer may have promoted a draft to persisted.
+        // Detect the current tab key from the editor identity.
+        let current_key = {
+            let identity = page.read(cx).editor().identity().clone();
+            match identity {
+                EditorIdentity::Persisted(request_id) => {
+                    let new_key = TabKey::from(ItemKey::request(request_id));
+                    if new_key != tab_key {
+                        Some(new_key)
+                    } else {
+                        None
+                    }
+                }
+                EditorIdentity::Draft(_) => None,
+            }
+        };
+
+        self.refresh_catalog(cx);
+        Ok(current_key)
+    }
+
+    pub(super) fn reorder_tabs(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        self.session.update(cx, |session, cx| {
+            session.reorder_tabs(from, to, cx);
+        });
+        self.persist_session_state(cx);
+    }
+
+    pub(crate) fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
+        self.session.update(cx, |session, cx| {
+            session.toggle_sidebar(cx);
+        });
+        self.persist_session_state(cx);
+    }
+
+    pub(super) fn set_sidebar_width(&mut self, width_px: f32, cx: &mut Context<Self>) {
+        self.session.update(cx, |session, cx| {
+            session.set_sidebar_width(width_px, cx);
+        });
+        self.persist_session_state(cx);
+    }
+
+    fn refresh_catalog(&mut self, cx: &mut Context<Self>) {
+        let services = services(cx);
+        let selected_workspace_id = self.session.read(cx).selected_workspace_id;
+        match crate::services::workspace_tree::load_workspace_catalog(
+            &services.repos.workspace,
+            &services.repos.collection,
+            &services.repos.folder,
+            &services.repos.request,
+            &services.repos.environment,
+            selected_workspace_id,
+        ) {
+            Ok(catalog) => self.catalog = catalog,
+            Err(err) => tracing::error!("failed to refresh workspace catalog: {err}"),
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn delete_item(
+        &mut self,
+        item_key: ItemKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let services = services(cx);
+        let close_keys = self.catalog.delete_closure(item_key);
+        let selected_workspace = services
+            .session_restore
+            .workspace_for_item(item_key)
+            .ok()
+            .flatten();
+
+        let result = match (item_key.kind, item_key.id) {
+            (ItemKind::Workspace, Some(ItemId::Workspace(id))) => {
+                services.repos.workspace.delete(id)
+            }
+            (ItemKind::Collection, Some(ItemId::Collection(id))) => {
+                services.repos.collection.delete(id)
+            }
+            (ItemKind::Folder, Some(ItemId::Folder(id))) => services.repos.folder.delete(id),
+            (ItemKind::Environment, Some(ItemId::Environment(id))) => {
+                services.repos.environment.delete(id)
+            }
+            (ItemKind::Request, Some(ItemId::Request(id))) => {
+                if let Some(page) = self.request_pages.get(&id).cloned() {
+                    let _ = page.update(cx, |tab, cx| {
+                        tab.cancel_send(cx);
+                        tab.release_html_webview(cx);
+                    });
+                }
+                self.request_pages.remove(&id);
+                services.repos.request.delete(id)
+            }
+            _ => Ok(()),
+        };
+
+        match result {
+            Ok(()) => {
+                let fallback_workspace = services
+                    .repos
+                    .workspace
+                    .list()
+                    .ok()
+                    .and_then(|workspaces| workspaces.first().map(|workspace| workspace.id));
+
+                self.session.update(cx, |session, cx| {
+                    session.close_tabs(&close_keys, cx);
+                    if session.selected_workspace_id == selected_workspace {
+                        session.set_selected_workspace(fallback_workspace, cx);
+                    }
+                });
+                self.persist_session_state(cx);
+                window.push_notification(es_fluent::localize("delete_success", None), cx);
+            }
+            Err(err) => {
+                tracing::error!("failed to delete item: {err}");
+                window.push_notification(es_fluent::localize("delete_failed", None), cx);
+            }
+        }
+    }
+}
