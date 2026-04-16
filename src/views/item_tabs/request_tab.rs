@@ -6,6 +6,7 @@ use gpui_component::{
     ActiveTheme as _, Disableable as _, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
+    divider::Divider,
     h_flex,
     input::{Input, InputEvent, InputState, TabSize},
     select::{Select, SelectEvent, SelectState},

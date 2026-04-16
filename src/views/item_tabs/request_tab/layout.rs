@@ -114,13 +114,35 @@ pub(super) fn render_request_tab(
             h_flex()
                 .gap_2()
                 .items_center()
-                .h(px(36.))
                 .child(
-                    div()
-                        .w(px(120.))
-                        .child(Select::new(&view.method_select).large()),
+                    h_flex()
+                        .items_center()
+                        .flex_1()
+                        .border_1()
+                        .border_color(cx.theme().input)
+                        .bg(cx.theme().input_background())
+                        .rounded(cx.theme().radius)
+                        .when(cx.theme().shadow, |el| el.shadow_xs())
+                        .child(
+                            div()
+                                .w(px(120.))
+                                .child(
+                                    Select::new(&view.method_select)
+                                        .large()
+                                        .appearance(false),
+                                ),
+                        )
+                        .child(Divider::vertical().color(cx.theme().border))
+                        .child(
+                            div()
+                                .flex_1()
+                                .child(
+                                    Input::new(&view.url_input)
+                                        .large()
+                                        .appearance(false),
+                                ),
+                        ),
                 )
-                .child(div().flex_1().child(Input::new(&view.url_input).large()))
                 .child(
                     Button::new("request-send")
                         .primary()
