@@ -20,7 +20,7 @@ impl RequestTabView {
             state
         });
 
-        self.kv_subscriptions.push(cx.subscribe_in(
+        self.kv_subscriptions.entry(target).or_default().push(cx.subscribe_in(
             &key_input,
             window,
             move |this: &mut RequestTabView,
@@ -33,7 +33,7 @@ impl RequestTabView {
                 }
             },
         ));
-        self.kv_subscriptions.push(cx.subscribe_in(
+        self.kv_subscriptions.entry(target).or_default().push(cx.subscribe_in(
             &value_input,
             window,
             move |this: &mut RequestTabView,
@@ -62,10 +62,10 @@ impl RequestTabView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Drop old KV subscriptions before creating new row entities. Keeping them around
-        // would let dead subscriptions (for dropped InputState entities) accumulate in the
-        // Vec without bound — see idle-cpu-audit.md Bug #2.
-        self.kv_subscriptions.clear();
+        // Drop only this target's subscriptions before creating new row entities.
+        // Using per-target storage so that rebuilding one target (e.g., Params)
+        // doesn't drop subscriptions for the other three (Headers, etc.).
+        self.kv_subscriptions.remove(&target);
         self.mark_kv_table_dirty(target);
 
         let normalized = if entries.is_empty() {

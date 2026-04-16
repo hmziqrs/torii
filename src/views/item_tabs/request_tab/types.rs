@@ -25,7 +25,7 @@ pub(super) enum BodyFileTarget {
     FormDataIndex(usize),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum KvTarget {
     Params,
     Headers,

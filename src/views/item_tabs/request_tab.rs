@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use gpui::{prelude::*, *};
@@ -105,9 +106,10 @@ pub struct RequestTabView {
     body_form_text_kv_table: Entity<TableState<kv_editor::KvTableDelegate>>,
     html_webview: Option<Entity<WebView>>,
     _subscriptions: Vec<Subscription>,
-    /// Subscriptions for KV row inputs — cleared and rebuilt on every `rebuild_kv_rows` call
-    /// to prevent unbounded accumulation as rows are replaced.
-    kv_subscriptions: Vec<Subscription>,
+    /// Per-target subscriptions for KV row inputs. Only the target being rebuilt
+    /// has its subscriptions cleared, so that rebuilding one target doesn't drop
+    /// subscriptions for the other three. See render-loop-audit.md.
+    kv_subscriptions: HashMap<KvTarget, Vec<Subscription>>,
     draft_dirty: bool,
     /// Set to `true` whenever the exec status transitions to Completed so that
     /// `render_completed_response` pushes parsed header/cookie/timing rows into

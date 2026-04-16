@@ -331,7 +331,7 @@ impl RequestTabView {
             }),
             html_webview: None,
             _subscriptions: subscriptions,
-            kv_subscriptions: Vec::new(),
+            kv_subscriptions: HashMap::new(),
             draft_dirty: true,
             response_tables_dirty: false,
             params_kv_dirty: true,

@@ -120,7 +120,7 @@ impl AppRoot {
                 // Reload the catalog only when the selected workspace actually changed.
                 // The session observer fires for every session mutation (tab open/close,
                 // sidebar selection, etc.) — reloading on all of those runs 5 SQLite
-                // queries per interaction unnecessarily. See idle-cpu-audit.md RLA-2.
+                // queries per interaction unnecessarily. See render-loop-audit.md RLA-2.
                 if selected_workspace_id != last_workspace_id {
                     last_workspace_id = selected_workspace_id;
                     match load_workspace_catalog(
@@ -131,11 +131,13 @@ impl AppRoot {
                         &services.repos.environment,
                         selected_workspace_id,
                     ) {
-                        Ok(catalog) => this.catalog = catalog,
+                        Ok(catalog) => {
+                            this.catalog = catalog;
+                            cx.notify();
+                        }
                         Err(err) => tracing::error!("failed to refresh workspace catalog: {err}"),
                     }
                 }
-                cx.notify();
             }
         })];
 

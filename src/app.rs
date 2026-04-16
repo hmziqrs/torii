@@ -107,7 +107,13 @@ pub fn init(cx: &mut App) {
                     .get(&s.theme)
                     .cloned()
                 {
-                    gpui_component::Theme::global_mut(cx).apply_config(&theme);
+                    // Only apply if the theme config actually changed — avoids redundant
+                    // global mutation + observer cascade on unrelated file events.
+                    // See render-loop-audit.md RLA-3.
+                    let current_name = gpui_component::Theme::global(cx).theme_name();
+                    if current_name != &theme.name {
+                        gpui_component::Theme::global_mut(cx).apply_config(&theme);
+                    }
                 }
             }
         },
