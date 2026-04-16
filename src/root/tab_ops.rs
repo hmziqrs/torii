@@ -1,6 +1,6 @@
 use super::{AppRoot, services};
 use crate::{
-    domain::item_id::ItemId,
+    domain::{ids::RequestId, item_id::ItemId},
     session::{
         item_key::{ItemKey, ItemKind, TabKey},
         request_editor_state::EditorIdentity,
@@ -259,10 +259,43 @@ impl AppRoot {
             &services.repos.environment,
             selected_workspace_id,
         ) {
-            Ok(catalog) => self.catalog = catalog,
+            Ok(catalog) => {
+                if self.catalog != catalog {
+                    self.catalog = catalog;
+                    cx.notify();
+                }
+            }
             Err(err) => tracing::error!("failed to refresh workspace catalog: {err}"),
         }
-        cx.notify();
+    }
+
+    pub(crate) fn duplicate_request(
+        &mut self,
+        request_id: RequestId,
+        request_name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let services = services(cx);
+        let new_name = format!("{} (Copy)", request_name);
+        match services.repos.request.duplicate(request_id, &new_name) {
+            Ok(new_request) => {
+                drop(services);
+                self.refresh_catalog(cx);
+                self.open_item(ItemKey::request(new_request.id), cx);
+                window.push_notification(
+                    es_fluent::localize("request_tab_duplicate_ok", None),
+                    cx,
+                );
+            }
+            Err(err) => {
+                tracing::error!("failed to duplicate request: {err}");
+                window.push_notification(
+                    es_fluent::localize("request_tab_duplicate_failed", None),
+                    cx,
+                );
+            }
+        }
     }
 
     pub(crate) fn delete_item(

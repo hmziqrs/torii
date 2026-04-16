@@ -209,6 +209,8 @@ fn render_tree_item(
         TreeItem::Folder(folder) => render_folder_menu_item(folder, active_key, cx),
         TreeItem::Request(request) => {
             let request_key = ItemKey::request(request.id);
+            let request_id = request.id;
+            let request_name = request.name.clone();
             let weak_root = cx.entity().downgrade();
             SidebarMenuItem::new(request.name.clone())
                 .icon(Icon::new(IconName::File).small())
@@ -217,12 +219,28 @@ fn render_tree_item(
                     this.open_item(request_key, cx);
                 }))
                 .context_menu(move |menu, _, _| {
-                    let weak_root = weak_root.clone();
+                    let weak_root_dup = weak_root.clone();
+                    let weak_root_del = weak_root.clone();
+                    let dup_name = request_name.clone();
                     menu.item(
+                        PopupMenuItem::new(es_fluent::localize("menu_duplicate", None))
+                            .icon(Icon::new(IconName::Copy))
+                            .on_click(move |_, window, cx| {
+                                let _ = weak_root_dup.update(cx, |this, cx| {
+                                    this.duplicate_request(
+                                        request_id,
+                                        dup_name.clone(),
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            }),
+                    )
+                    .item(
                         PopupMenuItem::new(es_fluent::localize("menu_delete", None))
                             .icon(Icon::new(IconName::Close))
                             .on_click(move |_, window, cx| {
-                                let _ = weak_root.update(cx, |this, cx| {
+                                let _ = weak_root_del.update(cx, |this, cx| {
                                     this.delete_item(request_key, window, cx);
                                 });
                             }),

@@ -153,6 +153,7 @@ menu_language_english = 英文
 menu_language_simplified_chinese = 简体中文
 menu_theme = 主题
 menu_delete = 删除
+menu_duplicate = 复制
 menu_new_request = 新建请求
 
 delete_success = 项目已删除。

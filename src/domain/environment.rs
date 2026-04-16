@@ -5,7 +5,7 @@ use super::{
     revision::RevisionMetadata,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Environment {
     pub id: EnvironmentId,
     pub workspace_id: WorkspaceId,

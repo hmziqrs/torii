@@ -184,8 +184,7 @@ impl RequestTabView {
             return;
         };
         let io_runtime = services.io_runtime.clone();
-        let (progress_tx, mut progress_rx) =
-            tokio::sync::mpsc::unbounded_channel::<ExecProgressEvent>();
+        let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<ExecProgressEvent>(1);
 
         cx.spawn(async move |this, cx| {
             while let Some(event) = progress_rx.recv().await {

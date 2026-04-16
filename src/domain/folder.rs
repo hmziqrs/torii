@@ -5,7 +5,7 @@ use super::{
     revision::RevisionMetadata,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Folder {
     pub id: FolderId,
     pub collection_id: CollectionId,

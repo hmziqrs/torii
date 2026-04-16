@@ -16,14 +16,10 @@ pub(super) fn render_request_tab(
         SaveStatus::Dirty | SaveStatus::SaveFailed { .. } | SaveStatus::Saving
     );
 
-    let dirty_indicator = if is_dirty {
-        div()
-            .text_xs()
-            .text_color(gpui::red())
-            .child(es_fluent::localize("request_tab_dirty", None))
-    } else {
-        div()
-    };
+    let is_inflight = matches!(
+        view.editor.exec_status(),
+        ExecStatus::Sending | ExecStatus::Streaming
+    );
 
     let response_panel = response_panel::render_response_panel(view, window, cx);
 
@@ -161,97 +157,31 @@ pub(super) fn render_request_tab(
                                 ),
                         ),
                 )
-                .child(
-                    Button::new("request-send")
-                        .primary()
-                        .large()
-                        .h(px(44.))
-                        .label(es_fluent::localize("request_tab_action_send", None))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.send(cx);
-                        })),
-                )
-        })
-        .child(
-            h_flex()
-                .gap_2()
-                .items_center()
-                .flex_wrap()
-                .when(is_dirty, |el| el.child(dirty_indicator))
-                .child(
-                    Button::new("request-save")
-                        .ghost()
-                        .label(es_fluent::localize("request_tab_action_save", None))
-                        .on_click(cx.listener(|this, _, window, cx| match this.save(cx) {
-                            Ok(()) => {
-                                window.push_notification(
-                                    es_fluent::localize("request_tab_save_ok", None),
-                                    cx,
-                                );
-                            }
-                            Err(err) => window.push_notification(err, cx),
-                        })),
-                )
-                .child(
-                    Button::new("request-duplicate")
-                        .ghost()
-                        .label(es_fluent::localize("request_tab_action_duplicate", None))
-                        .on_click(cx.listener(|this, _, window, cx| match this.duplicate(cx) {
-                            Ok(_) => {
-                                window.push_notification(
-                                    es_fluent::localize("request_tab_duplicate_ok", None),
-                                    cx,
-                                );
-                            }
-                            Err(err) => window.push_notification(err, cx),
-                        })),
-                )
-                .when(
-                    matches!(
-                        view.editor.exec_status(),
-                        ExecStatus::Sending | ExecStatus::Streaming
-                    ),
-                    |el| {
-                        el.child(
-                            Button::new("request-cancel")
-                                .ghost()
-                                .label(es_fluent::localize("request_tab_action_cancel", None))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.cancel_send(cx);
-                                })),
-                        )
-                    },
-                )
-                .when(view.editor.baseline().is_some(), |el| {
+                .when(!is_inflight, |el| {
                     el.child(
-                        Button::new("request-reload")
-                            .ghost()
-                            .label(es_fluent::localize("request_tab_action_reload", None))
+                        Button::new("request-send")
+                            .primary()
+                            .large()
+                            .h(px(44.))
+                            .label(es_fluent::localize("request_tab_action_send", None))
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.reload_baseline(cx);
+                                this.send(cx);
                             })),
                     )
                 })
-                .child(div().flex_1())
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(format!(
-                            "{}: {}",
-                            es_fluent::localize("request_tab_latest_run_label", None),
-                            latest_run
-                        )),
-                )
-                .child(
-                    Button::new("request-settings-open")
-                        .ghost()
-                        .label(es_fluent::localize("request_tab_settings_label", None))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.open_settings_dialog(window, cx);
-                        })),
-                ),
-        )
+                .when(is_inflight, |el| {
+                    el.child(
+                        Button::new("request-cancel")
+                            .outline()
+                            .large()
+                            .h(px(44.))
+                            .label(es_fluent::localize("request_tab_action_cancel", None))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.cancel_send(cx);
+                            })),
+                    )
+                })
+        })
         .child(
             h_flex()
                 .gap_1()
@@ -309,7 +239,26 @@ pub(super) fn render_request_tab(
                     cx.listener(|this, _, _, cx| {
                         this.set_active_section(RequestSectionTab::Tests, cx);
                     }),
-                )),
+                ))
+                .child(div().flex_1())
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format!(
+                            "{}: {}",
+                            es_fluent::localize("request_tab_latest_run_label", None),
+                            latest_run
+                        )),
+                )
+                .child(
+                    Button::new("request-settings-open")
+                        .ghost()
+                        .label(es_fluent::localize("request_tab_settings_label", None))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_settings_dialog(window, cx);
+                        })),
+                ),
         )
         .child(
             v_flex()
@@ -322,7 +271,28 @@ pub(super) fn render_request_tab(
             matches!(save_status, SaveStatus::SaveFailed { .. }),
             |el: gpui::Div| {
                 if let SaveStatus::SaveFailed { error } = &save_status {
-                    el.child(div().text_sm().text_color(gpui::red()).child(error.clone()))
+                    el.child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(gpui::red())
+                                    .child(error.clone()),
+                            )
+                            .child(
+                                Button::new("request-reload")
+                                    .ghost()
+                                    .label(es_fluent::localize(
+                                        "request_tab_action_reload",
+                                        None,
+                                    ))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.reload_baseline(cx);
+                                    })),
+                            ),
+                    )
                 } else {
                     el
                 }

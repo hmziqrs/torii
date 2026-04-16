@@ -153,6 +153,7 @@ menu_language_english = English
 menu_language_simplified_chinese = Simplified Chinese
 menu_theme = Theme
 menu_delete = Delete
+menu_duplicate = Duplicate
 menu_new_request = New Request
 
 delete_success = Item deleted.

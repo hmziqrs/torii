@@ -18,32 +18,32 @@ use crate::{
     session::item_key::{ItemKey, ItemKind},
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceCatalog {
     pub workspaces: Vec<Workspace>,
     pub selected_workspace: Option<WorkspaceTree>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceTree {
     pub workspace: Workspace,
     pub collections: Vec<CollectionTree>,
     pub environments: Vec<Environment>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CollectionTree {
     pub collection: Collection,
     pub children: Vec<TreeItem>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FolderTree {
     pub folder: Folder,
     pub children: Vec<TreeItem>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TreeItem {
     Folder(FolderTree),
     Request(RequestItem),

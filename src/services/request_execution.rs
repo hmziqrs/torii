@@ -255,7 +255,7 @@ impl RequestExecutionService {
         request: &RequestItem,
         _workspace_id: WorkspaceId,
         cancel: CancellationToken,
-        progress_tx: Option<mpsc::UnboundedSender<ExecProgressEvent>>,
+        progress_tx: Option<mpsc::Sender<ExecProgressEvent>>,
     ) -> Result<ExecOutcome> {
         info_span!("request.send", method = %request.method, url = %request.url)
             .in_scope(|| tracing::info!("request lifecycle started"));
@@ -394,7 +394,7 @@ impl RequestExecutionService {
         let headers_json = serialize_headers(&resp_headers);
 
         if let Some(tx) = progress_tx.as_ref() {
-            let _ = tx.send(ExecProgressEvent::ResponseStreamingStarted);
+            let _ = tx.try_send(ExecProgressEvent::ResponseStreamingStarted);
         }
 
         let body_ref = self

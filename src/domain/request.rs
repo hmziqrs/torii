@@ -168,7 +168,7 @@ impl Default for RequestSettings {
 // RequestItem — the persisted REST request value
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RequestItem {
     pub id: RequestId,
     pub collection_id: CollectionId,
