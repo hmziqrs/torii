@@ -177,7 +177,7 @@ save). Not a loop, but unnecessary work on every interaction.
 
 ---
 
-## Bug 5 — Mutation inside `render()` in AppRoot 🟡 MINOR ⏳ NOT FIXED
+## Bug 5 — Mutation inside `render()` in AppRoot 🟡 MINOR ✅ FIXED
 
 **File:** `src/root/mod.rs:376-378`
 
@@ -195,6 +195,11 @@ ever calls `cx.notify()` inside its closure, this becomes a loop.
 
 **Fix:** Move the webview release to a `cx.observe(&session, ...)` callback that watches
 the active tab key, or to the tab-switching action handlers in `tab_ops.rs`.
+
+**Implementation:**
+- Moved `release_html_webview_for_tab` + `previous_active_tab` tracking into the session
+  observer callback — `src/root/mod.rs:138-147`
+- Removed inline mutation from `render()` — `src/root/mod.rs:389-390`
 
 ---
 

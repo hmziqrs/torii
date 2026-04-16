@@ -120,7 +120,7 @@ impl AppRoot {
                 // Reload the catalog only when the selected workspace actually changed.
                 // The session observer fires for every session mutation (tab open/close,
                 // sidebar selection, etc.) — reloading on all of those runs 5 SQLite
-                // queries per interaction unnecessarily. See render-loop-audit.md RLA-2.
+                // queries per interaction unnecessarily.
                 if selected_workspace_id != last_workspace_id {
                     last_workspace_id = selected_workspace_id;
                     match load_workspace_catalog(
@@ -131,13 +131,23 @@ impl AppRoot {
                         &services.repos.environment,
                         selected_workspace_id,
                     ) {
-                        Ok(catalog) => {
-                            this.catalog = catalog;
-                            cx.notify();
-                        }
+                        Ok(catalog) => this.catalog = catalog,
                         Err(err) => tracing::error!("failed to refresh workspace catalog: {err}"),
                     }
                 }
+
+                // Release the HTML preview webview when switching away from a request tab.
+                // Moved here from render() to avoid entity.update() inside render —
+                // see idle-cpu-audit-claude.md Bug 5.
+                let active_tab = session.read(cx).tab_manager.active();
+                if this.previous_active_tab != active_tab {
+                    this.release_html_webview_for_tab(this.previous_active_tab, cx);
+                    this.previous_active_tab = active_tab;
+                }
+
+                // cx.notify() must fire unconditionally — all session mutations (tab switch,
+                // sidebar toggle, reorder, etc.) need AppRoot to re-render.
+                cx.notify();
             }
         })];
 
@@ -376,13 +386,8 @@ impl Render for AppRoot {
             )
         };
 
-        // Release the HTML preview webview when switching away from a request tab.
-        // The response panel only cleans up the webview during its own render, but an
-        // inactive tab's render is never called — so we must do it here on tab switch.
-        if self.previous_active_tab != active_tab {
-            self.release_html_webview_for_tab(self.previous_active_tab, cx);
-            self.previous_active_tab = active_tab;
-        }
+        // HTML preview webview release now happens in the session observer —
+        // no more entity.update() inside render().
 
         let weak_root = cx.entity().downgrade();
 
