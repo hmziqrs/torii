@@ -15,31 +15,13 @@ pub(super) fn render_completed_response_body(
 
     content_tabs::refresh_response_tables_if_dirty(view, resp, &header_rows, &cookies, cx);
 
-    let load_full_button = match &resp.body_ref {
-        BodyRef::DiskBlob { blob_id, .. } => {
-            if view.loaded_full_body_blob_id.as_deref() == Some(blob_id.as_str()) {
-                if let Some(full) = &view.loaded_full_body_text {
-                    body_preview = full.clone();
-                }
-                None
-            } else {
-                Some(
-                    Button::new("request-load-full-body")
-                        .outline()
-                        .label(es_fluent::localize(
-                            "request_tab_action_load_full_body",
-                            None,
-                        ))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            if let Err(err) = this.load_full_response_body(cx) {
-                                window.push_notification(err, cx);
-                            }
-                        })),
-                )
+    if let BodyRef::DiskBlob { blob_id, .. } = &resp.body_ref {
+        if view.loaded_full_body_blob_id.as_deref() == Some(blob_id.as_str()) {
+            if let Some(full) = &view.loaded_full_body_text {
+                body_preview = full.clone();
             }
         }
-        _ => None,
-    };
+    }
 
     let is_html = looks_like_html(resp.media_type.as_deref());
     let html_body_for_preview = body_preview.clone();
@@ -89,8 +71,4 @@ pub(super) fn render_completed_response_body(
                 .overflow_y_scroll()
                 .child(active_content),
         )
-        // Load full body button — only for large disk blobs
-        .when_some(load_full_button, |el, btn| {
-            el.child(div().flex_shrink_0().child(btn))
-        })
 }

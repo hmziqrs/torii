@@ -443,7 +443,6 @@ pub(super) fn render_preview_text(bytes: &[u8], media_type: Option<&str>) -> Str
         Some(mt)
             if mt.eq_ignore_ascii_case("application/xml")
                 || mt.eq_ignore_ascii_case("text/xml")
-                || mt.eq_ignore_ascii_case("text/html")
     ) {
         pretty_print_xml_like(&text).unwrap_or(text)
     } else {

@@ -92,11 +92,13 @@ pub(super) fn render_body_content(
         ))
     } else if !body_preview.is_empty() {
         div()
+            .w_full()
             .mt_2()
             .p_3()
             .rounded(px(4.))
             .bg(bg)
             .text_sm()
+            .whitespace_normal()
             .font_family("monospace")
             .child(body_preview)
     } else {
