@@ -118,7 +118,8 @@ pub(super) fn render_response_panel(
                 );
 
             v_flex()
-                .size_full()
+                .flex_1()
+                .min_h_0()
                 .gap_2()
                 .child(header_row)
                 .child(content::render_completed_response_body(view, &response, window, cx))
@@ -135,7 +136,8 @@ pub(super) fn render_response_panel(
             let (title, detail) = classified_error_display(classified.as_ref(), &summary);
             let expanded = view.error_detail_expanded;
             v_flex()
-                .size_full()
+                .flex_1()
+                .min_h_0()
                 .pt_3()
                 .gap_2()
                 .child(response_label)
@@ -193,7 +195,8 @@ pub(super) fn render_response_panel(
                 }
             };
             v_flex()
-                .size_full()
+                .flex_1()
+                .min_h_0()
                 .pt_3()
                 .gap_2()
                 .child(response_label)

@@ -87,7 +87,6 @@ pub(super) fn render_request_tab(
         .flex_1()
         .min_h_0()
         .overflow_hidden()
-        .p_4()
         .gap_3()
         .key_context("RequestTabView")
         .track_focus(&view.focus_handle(cx))
@@ -109,6 +108,8 @@ pub(super) fn render_request_tab(
                 .gap_2()
                 .items_center()
                 .flex_shrink_0()
+                .px_4()
+                .pt_4()
                 .child(
                     h_flex()
                         .items_center()
@@ -180,6 +181,7 @@ pub(super) fn render_request_tab(
             h_flex()
                 .gap_1()
                 .flex_shrink_0()
+                .px_4()
                 .child(section_tab_button(
                     "request-tab-params",
                     es_fluent::localize("request_tab_params_label", None).to_string(),
@@ -295,6 +297,7 @@ pub(super) fn render_request_tab(
                                                             .flex_shrink_0()
                                                             .gap_2()
                                                             .items_center()
+                                                            .px_4()
                                                             .py_1()
                                                             .child(
                                                                 div()
@@ -320,7 +323,7 @@ pub(super) fn render_request_tab(
                                             },
                                         )
                                         // Preflight error: pinned above scroll (empty div = no height).
-                                        .child(preflight_panel.flex_shrink_0())
+                                        .child(preflight_panel.flex_shrink_0().px_4())
                                         // Scrollable section content.
                                         // flex_1 + min_h_0: gets the correct flex-allocated height
                                         // so overflow_y_scroll clips at exactly the panel boundary.
@@ -330,6 +333,8 @@ pub(super) fn render_request_tab(
                                                 .flex_1()
                                                 .min_h_0()
                                                 .overflow_y_scroll()
+                                                .px_4()
+                                                .pb_4()
                                                 .gap_3()
                                                 .child(section_content),
                                         ),
@@ -340,7 +345,7 @@ pub(super) fn render_request_tab(
                             resizable_panel()
                                 .size(px(260.))
                                 .size_range(px(120.)..px(99999.))
-                                .child(response_panel),
+                                .child(response_panel.px_4()),
                         ),
                 ),
         )
