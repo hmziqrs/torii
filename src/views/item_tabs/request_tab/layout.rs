@@ -88,6 +88,7 @@ pub(super) fn render_request_tab(
         .overflow_hidden()
         .p_4()
         .gap_3()
+        .key_context("RequestTabView")
         .track_focus(&view.focus_handle(cx))
         .on_action(cx.listener(RequestTabView::handle_save_request))
         .on_action(cx.listener(RequestTabView::handle_send_request))

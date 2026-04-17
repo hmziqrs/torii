@@ -5,7 +5,7 @@ mod tab_ops;
 
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme as _, Icon, IconName, Root, Sizable as _,
+    ActiveTheme as _, Icon, IconName, Root, Sizable as _, WindowExt as _,
     button::{Button, ButtonRounded, ButtonVariants as _},
     h_flex,
     resizable::{h_resizable, resizable_panel},
@@ -196,6 +196,54 @@ impl AppRoot {
         {
             tracing::error!("failed to persist tab session: {err}");
         }
+    }
+
+    fn render_active_tab_header_actions(
+        &self,
+        active: TabKey,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        let is_dirty = match (active.item().kind, active.item().id) {
+            (ItemKind::Request, Some(ItemId::Request(id))) => {
+                self.request_pages.get(&id)?.read(cx).has_unsaved_changes()
+            }
+            (ItemKind::Request, Some(ItemId::RequestDraft(did))) => {
+                self.request_draft_pages.get(&did)?.read(cx).has_unsaved_changes()
+            }
+            _ => return None,
+        };
+
+        if !is_dirty {
+            return None;
+        }
+
+        let weak_root = cx.entity().downgrade();
+
+        Some(
+            Button::new("tab-header-save")
+                .primary()
+                .xsmall()
+                .label(es_fluent::localize("request_tab_action_save", None))
+                .on_click(move |_, window, cx| {
+                    let mut save_result: Option<Result<Option<TabKey>, String>> = None;
+                    let _ = weak_root.update(cx, |this, cx| {
+                        save_result = Some(this.save_request_tab_by_key(active, cx));
+                    });
+                    match save_result {
+                        Some(Ok(_)) => {
+                            window.push_notification(
+                                es_fluent::localize("request_tab_save_ok", None),
+                                cx,
+                            );
+                        }
+                        Some(Err(e)) => {
+                            window.push_notification(e, cx);
+                        }
+                        None => {}
+                    }
+                })
+                .into_any_element(),
+        )
     }
 
     fn render_active_tab_content(
@@ -526,7 +574,12 @@ impl Render for AppRoot {
                                                                     .label(part.clone())
                                                                     .on_click(|_, _, _| {}),
                                                                 )
-                                                        })),
+                                                        }))
+                                                        .child(div().flex_1())
+                                                        .when_some(
+                                                            active_tab.and_then(|key| self.render_active_tab_header_actions(key, cx)),
+                                                            |el, actions| el.child(actions),
+                                                        ),
                                                 )
                                             }
                                         })

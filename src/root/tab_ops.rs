@@ -187,7 +187,7 @@ impl AppRoot {
         });
     }
 
-    fn save_request_tab_by_key(
+    pub(super) fn save_request_tab_by_key(
         &mut self,
         tab_key: TabKey,
         cx: &mut Context<Self>,
