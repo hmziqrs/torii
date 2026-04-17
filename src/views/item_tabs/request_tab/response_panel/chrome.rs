@@ -1,44 +1,5 @@
 use super::*;
 
-pub(super) fn render_status_and_meta(
-    resp: &crate::domain::response::ResponseSummary,
-    status_color: Hsla,
-    status_size: String,
-    muted: Hsla,
-) -> gpui::Div {
-    v_flex()
-        .gap_2()
-        .child(
-            h_flex().gap_3().items_center().child(
-                div()
-                    .text_sm()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_color(status_color)
-                    .child(format!("{} {}", resp.status_code, resp.status_text)),
-            ),
-        )
-        .child(
-            h_flex()
-                .gap_2()
-                .items_center()
-                .text_xs()
-                .text_color(muted)
-                .child(format!(
-                    "{}: {}",
-                    es_fluent::localize("request_tab_response_size", None),
-                    status_size
-                ))
-                .child("•")
-                .child(format!(
-                    "{}: {}",
-                    es_fluent::localize("request_tab_response_total_time", None),
-                    resp.total_ms
-                        .map(|ms| format!("{ms} ms"))
-                        .unwrap_or_else(|| "—".to_string())
-                )),
-        )
-}
-
 pub(super) fn render_tab_strip(
     view: &mut RequestTabView,
     is_html: bool,

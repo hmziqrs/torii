@@ -583,28 +583,46 @@ impl Render for AppRoot {
                                                 )
                                             }
                                         })
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .overflow_y_scrollbar()
-                                                .child(
-                                                    active_tab
-                                                        .map(|active| self.render_active_tab_content(active, window, cx))
-                                                        .unwrap_or_else(|| {
-                                                            if self.catalog.workspaces.is_empty() {
-                                                                render_empty_state(
-                                                                    es_fluent::localize("empty_state_no_workspace_title", None).into(),
-                                                                    es_fluent::localize("empty_state_no_workspace_body", None).into(),
-                                                                )
-                                                            } else {
-                                                                render_empty_state(
-                                                                    es_fluent::localize("empty_state_no_tab_title", None).into(),
-                                                                    es_fluent::localize("empty_state_no_tab_body", None).into(),
-                                                                )
-                                                            }
-                                                        }),
-                                                ),
-                                        ),
+                                        .child({
+                                            // Request tabs manage their own internal resizable split
+                                            // and per-section scroll areas. Wrapping them in an outer
+                                            // scroll container (overflow_y_scrollbar) makes the entire
+                                            // request+response split appear as one scrollable region,
+                                            // because the Scrollable wrapper renders the content with
+                                            // height:auto which prevents the inner flex layout from
+                                            // resolving correctly. Use a plain flex container instead.
+                                            let is_request_tab = active_tab
+                                                .map(|k| k.item().kind == ItemKind::Request)
+                                                .unwrap_or(false);
+                                            let content = active_tab
+                                                .map(|active| self.render_active_tab_content(active, window, cx))
+                                                .unwrap_or_else(|| {
+                                                    if self.catalog.workspaces.is_empty() {
+                                                        render_empty_state(
+                                                            es_fluent::localize("empty_state_no_workspace_title", None).into(),
+                                                            es_fluent::localize("empty_state_no_workspace_body", None).into(),
+                                                        )
+                                                    } else {
+                                                        render_empty_state(
+                                                            es_fluent::localize("empty_state_no_tab_title", None).into(),
+                                                            es_fluent::localize("empty_state_no_tab_body", None).into(),
+                                                        )
+                                                    }
+                                                });
+                                            if is_request_tab {
+                                                v_flex()
+                                                    .flex_1()
+                                                    .min_h_0()
+                                                    .child(content)
+                                                    .into_any_element()
+                                            } else {
+                                                div()
+                                                    .flex_1()
+                                                    .overflow_y_scrollbar()
+                                                    .child(content)
+                                                    .into_any_element()
+                                            }
+                                        }),
                                 ),
                             ),
                     ),

@@ -84,7 +84,8 @@ pub(super) fn render_request_tab(
     };
 
     v_flex()
-        .size_full()
+        .flex_1()
+        .min_h_0()
         .overflow_hidden()
         .p_4()
         .gap_3()
@@ -255,61 +256,92 @@ pub(super) fn render_request_tab(
                         })),
                 ),
         )
-        // Scrollable body: section content + banners + response
+        // Resizable split: request section (top) / response section (bottom).
+        //
+        // Layout rule: NEVER use size_full() / height: 100% inside resizable panels.
+        // Taffy resolves `height: 100%` against the panel's explicit `height` property
+        // (which is itself `100%` of the whole group), not against the flex-basis-allocated
+        // portion. This causes scroll containers to think they are taller than their panel,
+        // so content fits without scrolling. The correct pattern is:
+        //   v_flex().flex_1().min_h_0()  — fills panel via flex + disables min-content floor
+        //   div().flex_1().min_h_0()     — scroll container uses its flex-allocated height
         .child(
             div()
-                .id("request-tab-scroll")
                 .flex_1()
-                .flex_col()
-                .overflow_y_scroll()
-                .gap_3()
+                .min_h_0()
+                .overflow_hidden()
                 .child(
-                    v_flex()
-                        .w_full()
-                        .child(section_content),
-                )
-                .when(
-                    matches!(save_status, SaveStatus::SaveFailed { .. }),
-                    |el| {
-                        if let SaveStatus::SaveFailed { error } = &save_status {
-                            el.child(
-                                h_flex()
-                                    .gap_2()
-                                    .items_center()
-                                    .child(
-                                        div()
-                                            .text_sm()
-                                            .text_color(gpui::red())
-                                            .child(error.clone()),
-                                    )
-                                    .child(
-                                        Button::new("request-reload")
-                                            .ghost()
-                                            .label(es_fluent::localize(
-                                                "request_tab_action_reload",
-                                                None,
-                                            ))
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.reload_baseline(cx);
-                                            })),
-                                    ),
-                            )
-                        } else {
-                            el
-                        }
-                    },
-                )
-                .child(preflight_panel)
-                .child(
-                    v_flex()
-                        .gap_2()
+                    v_resizable("request-tab-body-split")
+                        // ── Top: request section content ──────────────────────
                         .child(
-                            div()
-                                .text_sm()
-                                .font_weight(gpui::FontWeight::MEDIUM)
-                                .child(es_fluent::localize("request_tab_response_label", None)),
+                            resizable_panel()
+                                .size_range(px(80.)..px(99999.))
+                                .child(
+                                    // flex_1: grows horizontally inside the row-direction panel.
+                                    // min_h_0: allows the panel to shrink the wrapper vertically
+                                    //   (cross-axis stretch gives height; min_h_0 removes the
+                                    //    content-height floor that would block shrinking).
+                                    v_flex()
+                                        .flex_1()
+                                        .min_h_0()
+                                        .overflow_hidden()
+                                        // Save-failed banner: pinned above scroll, always visible.
+                                        .when(
+                                            matches!(save_status, SaveStatus::SaveFailed { .. }),
+                                            |el| {
+                                                if let SaveStatus::SaveFailed { error } = &save_status {
+                                                    el.child(
+                                                        h_flex()
+                                                            .flex_shrink_0()
+                                                            .gap_2()
+                                                            .items_center()
+                                                            .py_1()
+                                                            .child(
+                                                                div()
+                                                                    .text_sm()
+                                                                    .text_color(gpui::red())
+                                                                    .child(error.clone()),
+                                                            )
+                                                            .child(
+                                                                Button::new("request-reload")
+                                                                    .ghost()
+                                                                    .label(es_fluent::localize(
+                                                                        "request_tab_action_reload",
+                                                                        None,
+                                                                    ))
+                                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                                        this.reload_baseline(cx);
+                                                                    })),
+                                                            ),
+                                                    )
+                                                } else {
+                                                    el
+                                                }
+                                            },
+                                        )
+                                        // Preflight error: pinned above scroll (empty div = no height).
+                                        .child(preflight_panel.flex_shrink_0())
+                                        // Scrollable section content.
+                                        // flex_1 + min_h_0: gets the correct flex-allocated height
+                                        // so overflow_y_scroll clips at exactly the panel boundary.
+                                        .child(
+                                            div()
+                                                .id("request-tab-request-scroll")
+                                                .flex_1()
+                                                .min_h_0()
+                                                .overflow_y_scroll()
+                                                .gap_3()
+                                                .child(section_content),
+                                        ),
+                                ),
                         )
-                        .child(response_panel),
+                        // ── Bottom: response section (always visible) ─────────
+                        .child(
+                            resizable_panel()
+                                .size(px(260.))
+                                .size_range(px(120.)..px(99999.))
+                                .child(response_panel),
+                        ),
                 ),
         )
 }

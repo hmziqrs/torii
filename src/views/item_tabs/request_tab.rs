@@ -9,6 +9,7 @@ use gpui_component::{
     divider::Divider,
     h_flex,
     input::{Input, InputEvent, InputState, TabSize},
+    resizable::{resizable_panel, v_resizable},
     select::{Select, SelectEvent, SelectState},
     table::{Column, TableDelegate, TableState},
     v_flex,

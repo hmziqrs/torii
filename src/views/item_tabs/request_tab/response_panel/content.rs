@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn render_completed_response(
+pub(super) fn render_completed_response_body(
     view: &mut RequestTabView,
     resp: &crate::domain::response::ResponseSummary,
     window: &mut Window,
@@ -8,8 +8,6 @@ pub(super) fn render_completed_response(
 ) -> gpui::Div {
     let muted = cx.theme().muted_foreground;
     let bg = cx.theme().background;
-    let status_color = status_code_color(resp.status_code);
-    let status_size = format_bytes(resp.body_ref.size_bytes());
 
     let mut body_preview = response_body_preview_text(resp, &view.loaded_full_body_text);
     let (header_rows, header_format) = parse_response_header_rows(resp.headers_json.as_deref());
@@ -23,9 +21,9 @@ pub(super) fn render_completed_response(
                 if let Some(full) = &view.loaded_full_body_text {
                     body_preview = full.clone();
                 }
-                div()
+                None
             } else {
-                div().child(
+                Some(
                     Button::new("request-load-full-body")
                         .outline()
                         .label(es_fluent::localize(
@@ -40,7 +38,7 @@ pub(super) fn render_completed_response(
                 )
             }
         }
-        _ => div(),
+        _ => None,
     };
 
     let is_html = looks_like_html(resp.media_type.as_deref());
@@ -72,19 +70,27 @@ pub(super) fn render_completed_response(
         ResponseTab::Timing => timing_content.into_any_element(),
     };
 
-    div()
+    v_flex()
+        .flex_1()
+        .min_h_0()
         .gap_2()
-        .child(chrome::render_status_and_meta(
-            resp,
-            status_color,
-            status_size,
-            muted,
-        ))
-        .child(chrome::render_tab_strip(view, is_html, cx))
-        .when(
-            view.active_response_tab == ResponseTab::Body,
-            |el: gpui::Div| el.child(body_actions),
+        // Tab strip — never shrinks
+        .child(chrome::render_tab_strip(view, is_html, cx).flex_shrink_0())
+        // Body action buttons — only when on the Body tab
+        .when(view.active_response_tab == ResponseTab::Body, |el| {
+            el.child(body_actions.flex_shrink_0())
+        })
+        // Scrollable content area
+        .child(
+            div()
+                .id("response-body-scroll")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .child(active_content),
         )
-        .child(active_content)
-        .child(load_full_button)
+        // Load full body button — only for large disk blobs
+        .when_some(load_full_button, |el, btn| {
+            el.child(div().flex_shrink_0().child(btn))
+        })
 }
