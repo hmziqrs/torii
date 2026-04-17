@@ -29,7 +29,7 @@ use crate::{
     },
     title_bar::AppTitleBar,
     views::{
-        AboutPage, SettingsPage,
+        AboutPage, LayoutDebugPage, SettingsPage,
         http_method::{RequestProtocol, protocol_badge},
         item_tabs::{collection_tab, environment_tab, folder_tab, request_tab, workspace_tab},
         tab_host::{TabPresentation, render_empty_state, render_tab_bar},
@@ -43,6 +43,7 @@ pub struct AppRoot {
     catalog: WorkspaceCatalog,
     settings_page: Entity<SettingsPage>,
     about_page: Entity<AboutPage>,
+    layout_debug_page: Entity<LayoutDebugPage>,
     request_pages: std::collections::HashMap<RequestId, Entity<request_tab::RequestTabView>>,
     request_draft_pages:
         std::collections::HashMap<RequestDraftId, Entity<request_tab::RequestTabView>>,
@@ -62,6 +63,7 @@ impl AppRoot {
         let session = cx.new(|_| WorkspaceSession::new());
         let settings_page = cx.new(|cx| SettingsPage::new(window, cx));
         let about_page = cx.new(|cx| AboutPage::new(window, cx));
+        let layout_debug_page = cx.new(|cx| LayoutDebugPage::new(window, cx));
 
         let restored = services.session_restore.take_next_restore().ok().flatten();
         let selected_workspace_id = restored
@@ -158,6 +160,7 @@ impl AppRoot {
             catalog,
             settings_page,
             about_page,
+            layout_debug_page,
             request_pages: std::collections::HashMap::new(),
             request_draft_pages: std::collections::HashMap::new(),
             _subscriptions: subscriptions,
@@ -328,6 +331,7 @@ impl AppRoot {
                 }),
             (ItemKind::Settings, None) => self.settings_page.clone().into_any_element(),
             (ItemKind::About, None) => self.about_page.clone().into_any_element(),
+            (ItemKind::LayoutDebug, None) => self.layout_debug_page.clone().into_any_element(),
             _ => render_empty_state(
                 es_fluent::localize("tab_missing_title", None).into(),
                 es_fluent::localize("tab_missing_body", None).into(),
@@ -584,15 +588,20 @@ impl Render for AppRoot {
                                             }
                                         })
                                         .child({
-                                            // Request tabs manage their own internal resizable split
+                                            // Request-like tabs manage their own internal resizable split
                                             // and per-section scroll areas. Wrapping them in an outer
                                             // scroll container (overflow_y_scrollbar) makes the entire
                                             // request+response split appear as one scrollable region,
                                             // because the Scrollable wrapper renders the content with
                                             // height:auto which prevents the inner flex layout from
                                             // resolving correctly. Use a plain flex container instead.
-                                            let is_request_tab = active_tab
-                                                .map(|k| k.item().kind == ItemKind::Request)
+                                            let uses_internal_scroll_layout = active_tab
+                                                .map(|k| {
+                                                    matches!(
+                                                        k.item().kind,
+                                                        ItemKind::Request | ItemKind::LayoutDebug
+                                                    )
+                                                })
                                                 .unwrap_or(false);
                                             let content = active_tab
                                                 .map(|active| self.render_active_tab_content(active, window, cx))
@@ -609,7 +618,7 @@ impl Render for AppRoot {
                                                         )
                                                     }
                                                 });
-                                            if is_request_tab {
+                                            if uses_internal_scroll_layout {
                                                 v_flex()
                                                     .flex_1()
                                                     .min_h_0()

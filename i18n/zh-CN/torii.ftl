@@ -90,6 +90,7 @@ sidebar_utilities = 工具
 
 tab_kind_settings = 设置
 tab_kind_about = 关于
+tab_kind_layout_debug = 布局调试
 tab_missing_title = 项目不可用
 tab_missing_body = 此标签引用的项目已不存在。
 tab_missing_short = 缺失

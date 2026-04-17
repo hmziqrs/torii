@@ -90,6 +90,7 @@ sidebar_utilities = Utilities
 
 tab_kind_settings = Settings
 tab_kind_about = About
+tab_kind_layout_debug = Layout Debug
 tab_missing_title = Item unavailable
 tab_missing_body = This tab references an item that is no longer available.
 tab_missing_short = Missing

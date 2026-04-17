@@ -132,7 +132,7 @@ impl SessionRestoreService {
                 self.environments.get(id)?.is_some()
             }
             (ItemKind::Request, Some(ItemId::Request(id))) => self.requests.get(id)?.is_some(),
-            (ItemKind::Settings | ItemKind::About, None) => true,
+            (ItemKind::Settings | ItemKind::About | ItemKind::LayoutDebug, None) => true,
             _ => false,
         };
 
@@ -166,7 +166,7 @@ impl SessionRestoreService {
                     .get(request.collection_id)?
                     .map(|collection| collection.workspace_id)
             }
-            (ItemKind::Settings | ItemKind::About, None) => None,
+            (ItemKind::Settings | ItemKind::About | ItemKind::LayoutDebug, None) => None,
             _ => None,
         };
 

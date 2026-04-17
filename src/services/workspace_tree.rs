@@ -223,6 +223,9 @@ impl WorkspaceCatalog {
                 .map(|request| request.name.clone()),
             (ItemKind::Settings, None) => Some(es_fluent::localize("tab_kind_settings", None)),
             (ItemKind::About, None) => Some(es_fluent::localize("tab_kind_about", None)),
+            (ItemKind::LayoutDebug, None) => {
+                Some(es_fluent::localize("tab_kind_layout_debug", None))
+            }
             _ => None,
         }
     }
@@ -236,6 +239,7 @@ impl WorkspaceCatalog {
             ItemKind::Request => IconName::File,
             ItemKind::Settings => IconName::Settings2,
             ItemKind::About => IconName::Info,
+            ItemKind::LayoutDebug => IconName::Settings2,
         }
     }
 

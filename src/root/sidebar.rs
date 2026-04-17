@@ -148,6 +148,17 @@ impl AppRoot {
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.open_item(ItemKey::about(), cx);
                                 })),
+                        )
+                        .child(
+                            SidebarMenuItem::new(es_fluent::localize(
+                                "tab_kind_layout_debug",
+                                None,
+                            ))
+                            .icon(Icon::new(IconName::Settings2).small())
+                            .active(active_key == Some(ItemKey::layout_debug()))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.open_item(ItemKey::layout_debug(), cx);
+                            })),
                         ),
                 ),
             )

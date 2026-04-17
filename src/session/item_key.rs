@@ -15,6 +15,7 @@ pub enum ItemKind {
     Request,
     Settings,
     About,
+    LayoutDebug,
 }
 
 impl ItemKind {
@@ -34,6 +35,7 @@ impl ItemKind {
             Self::Request => "request",
             Self::Settings => "settings",
             Self::About => "about",
+            Self::LayoutDebug => "layout_debug",
         }
     }
 }
@@ -56,6 +58,7 @@ impl FromStr for ItemKind {
             "request" => Ok(Self::Request),
             "settings" => Ok(Self::Settings),
             "about" => Ok(Self::About),
+            "layout_debug" => Ok(Self::LayoutDebug),
             other => Err(anyhow!("unknown item kind: {other}")),
         }
     }
@@ -105,6 +108,10 @@ impl ItemKey {
         Self::new(ItemKind::About, None)
     }
 
+    pub fn layout_debug() -> Self {
+        Self::new(ItemKind::LayoutDebug, None)
+    }
+
     pub fn is_persisted(self) -> bool {
         self.kind.is_persisted()
     }
@@ -148,7 +155,7 @@ impl ItemKey {
             ItemKind::Request => Some(ItemId::Request(RequestId::parse(
                 id.ok_or_else(|| anyhow!("missing request item id"))?,
             )?)),
-            ItemKind::Settings | ItemKind::About => None,
+            ItemKind::Settings | ItemKind::About | ItemKind::LayoutDebug => None,
         };
 
         Ok(Self::new(kind, id))
