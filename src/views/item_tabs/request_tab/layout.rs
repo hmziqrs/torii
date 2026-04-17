@@ -106,6 +106,7 @@ pub(super) fn render_request_tab(
 
             h_flex()
                 .gap_2()
+                .h(px(52.))
                 .items_center()
                 .flex_shrink_0()
                 .px_4()
