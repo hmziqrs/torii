@@ -1,5 +1,22 @@
 use super::*;
 
+fn tab_button_base(
+    id: &'static str,
+    label: String,
+    active: bool,
+    cx: &App,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+) -> Button {
+    Button::new(id)
+        .ghost()
+        .small()
+        .compact()
+        .label(label)
+        .selected(active)
+        .when(!active, |b| b.text_color(cx.theme().muted_foreground))
+        .on_click(on_click)
+}
+
 pub(super) fn section_tab_button(
     id: &'static str,
     label: String,
@@ -7,21 +24,7 @@ pub(super) fn section_tab_button(
     cx: &App,
     on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Button {
-    if active {
-        Button::new(id)
-            .ghost()
-            .label(label)
-            .border_b_2()
-            .border_color(cx.theme().primary)
-            .font_weight(FontWeight::MEDIUM)
-            .on_click(on_click)
-    } else {
-        Button::new(id)
-            .ghost()
-            .label(label)
-            .text_color(cx.theme().muted_foreground)
-            .on_click(on_click)
-    }
+    tab_button_base(id, label, active, cx, on_click)
 }
 
 pub(super) fn response_tab_button(
@@ -31,21 +34,7 @@ pub(super) fn response_tab_button(
     cx: &App,
     on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Button {
-    if active {
-        Button::new(id)
-            .ghost()
-            .label(label)
-            .border_b_2()
-            .border_color(cx.theme().primary)
-            .font_weight(FontWeight::MEDIUM)
-            .on_click(on_click)
-    } else {
-        Button::new(id)
-            .ghost()
-            .label(label)
-            .text_color(cx.theme().muted_foreground)
-            .on_click(on_click)
-    }
+    tab_button_base(id, label, active, cx, on_click)
 }
 
 #[derive(Debug, Clone)]
