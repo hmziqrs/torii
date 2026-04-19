@@ -62,13 +62,13 @@ pub(super) fn render_completed_response_body(
         .when(view.active_response_tab == ResponseTab::Body, |el| {
             el.child(body_actions.flex_shrink_0())
         })
-        // Scrollable content area
+        // Active tab content area fills remaining response panel space.
         .child(
-            div()
+            v_flex()
                 .id("response-body-scroll")
                 .flex_1()
                 .min_h_0()
-                .overflow_y_scroll()
+                .overflow_hidden()
                 .child(active_content),
         )
 }

@@ -85,7 +85,7 @@ pub(super) fn render_body_content(
     let body_search_query = view.body_search_input.read(cx).value().to_string();
     let body_matches = search_matches(&body_preview, &body_search_query);
 
-    let mut body_content = if looks_like_image(resp.media_type.as_deref()) {
+    let body_content = if looks_like_image(resp.media_type.as_deref()) {
         div().text_sm().text_color(muted).child(es_fluent::localize(
             "request_tab_response_image_preview_todo",
             None,
@@ -109,7 +109,9 @@ pub(super) fn render_body_content(
     };
 
     if view.body_search_visible {
-        body_content = v_flex()
+        return v_flex()
+            .flex_1()
+            .min_h_0()
             .gap_2()
             .child(
                 h_flex()
@@ -126,10 +128,24 @@ pub(super) fn render_body_content(
                         es_fluent::localize("request_tab_search_matches", None)
                     ))),
             )
-            .child(body_content);
+            .child(
+                div()
+                    .id("response-body-content-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .child(body_content),
+            );
     }
 
-    body_content
+    v_flex().flex_1().min_h_0().child(
+        div()
+            .id("response-body-content-scroll")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .child(body_content),
+    )
 }
 
 pub(super) fn render_headers_content(
@@ -146,6 +162,8 @@ pub(super) fn render_headers_content(
     }
 
     v_flex()
+        .flex_1()
+        .min_h_0()
         .gap_1()
         .when(
             matches!(header_format, Some(HeaderJsonFormat::LegacyObjectMap)),
@@ -163,7 +181,8 @@ pub(super) fn render_headers_content(
         )
         .child(
             div()
-                .h(px(200.))
+                .flex_1()
+                .min_h_0()
                 .child(DataTable::new(&view.headers_table).bordered(true)),
         )
 }
@@ -181,13 +200,15 @@ pub(super) fn render_cookies_content(
     }
 
     div()
-        .h(px(200.))
+        .flex_1()
+        .min_h_0()
         .child(DataTable::new(&view.cookies_table).bordered(true))
 }
 
 pub(super) fn render_timing_content(view: &RequestTabView) -> gpui::Div {
     div()
-        .h(px(280.))
+        .flex_1()
+        .min_h_0()
         .child(DataTable::new(&view.timing_table).bordered(true))
 }
 
@@ -220,7 +241,11 @@ pub(super) fn render_preview_content(
     }
 
     if is_html && is_preview_active && view.html_webview.is_some() {
-        return div().h(px(400.)).child(view.html_webview.clone().unwrap());
+        return div()
+            .flex_1()
+            .min_h_0()
+            .overflow_hidden()
+            .child(view.html_webview.clone().unwrap());
     }
     if is_html && html_body_for_preview.is_empty() {
         return div().text_sm().text_color(muted).child(es_fluent::localize(
@@ -234,5 +259,6 @@ pub(super) fn render_preview_content(
             None,
         ));
     }
-    div()
+
+    div().flex_1().min_h_0()
 }
