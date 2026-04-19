@@ -74,6 +74,14 @@ fn build_timing_rows(resp: &crate::domain::response::ResponseSummary) -> Vec<Tim
     ]
 }
 
+fn response_table_height(rows_len: usize) -> Pixels {
+    let row_height: f32 = 32.;
+    let header_height: f32 = 36.;
+    let max_rows_visible = 8;
+    let rows_visible = rows_len.min(max_rows_visible);
+    px(header_height + rows_visible as f32 * row_height)
+}
+
 pub(super) fn render_body_content(
     view: &mut RequestTabView,
     resp: &crate::domain::response::ResponseSummary,
@@ -110,8 +118,6 @@ pub(super) fn render_body_content(
 
     if view.body_search_visible {
         return v_flex()
-            .flex_1()
-            .min_h_0()
             .gap_2()
             .child(
                 h_flex()
@@ -128,24 +134,10 @@ pub(super) fn render_body_content(
                         es_fluent::localize("request_tab_search_matches", None)
                     ))),
             )
-            .child(
-                div()
-                    .id("response-body-content-scroll")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .child(body_content),
-            );
+            .child(body_content);
     }
 
-    v_flex().flex_1().min_h_0().child(
-        div()
-            .id("response-body-content-scroll")
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
-            .child(body_content),
-    )
+    body_content
 }
 
 pub(super) fn render_headers_content(
@@ -162,8 +154,6 @@ pub(super) fn render_headers_content(
     }
 
     v_flex()
-        .flex_1()
-        .min_h_0()
         .gap_1()
         .when(
             matches!(header_format, Some(HeaderJsonFormat::LegacyObjectMap)),
@@ -181,8 +171,7 @@ pub(super) fn render_headers_content(
         )
         .child(
             div()
-                .flex_1()
-                .min_h_0()
+                .h(response_table_height(header_rows.len()))
                 .child(DataTable::new(&view.headers_table).bordered(true)),
         )
 }
@@ -200,15 +189,14 @@ pub(super) fn render_cookies_content(
     }
 
     div()
-        .flex_1()
-        .min_h_0()
+        .h(response_table_height(cookies.len()))
         .child(DataTable::new(&view.cookies_table).bordered(true))
 }
 
 pub(super) fn render_timing_content(view: &RequestTabView) -> gpui::Div {
+    // Keep timing table sizing consistent with other tables in response tabs.
     div()
-        .flex_1()
-        .min_h_0()
+        .h(response_table_height(8))
         .child(DataTable::new(&view.timing_table).bordered(true))
 }
 
@@ -241,11 +229,7 @@ pub(super) fn render_preview_content(
     }
 
     if is_html && is_preview_active && view.html_webview.is_some() {
-        return div()
-            .flex_1()
-            .min_h_0()
-            .overflow_hidden()
-            .child(view.html_webview.clone().unwrap());
+        return div().h(px(400.)).child(view.html_webview.clone().unwrap());
     }
     if is_html && html_body_for_preview.is_empty() {
         return div().text_sm().text_color(muted).child(es_fluent::localize(
@@ -260,5 +244,5 @@ pub(super) fn render_preview_content(
         ));
     }
 
-    div().flex_1().min_h_0()
+    div()
 }

@@ -68,7 +68,7 @@ pub(super) fn render_completed_response_body(
                 .id("response-body-scroll")
                 .flex_1()
                 .min_h_0()
-                .overflow_hidden()
+                .overflow_y_scroll()
                 .child(active_content),
         )
 }
