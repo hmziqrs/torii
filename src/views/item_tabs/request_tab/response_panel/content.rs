@@ -30,7 +30,7 @@ pub(super) fn render_completed_response_body(
     let headers_content =
         content_tabs::render_headers_content(view, &header_rows, header_format, muted);
     let cookies_content = content_tabs::render_cookies_content(view, &cookies, muted);
-    let timing_content = content_tabs::render_timing_content(view, resp);
+    let timing_content = content_tabs::render_timing_content(resp, muted, cx.theme().border);
 
     let can_copy = is_text_like_media_type(resp.media_type.as_deref());
     let body_actions = actions::render_body_actions(view, can_copy, cx);

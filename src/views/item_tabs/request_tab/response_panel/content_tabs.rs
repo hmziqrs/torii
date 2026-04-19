@@ -198,13 +198,68 @@ pub(super) fn render_cookies_content(
 }
 
 pub(super) fn render_timing_content(
-    view: &RequestTabView,
     resp: &crate::domain::response::ResponseSummary,
+    muted: Hsla,
+    border: Hsla,
 ) -> gpui::Div {
-    let timing_rows_len = build_timing_rows(resp).len();
-    div()
-        .h(response_table_height(timing_rows_len))
-        .child(DataTable::new(&view.timing_table).bordered(true))
+    let rows = build_timing_rows(resp);
+    let rows_count = rows.len();
+
+    v_flex()
+        .border_1()
+        .border_color(border)
+        .rounded(px(4.))
+        .child(
+            h_flex()
+                .h(px(32.))
+                .border_b_1()
+                .border_color(border)
+                .child(
+                    div()
+                        .w(px(200.))
+                        .px_2()
+                        .text_sm()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(es_fluent::localize(
+                            "request_tab_response_timing_col_phase",
+                            None,
+                        )),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .px_2()
+                        .text_sm()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(es_fluent::localize(
+                            "request_tab_response_timing_col_value",
+                            None,
+                        )),
+                ),
+        )
+        .children(rows.into_iter().enumerate().map(|(ix, row)| {
+            h_flex()
+                .h(px(32.))
+                .when(ix + 1 < rows_count, |el| {
+                    el.border_b_1().border_color(border)
+                })
+                .child(
+                    div()
+                        .w(px(200.))
+                        .px_2()
+                        .text_sm()
+                        .text_color(muted)
+                        .child(row.phase),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .px_2()
+                        .text_sm()
+                        .font_family("monospace")
+                        .child(row.value),
+                )
+        }))
 }
 
 pub(super) fn render_preview_content(
