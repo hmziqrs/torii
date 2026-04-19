@@ -1,6 +1,6 @@
 use super::*;
-use gpui_component::IconName;
 use gpui_component::table::DataTable;
+use gpui_component::IconName;
 
 // ---------------------------------------------------------------------------
 // Key-value table delegate — reusable across Params, Headers,
@@ -170,10 +170,11 @@ pub(super) fn render_kv_table(
         });
     }
 
-    // Dynamic height that grows with rows, capped at 8 visible
+    // Dynamic height that grows with rows. Keep the cap intentionally very high
+    // so the table behaves as one unit in the parent request scroll container.
     let row_height: f32 = 32.;
     let header_height: f32 = 36.;
-    let max_rows_visible = 8;
+    let max_rows_visible = 10_000usize;
     let rows_visible = (rows.len() + 1).min(max_rows_visible);
     let table_height = header_height + rows_visible as f32 * row_height;
 

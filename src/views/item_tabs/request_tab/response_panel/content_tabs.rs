@@ -77,8 +77,12 @@ fn build_timing_rows(resp: &crate::domain::response::ResponseSummary) -> Vec<Tim
 fn response_table_height(rows_len: usize) -> Pixels {
     let row_height: f32 = 32.;
     let header_height: f32 = 36.;
-    let max_rows_visible = 8;
-    let rows_visible = rows_len.min(max_rows_visible);
+    // Intentionally very high so response tables behave as one scrollable unit
+    // with their header in the parent response scroll container.
+    let max_rows_visible = 10_000usize;
+    // Add one buffer row to avoid edge-case inner-table scrolling caused by
+    // rounding/layout boundaries at exact fit.
+    let rows_visible = (rows_len + 1).min(max_rows_visible);
     px(header_height + rows_visible as f32 * row_height)
 }
 
@@ -194,7 +198,7 @@ pub(super) fn render_cookies_content(
 }
 
 pub(super) fn render_timing_content(view: &RequestTabView) -> gpui::Div {
-    // Keep timing table sizing consistent with other tables in response tabs.
+    // The timing table currently renders 8 rows.
     div()
         .h(response_table_height(8))
         .child(DataTable::new(&view.timing_table).bordered(true))
