@@ -175,7 +175,9 @@ pub(super) fn render_kv_table(
     let row_height: f32 = 32.;
     let header_height: f32 = 36.;
     let max_rows_visible = 10_000usize;
-    let rows_visible = (rows.len() + 1).min(max_rows_visible);
+    // Add an extra safety row to avoid edge-fit inner scrolling in DataTable
+    // when borders/scrollbars consume a few pixels.
+    let rows_visible = (rows.len() + 2).min(max_rows_visible);
     let table_height = header_height + rows_visible as f32 * row_height;
 
     let target_for_add = target;
