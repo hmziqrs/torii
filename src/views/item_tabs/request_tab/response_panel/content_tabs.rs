@@ -80,9 +80,9 @@ fn response_table_height(rows_len: usize) -> Pixels {
     // Intentionally very high so response tables behave as one scrollable unit
     // with their header in the parent response scroll container.
     let max_rows_visible = 10_000usize;
-    // Add two buffer rows to avoid edge-case inner-table scrolling caused by
-    // borders/scrollbars consuming a few pixels at exact-fit heights.
-    let rows_visible = (rows_len + 2).min(max_rows_visible);
+    // Use exact row count here so we don't leave visible trailing empty space
+    // under the last header/cookie row.
+    let rows_visible = rows_len.min(max_rows_visible);
     px(header_height + rows_visible as f32 * row_height)
 }
 
