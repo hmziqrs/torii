@@ -220,7 +220,8 @@ Semantics:
 - `Linked`
   - authoritative content lives in a local folder tree
   - the folder may be inside a Git repository
-  - SQLite stores catalog metadata and the local binding, not the authoritative request/folder/environment bodies
+  - authoritative request/folder/environment/order state must live in Git-visible text files
+  - app SQLite may store cache/index metadata and the local binding, but never the authoritative request/folder/environment/order state
 
 Recommended persistence change:
 
@@ -261,6 +262,13 @@ Rule:
 - tabs, tree rows, and request editors work against shared domain objects and shared IDs
 - only the collection store changes underneath
 - do not make the tree or request editor call Git helpers directly
+- do not introduce hidden linked-collection state that lives only in app SQLite
+
+Hard decision locked for linked collections:
+
+- no repo-local SQLite database as the source of truth
+- no reorder state stored only outside the repo
+- if a branch switch or fresh clone cannot reproduce the collection from tracked files alone, the design is wrong
 
 ## 7.2 File-Backed Collection Format
 
@@ -296,24 +304,48 @@ Stable identity rule:
 - renaming or moving a file/folder must not change the item's logical ID
 - open tabs, history references, drag/drop, and future sync all depend on stable IDs
 
-Recommended metadata ownership:
+Locked metadata strategy:
 
 - `.torii/collection.json`
   - collection ID
   - display name
   - format version
   - storage kind
+  - ordered root child IDs
+  - ordered environment IDs if environment ordering becomes user-visible
 - `.torii-folder.json`
   - folder ID
-  - sort order
+  - display name
+  - ordered child IDs
 - `*.torii-request.json`
   - request ID
   - request payload/editor fields
-  - sort order
 - `.torii/environments/*.torii-env.json`
   - environment ID
   - name
   - variable rows
+
+Ordering rule:
+
+- request files do not own their own `sort_order`
+- folder files do not own their own `sort_order`
+- ordering is owned by the parent metadata file:
+  - collection root order lives in `.torii/collection.json`
+  - folder child order lives in that folder's `.torii-folder.json`
+- drag/drop and reorder mutate the parent metadata atomically
+
+Why this strategy:
+
+- one place owns sibling order
+- reorder diffs stay small and readable
+- merges are easier than rewriting many per-item sort fields
+- rename/move does not require changing logical IDs
+
+Explicit rejection:
+
+- do not use a linked-collection SQLite file for ordering/identity/state
+- do not store sort order only on each request/folder file if parent order has to be reconstructed heuristically
+- do not derive order from filesystem listing order
 
 Why not path-derived IDs:
 
@@ -321,7 +353,55 @@ Why not path-derived IDs:
 - it would force tab remap and history remap logic everywhere
 - it makes future sync/conflict handling much harder than storing stable IDs up front
 
-## 7.3 Linked Collection Reconcile Model
+## 7.3 Linked Collection Cache and Rebuild Rules
+
+Linked collections may still use app-local acceleration state, but only as disposable derived data.
+
+Allowed cache/index examples:
+
+- parsed tree cache
+- search index
+- last-seen hash/mtime index
+- watcher bookkeeping
+- local performance snapshots
+
+Rules:
+
+- app SQLite cache for linked collections is optional and disposable
+- deleting the cache must not lose linked collection data
+- on startup, cache miss, or cache corruption, the collection must rebuild fully from repo files
+- branch switch correctness must never depend on cached SQLite state
+
+Deterministic rebuild rule:
+
+- the linked collection store must be able to reconstruct:
+  - collection metadata
+  - full tree shape
+  - ordering
+  - requests
+  - environments
+from tracked files alone
+
+## 7.4 Linked Collection Write Semantics
+
+Linked collection writes need transactional behavior without using SQLite as authority.
+
+Required write rules:
+
+- writes are staged in memory first
+- each changed file is written to a temp path
+- commit step is atomic replace/rename into the final path
+- parent metadata is written in the same logical transaction as child create/move/delete operations
+- watcher-originated self-events must be recognized so the UI does not double-apply the same mutation
+
+Failure rule:
+
+- if a multi-file linked mutation fails mid-write, recovery must prefer one of:
+  - retry/rollback before notifying success
+  - full rescan from disk and surface a recoverable error
+- never leave hot state assuming success if the repo files do not reflect that success
+
+## 7.5 Linked Collection Reconcile Model
 
 Linked collections should follow one refresh model for all disk-originated change, including Git activity.
 
@@ -359,7 +439,7 @@ Why:
 - it matches Bruno's effective model for branch switches
 - it avoids duplicated stale-tab and stale-selection handling
 
-## 7.4 Unified Tree Ordering
+## 7.6 Unified Tree Ordering
 
 The current `sort_order` columns on `folders` and `requests` can be reused, but the interpretation must change.
 
@@ -395,7 +475,7 @@ Compatibility rule for existing data:
 - the first Phase 4 structural write under a parent should normalize the combined sibling order for that parent
 - optionally run a startup normalization pass for demo data so drag/drop starts from a stable baseline
 
-## 7.5 Session-Scoped Workspace State
+## 7.7 Session-Scoped Workspace State
 
 `WorkspaceSession` needs per-workspace UI state instead of a single global selection-only model.
 
@@ -446,7 +526,7 @@ Persistence rules:
   - expanded item keys
 - ephemeral drag-hover state, rename mode, and dialog state are never persisted
 
-## 7.6 Flat Tree Read Model
+## 7.8 Flat Tree Read Model
 
 The sidebar should stop rendering directly from nested `CollectionTree` / `FolderTree` recursion.
 
@@ -476,7 +556,7 @@ Rules:
 
 This is the key step that makes virtualization possible later without rewriting selection, drag/drop, or keyboard logic.
 
-## 7.7 Variable Model and Persistence
+## 7.9 Variable Model and Persistence
 
 Phase 4 needs one shared variable shape across three scopes:
 
@@ -526,7 +606,7 @@ Legacy compatibility:
 
 This avoids brittle SQL JSON migration logic and keeps seeded demo data readable.
 
-## 7.8 Resolution Semantics
+## 7.10 Resolution Semantics
 
 Resolution precedence is locked:
 
@@ -665,12 +745,17 @@ Tasks:
   - linked collection with chosen root path
 - define the on-disk layout writer/reader for collection, folder, request, and environment items
 - keep stable IDs in file metadata and never derive identity from paths
+- lock parent-owned ordering metadata:
+  - `.torii/collection.json` owns root child order
+  - `.torii-folder.json` owns folder child order
 - resolve collection-store calls without leaking Git concepts into the tree/request UI
+- allow app-local cache/index data, but make full rebuild from tracked files the correctness path
 
 Definition of done:
 
 - tree and item-loading code can resolve the correct store from collection type
 - linked collections can round-trip locally without Git UX
+- linked collection order/identity are fully reproducible from tracked text files alone
 - UI/state code no longer assumes all collection descendants live in SQLite
 
 ## Slice 2: Flat Tree Model and Session Expansion State
@@ -892,6 +977,8 @@ Required automated coverage:
 - linked collection tests for:
   - file format round-trip
   - stable ID preservation across rename/move
+  - parent metadata owns sibling ordering
+  - full rebuild from tracked files reproduces tree/order without cache
   - reconcile of file add/change/remove into collection state
 - tree tests for:
   - flat row expansion behavior
@@ -936,6 +1023,8 @@ Required GPUI performance audit:
 - [ ] Tree rendering uses a flat row model with explicit expansion state
 - [ ] Collections support both `Managed` and `Linked` storage authority
 - [ ] Linked collections round-trip through a stable on-disk file format with stable IDs
+- [ ] Linked collection order is owned by Git-visible parent metadata, not hidden SQLite state
+- [ ] Linked collections can rebuild fully from tracked files without relying on cache
 - [ ] Linked collections define one watcher/reconcile contract for normal disk edits and future Git-driven edits
 - [ ] Folders and requests can be interleaved and reordered under the same parent
 - [ ] CRUD exists for workspace, collection, folder, request, and environment items
