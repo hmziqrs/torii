@@ -5,9 +5,12 @@ use crate::{
 };
 use gpui::{div, prelude::*, px};
 use gpui_component::{
-    ActiveTheme as _, Icon, IconName, Sizable as _, h_flex,
+    ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _, h_flex,
+    button::{Button, ButtonVariants as _},
     menu::PopupMenuItem,
+    scroll::ScrollableElement as _,
     sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem},
+    v_flex,
 };
 
 impl AppRoot {
@@ -39,76 +42,103 @@ impl AppRoot {
                     .border_r_1()
                     .border_color(cx.theme().sidebar_border)
                     .child(
-                        Sidebar::new("app-sidebar-rail")
-                            .collapsible(false)
-                            .w(gpui::relative(1.))
-                            .border_0()
+                        v_flex()
+                            .size_full()
+                            .overflow_y_scrollbar()
+                            .p_2()
+                            .gap_1()
                             .child(
-                                SidebarGroup::new("").child(
-                                    SidebarMenu::new()
-                                        .child(
-                                            SidebarMenuItem::new("Collections")
-                                                .icon(Icon::new(IconName::BookOpen).small())
-                                                .active(is_collections)
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.session.update(cx, |session, cx| {
-                                                        session.window_layout.sidebar_section =
-                                                            SidebarSection::Collections;
-                                                        cx.notify();
-                                                    });
-                                                })),
-                                        )
-                                        .child(
-                                            SidebarMenuItem::new("Environments")
-                                                .icon(Icon::new(IconName::Globe).small())
-                                                .active(!is_collections)
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.session.update(cx, |session, cx| {
-                                                        session.window_layout.sidebar_section =
-                                                            SidebarSection::Environments;
-                                                        cx.notify();
-                                                    });
-                                                })),
-                                        ),
-                                ),
+                                Button::new("rail-collections")
+                                    .ghost()
+                                    .selected(is_collections)
+                                    .w_full()
+                                    .h(px(52.))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.session.update(cx, |session, cx| {
+                                            session.window_layout.sidebar_section =
+                                                SidebarSection::Collections;
+                                            cx.notify();
+                                        });
+                                    }))
+                                    .child(
+                                        v_flex()
+                                            .items_center()
+                                            .gap_px()
+                                            .child(Icon::new(IconName::BookOpen).size_4())
+                                            .child(div().text_xs().child("Collections")),
+                                    ),
                             )
                             .child(
-                                SidebarGroup::new(es_fluent::localize("sidebar_utilities", None))
+                                Button::new("rail-environments")
+                                    .ghost()
+                                    .selected(!is_collections)
+                                    .w_full()
+                                    .h(px(52.))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.session.update(cx, |session, cx| {
+                                            session.window_layout.sidebar_section =
+                                                SidebarSection::Environments;
+                                            cx.notify();
+                                        });
+                                    }))
                                     .child(
-                                        SidebarMenu::new()
-                                            .child(
-                                                SidebarMenuItem::new(es_fluent::localize(
-                                                    "tab_kind_settings",
-                                                    None,
-                                                ))
-                                                .icon(Icon::new(IconName::Settings2).small())
-                                                .active(active_key == Some(ItemKey::settings()))
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.open_item(ItemKey::settings(), cx);
-                                                })),
-                                            )
-                                            .child(
-                                                SidebarMenuItem::new(es_fluent::localize(
-                                                    "tab_kind_about",
-                                                    None,
-                                                ))
-                                                .icon(Icon::new(IconName::Info).small())
-                                                .active(active_key == Some(ItemKey::about()))
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.open_item(ItemKey::about(), cx);
-                                                })),
-                                            )
-                                            .child(
-                                                SidebarMenuItem::new(es_fluent::localize(
-                                                    "tab_kind_layout_debug",
-                                                    None,
-                                                ))
-                                                .icon(Icon::new(IconName::Settings2).small())
-                                                .active(active_key == Some(ItemKey::layout_debug()))
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.open_item(ItemKey::layout_debug(), cx);
-                                                })),
-                                            ),
+                                        v_flex()
+                                            .items_center()
+                                            .gap_px()
+                                            .child(Icon::new(IconName::Globe).size_4())
+                                            .child(div().text_xs().child("Environments")),
+                                    ),
+                            )
+                            .child(div().h(px(8.)))
+                            .child(
+                                Button::new("rail-settings")
+                                    .ghost()
+                                    .selected(active_key == Some(ItemKey::settings()))
+                                    .w_full()
+                                    .h(px(52.))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.open_item(ItemKey::settings(), cx);
+                                    }))
+                                    .child(
+                                        v_flex()
+                                            .items_center()
+                                            .gap_px()
+                                            .child(Icon::new(IconName::Settings2).size_4())
+                                            .child(div().text_xs().child("Settings")),
+                                    ),
+                            )
+                            .child(
+                                Button::new("rail-about")
+                                    .ghost()
+                                    .selected(active_key == Some(ItemKey::about()))
+                                    .w_full()
+                                    .h(px(52.))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.open_item(ItemKey::about(), cx);
+                                    }))
+                                    .child(
+                                        v_flex()
+                                            .items_center()
+                                            .gap_px()
+                                            .child(Icon::new(IconName::Info).size_4())
+                                            .child(div().text_xs().child("About")),
+                                    ),
+                            )
+                            .child(
+                                Button::new("rail-layout-debug")
+                                    .ghost()
+                                    .selected(active_key == Some(ItemKey::layout_debug()))
+                                    .w_full()
+                                    .h(px(52.))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.open_item(ItemKey::layout_debug(), cx);
+                                    }))
+                                    .child(
+                                        v_flex()
+                                            .items_center()
+                                            .gap_px()
+                                            .child(Icon::new(IconName::Settings2).size_4())
+                                            .child(div().text_xs().child("Layout")),
                                     ),
                             ),
                     ),
