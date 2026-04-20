@@ -14,7 +14,9 @@ Build a desktop API client with Postman-like workflow parity for the core local 
 - Requests: REST, GraphQL, WebSocket, gRPC
 - One-tab-per-item editing with one tab system that can render workspace, collection, folder, environment, or request items
 - Global history and per-request history
-- SQLite-backed persistence
+- Collection persistence types:
+  - managed collections backed by SQLite
+  - linked local-folder collections intended for Git workflows
 - Drag and drop for tree items
 - Local folder integration
 - Git integration
@@ -50,6 +52,12 @@ These are not optional if the app is meant to scale:
 - Keep `WorkspaceSession`, `TabManager`, visible request editors, and active response/session views as per-window entities
 - Keep long-lived catalogs as normalized value stores keyed by IDs, not `Vec<Entity<_>>`
 - Use SQLite in WAL mode for structured data and blob files for large payloads
+- Collections are storage-typed:
+  - `Managed` collections use SQLite as the local source of truth and are the future cloud-sync-capable type
+  - `Linked` collections use a local folder as the source of truth and are the type intended for Git-based workflows
+- UI/session/request lifecycle code must target a collection-storage boundary, not assume every collection descendant lives in SQLite
+- For `Linked` collections, branch checkout/pull/fetch side effects must be modeled as filesystem mutations flowing through watcher/reconcile logic, not as a separate UI-only reload path
+- Git capabilities must sit behind a dedicated adapter/service boundary so clone/status/commit/push/pull/checkout can evolve independently of the collection/tree UI
 - Use OS credential storage for secrets; do not persist raw tokens/passwords in SQLite or blobs
 - Use explicit operation IDs, protocol abort handles, and terminal lifecycle states for every request/stream
 - Use bounded queues, ring buffers, batching, and virtualization for large/streaming surfaces
@@ -154,6 +162,11 @@ Rules:
   - top-level container for collections, environments, history views, local/git bindings, and UI layout preferences
 - `Collection`
   - named request tree owned by one workspace
+  - has a storage type:
+    - `Managed`: SQLite-backed in the current release, future cloud-sync-capable
+    - `Linked`: file-backed local folder intended for Git workflows
+  - tab/tree/editor code should treat the collection as the ownership boundary and resolve the correct storage adapter underneath
+  - for `Linked` collections, the filesystem is the authoritative state and in-memory UI state must reconcile to disk rather than vice versa
 - `Folder`
   - nested tree container inside a collection
 - `Request`
@@ -508,12 +521,19 @@ Exit criteria:
 - New-request shortcut requires a selected collection and shows a toast when none is selected
 - All new user-facing copy and error messages are Fluent-based
 
-## Phase 4 (P1): Collections, Folders, Environments, and Drag/Drop
+## Phase 4 (P1): Collection Types, Folders, Environments, and Drag/Drop
 
 Goal: complete the core Postman information architecture.
 
+Detailed execution document: [docs/phase-4.md](docs/phase-4.md)
+
 Scope:
 
+- Collection types:
+  - `Managed` SQLite-backed collections
+  - `Linked` local-folder-backed collections intended for Git workflows
+- Collection storage boundary so UI/session/request flows do not assume SQLite-only collections
+- Linked collection file layout with stable IDs stored in file metadata rather than inferred from paths
 - CRUD for workspaces, collections, folders, requests, and environments
 - Tree rendering with virtualization-ready design
 - Tree drag/drop:
@@ -531,6 +551,8 @@ Scope:
 
 Exit criteria:
 
+- Both collection types can be created and opened without leaking storage-specific logic into the UI shell
+- Linked collection rename/move flows preserve stable logical IDs across filesystem path changes
 - Tree mutations are transactional and persisted
 - Drag/drop cannot leave the tree in an inconsistent state
 - Variable resolution order is deterministic and test-covered
@@ -568,17 +590,18 @@ Exit criteria:
 - Batch-notify behavior exists for stream rendering
 - Protocol-specific editors reuse the shared tab, lifecycle, persistence, and history contracts
 
-## Phase 6 (P1): Local Folder and Git Integration
+## Phase 6 (P1): Linked Collection File Watching and Git UX
 
-Goal: make the app usable as a local-first API workspace, not only an internal DB-backed editor.
+Goal: harden linked collections into a real local-folder and Git workflow after the storage type boundary already exists.
 
 Scope:
 
-- Local folder binding per workspace or collection
-- File format for exported/linked collections, requests, environments, and metadata
-- File watcher that reconciles disk changes into the warm store
+- File watcher for linked collections
+- Productionization of the linked collection file format for collections, requests, environments, and metadata
+- Reconcile external disk changes into the warm store
+- Branch switches, pulls, and other Git operations refresh linked collections through the same watcher/reconcile pipeline rather than a separate bespoke reload path
 - Conflict policy between DB state and filesystem state using revision and last-seen sync metadata
-- Git binding on top of local folder mode:
+- Git binding on top of linked collections:
   - repo discovery
   - branch/status display
   - changed file indicators
@@ -588,7 +611,7 @@ Scope:
 
 Exit criteria:
 
-- A workspace can be linked to a real folder and survive restart/reload cycles
+- A linked collection can survive restart/reload cycles and external disk edits
 - Disk edits can round-trip into the app without corrupting entity state
 - Git status is visible and tied to linked files, not a detached side panel with no model ownership
 - Sync/conflict rules are explicit and tested
@@ -639,6 +662,8 @@ These apply in every phase:
 - No new custom UI component before checking `gpui-component` first
 - No raw user-facing strings; all UI copy must be Fluent-based i18n
 - No feature that bypasses metrics and structured error reporting
+- No linked-collection implementation that infers identity from paths alone; stable item IDs must survive rename, move, checkout, and merge
+- No Git UI that reaches directly into shell commands or collection state without going through a Git adapter/service boundary
 
 ## 7. Required Validation Gates
 
@@ -654,8 +679,8 @@ Every phase should ship with the relevant tests, not as a later cleanup item.
   - restart recovery
   - send/cancel race
   - delete-item closes tab behavior across windows
-  - linked-folder sync conflicts
-  - git-linked workspace mutation flows
+  - linked-collection sync conflicts
+  - git-linked collection mutation flows
 - Performance tests:
   - large collections
   - large history lists
@@ -675,12 +700,13 @@ Every phase should ship with the relevant tests, not as a later cleanup item.
 3. Build workspace/session/tab system
 4. Build REST editor and response lifecycle
 5. Build response presentation and request editor usability
-6. Build tree CRUD + drag/drop + environments
+6. Build collection types + tree CRUD + drag/drop + environments
 7. Add history surfaces
 8. Add GraphQL, WS, and gRPC
-9. Add local folder mode
-10. Add Git integration
-11. Run parity and hardening pass
+9. Add linked-collection file watching and reconcile flows
+10. Add branch/status/diff wiring on top of the Git adapter
+11. Add Git integration
+12. Run parity and hardening pass
 
 ## 9. Deliberate Scope Boundary
 
