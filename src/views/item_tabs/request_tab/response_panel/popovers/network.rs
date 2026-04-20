@@ -17,7 +17,8 @@ pub(super) fn render_network_popover(
         view,
         "response-network-popover",
         token_text(token, cx.theme().muted_foreground, false),
-        ResponseMetaPopover::Network,
+        ResponseMetaHover::Network,
+        view.network_meta_focus.clone(),
         Anchor::TopRight,
         move |cx| {
             let muted = cx.theme().muted_foreground;

@@ -331,6 +331,7 @@ request_tab_status_desc_302 = 302 Found: the resource is temporarily available a
 request_tab_status_desc_303 = 303 See Other: retrieve the resource using GET at another URL.
 request_tab_status_desc_304 = 304 Not Modified: the cached representation is still valid.
 request_tab_status_desc_305 = 305 Use Proxy: access requires a proxy (deprecated status).
+request_tab_status_desc_306 = 306 (Unused): this status code is reserved and no longer used.
 request_tab_status_desc_307 = 307 Temporary Redirect: repeat the same request at a temporary URL.
 request_tab_status_desc_308 = 308 Permanent Redirect: repeat the same request at a permanent URL.
 request_tab_status_desc_400 = 400 Bad Request: the server could not understand this request.

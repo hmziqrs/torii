@@ -33,7 +33,8 @@ pub(super) fn render_status_popover(
             .bg(status_color.opacity(0.12))
             .rounded(px(6.))
             .child(code.to_string()),
-        ResponseMetaPopover::Status,
+        ResponseMetaHover::Status,
+        view.status_meta_focus.clone(),
         Anchor::TopLeft,
         move |cx| {
             let title = es_fluent::localize("request_tab_response_meta_status", None).to_string();
@@ -84,6 +85,7 @@ fn status_description_key(code: u16) -> &'static str {
         303 => "request_tab_status_desc_303",
         304 => "request_tab_status_desc_304",
         305 => "request_tab_status_desc_305",
+        306 => "request_tab_status_desc_306",
         307 => "request_tab_status_desc_307",
         308 => "request_tab_status_desc_308",
         400 => "request_tab_status_desc_400",
@@ -132,5 +134,41 @@ fn status_description_key(code: u16) -> &'static str {
         400..=499 => "request_tab_status_desc_4xx_generic",
         500..=599 => "request_tab_status_desc_5xx_generic",
         _ => "request_tab_status_desc_unknown",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::status_description_key;
+
+    #[test]
+    fn uses_exact_known_status_descriptions() {
+        assert_eq!(status_description_key(200), "request_tab_status_desc_200");
+        assert_eq!(status_description_key(404), "request_tab_status_desc_404");
+        assert_eq!(status_description_key(511), "request_tab_status_desc_511");
+    }
+
+    #[test]
+    fn falls_back_to_class_level_descriptions_for_unknown_statuses() {
+        assert_eq!(
+            status_description_key(299),
+            "request_tab_status_desc_2xx_generic"
+        );
+        assert_eq!(
+            status_description_key(399),
+            "request_tab_status_desc_3xx_generic"
+        );
+        assert_eq!(
+            status_description_key(499),
+            "request_tab_status_desc_4xx_generic"
+        );
+        assert_eq!(
+            status_description_key(599),
+            "request_tab_status_desc_5xx_generic"
+        );
+        assert_eq!(
+            status_description_key(700),
+            "request_tab_status_desc_unknown"
+        );
     }
 }

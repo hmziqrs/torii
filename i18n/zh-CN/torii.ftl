@@ -331,6 +331,7 @@ request_tab_status_desc_302 = 302 Found：资源暂时位于其他地址。
 request_tab_status_desc_303 = 303 See Other：请使用 GET 到另一个地址获取结果。
 request_tab_status_desc_304 = 304 Not Modified：缓存资源仍有效，无需重新下载。
 request_tab_status_desc_305 = 305 Use Proxy：访问该资源需要代理（已废弃）。
+request_tab_status_desc_306 = 306（未使用）：该状态码已保留且不再使用。
 request_tab_status_desc_307 = 307 Temporary Redirect：请在临时地址重复同一请求。
 request_tab_status_desc_308 = 308 Permanent Redirect：请在永久地址重复同一请求。
 request_tab_status_desc_400 = 400 Bad Request：服务器无法理解该请求。

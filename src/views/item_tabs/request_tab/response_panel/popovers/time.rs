@@ -23,84 +23,68 @@ pub(super) fn render_time_popover(
         view,
         "response-time-popover",
         token_text(token, cx.theme().muted_foreground, false),
-        ResponseMetaPopover::Time,
+        ResponseMetaHover::Time,
+        view.time_meta_focus.clone(),
         Anchor::TopLeft,
         move |cx| {
             let muted = cx.theme().muted_foreground.opacity(0.8);
-            let total_str = total_ms
-                .map(|ms| format!("{:.2} ms", ms as f64))
-                .unwrap_or_else(|| "—".to_string());
+            let total_str = format_ms(total_ms);
 
             let waiting_ms = phase.ttfb_ms.or(ttfb);
-            let download_fallback = match (total_ms, waiting_ms) {
-                (Some(total), Some(waiting)) => Some(total.saturating_sub(waiting)),
-                _ => None,
-            };
-            let prepare_ms = phase.prepare_ms.or(Some(0));
-            let dns_ms = phase.dns_ms.or(Some(0));
-            let connect_ms = phase.connect_ms.or(Some(0));
-            let download_ms = phase.download_ms.or(download_fallback).or(Some(0));
-            let process_ms = phase.process_ms.or(Some(0));
-
-            let mut rows = vec![
+            let rows = [
                 (
                     es_fluent::localize("request_tab_response_time_phase_prepare", None)
                         .to_string(),
-                    prepare_ms,
-                    cx.theme().muted_foreground.opacity(0.22),
-                    false,
+                    phase.prepare_ms,
+                    cx.theme().muted_foreground.opacity(0.24),
                 ),
                 (
                     es_fluent::localize("request_tab_response_time_phase_dns", None).to_string(),
-                    dns_ms,
+                    phase.dns_ms,
                     cx.theme().warning,
-                    false,
                 ),
                 (
                     es_fluent::localize("request_tab_response_time_phase_connect", None)
                         .to_string(),
-                    connect_ms,
-                    gpui::hsla(214. / 360., 0.65, 0.56, 1.0),
-                    false,
+                    phase.connect_ms,
+                    cx.theme().primary,
                 ),
                 (
                     es_fluent::localize("request_tab_response_time_phase_ttfb", None).to_string(),
-                    waiting_ms.or(Some(0)),
+                    waiting_ms,
                     gpui::hsla(0., 0.8, 0.55, 1.0),
-                    true,
                 ),
                 (
                     es_fluent::localize("request_tab_response_time_phase_download", None)
                         .to_string(),
-                    download_ms,
+                    phase.download_ms,
                     cx.theme().success,
-                    false,
                 ),
                 (
                     es_fluent::localize("request_tab_response_time_phase_process", None)
                         .to_string(),
-                    process_ms,
-                    cx.theme().muted_foreground.opacity(0.22),
-                    false,
+                    phase.process_ms,
+                    cx.theme().muted_foreground.opacity(0.24),
                 ),
             ];
 
-            let total_ms = rows
+            let scale_total = rows
                 .iter()
                 .filter_map(|row| row.1)
                 .sum::<u64>()
+                .max(total_ms.unwrap_or(0))
                 .max(1) as f32;
             let mut offset_ms = 0f32;
             let mut layout = Vec::with_capacity(rows.len());
-            for row in rows.drain(..) {
+            for row in rows.iter() {
                 let ms = row.1.unwrap_or(0) as f32;
-                let left = (offset_ms / total_ms) * WATERFALL_WIDTH;
+                let left = (offset_ms / scale_total) * WATERFALL_WIDTH;
                 let width = if ms > 0.0 {
-                    ((ms / total_ms) * WATERFALL_WIDTH).max(2.0)
+                    ((ms / scale_total) * WATERFALL_WIDTH).max(2.0)
                 } else {
                     0.0
                 };
-                layout.push((row, left, width));
+                layout.push(((row.0.clone(), row.1, row.2), left, width));
                 offset_ms += ms;
             }
 
@@ -112,15 +96,9 @@ pub(super) fn render_time_popover(
                     h_flex()
                         .items_center()
                         .justify_between()
-                        .child(
-                            div()
-                                .text_sm()
-                                .font_weight(FontWeight::BOLD)
-                                .child(es_fluent::localize(
-                                    "request_tab_response_time_popover_title",
-                                    None,
-                                )),
-                        )
+                        .child(div().text_sm().font_weight(FontWeight::BOLD).child(
+                            es_fluent::localize("request_tab_response_time_popover_title", None),
+                        ))
                         .child(
                             div()
                                 .text_sm()
@@ -171,13 +149,7 @@ pub(super) fn render_time_popover(
                                                 .top(px(4.))
                                                 .h(px(16.))
                                                 .w(px(width))
-                                                .when(row.3, |el| {
-                                                    el.border_1()
-                                                        .border_color(row.2)
-                                                        .border_dashed()
-                                                        .bg(gpui::transparent_black())
-                                                })
-                                                .when(!row.3, |el| el.bg(row.2)),
+                                                .bg(row.2),
                                         ),
                                 )
                                 .child(
@@ -190,14 +162,6 @@ pub(super) fn render_time_popover(
                                         .child(ms_text),
                                 )
                         })),
-                )
-                .child(
-                    h_flex()
-                        .justify_between()
-                        .text_xs()
-                        .text_color(muted.opacity(0.55))
-                        .child(div().child("Start"))
-                        .child(div().child("End")),
                 )
                 .into_any_element()
         },

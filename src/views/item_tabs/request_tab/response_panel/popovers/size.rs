@@ -20,7 +20,8 @@ pub(super) fn render_size_popover(
         view,
         "response-size-popover",
         token_text(token, cx.theme().muted_foreground, false),
-        ResponseMetaPopover::Size,
+        ResponseMetaHover::Size,
+        view.size_meta_focus.clone(),
         Anchor::TopLeft,
         move |cx| {
             let muted = cx.theme().muted_foreground;

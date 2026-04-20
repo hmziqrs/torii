@@ -1,4 +1,5 @@
 use super::*;
+use std::time::Duration;
 
 impl RequestTabView {
     pub(super) fn set_active_section(
@@ -24,15 +25,32 @@ impl RequestTabView {
         }
     }
 
-    pub(super) fn set_active_meta_popover(
-        &mut self,
-        popover: Option<ResponseMetaPopover>,
-        cx: &mut Context<Self>,
-    ) {
-        if self.active_meta_popover != popover {
-            self.active_meta_popover = popover;
+    pub(super) fn set_meta_hover(&mut self, hover: ResponseMetaHover, cx: &mut Context<Self>) {
+        if self.meta_hover != hover {
+            self.meta_hover = hover;
             cx.notify();
         }
+    }
+
+    pub(super) fn meta_hover_enter(&mut self, hover: ResponseMetaHover, cx: &mut Context<Self>) {
+        self.meta_hover_close_task = None;
+        self.set_meta_hover(hover, cx);
+    }
+
+    pub(super) fn meta_hover_leave(&mut self, hover: ResponseMetaHover, cx: &mut Context<Self>) {
+        self.meta_hover_close_task = None;
+        self.meta_hover_close_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(120))
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.meta_hover == hover {
+                    this.meta_hover = ResponseMetaHover::None;
+                    cx.notify();
+                }
+                this.meta_hover_close_task = None;
+            });
+        }));
     }
 
     pub(super) fn open_settings_dialog(&self, window: &mut Window, cx: &mut Context<Self>) {

@@ -241,11 +241,7 @@ impl HttpTransport for ReqwestTransport {
         let http_version = Some(response.version());
         let remote_addr = response.remote_addr();
         let response_headers_size = Some(header_map_size_bytes(&resp_headers));
-        let content_length = response
-            .headers()
-            .get(http::header::CONTENT_LENGTH)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.parse::<u64>().ok());
+        let content_length = parse_content_length(&resp_headers);
         let peer_cert_der = response
             .extensions()
             .get::<reqwest::tls::TlsInfo>()
@@ -846,6 +842,26 @@ fn header_map_size_bytes(headers: &http::HeaderMap) -> u64 {
         .sum()
 }
 
+fn parse_content_length(headers: &http::HeaderMap) -> Option<u64> {
+    let is_chunked = headers
+        .get(http::header::TRANSFER_ENCODING)
+        .and_then(|v| v.to_str().ok())
+        .map(|value| {
+            value
+                .split(',')
+                .any(|part| part.trim().eq_ignore_ascii_case("chunked"))
+        })
+        .unwrap_or(false);
+    if is_chunked {
+        return None;
+    }
+
+    headers
+        .get(http::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok())
+}
+
 fn http_version_to_string(version: http::Version) -> String {
     match version {
         http::Version::HTTP_09 => "HTTP/0.9",
@@ -887,4 +903,67 @@ fn parse_tls_summary(peer_cert_der: Option<&[u8]>) -> Option<TlsSummary> {
 
 fn now_unix_ms() -> i64 {
     (time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000) as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_content_length, parse_tls_summary};
+    use base64::Engine as _;
+
+    const CERT_WITH_CN_DER_B64: &str = "MIICqDCCAZACCQC+zNamvRmnrDANBgkqhkiG9w0BAQsFADAWMRQwEgYDVQQDDAtleGFtcGxlLmNvbTAeFw0yNjA0MTkyMTA0NTdaFw0zNjA0MTYyMTA0NTdaMBYxFDASBgNVBAMMC2V4YW1wbGUuY29tMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAn0XE3Gmpd3EJlmiza72fClQqEabt0IEW8VSPN4sKvGdHcckLX1W8nqy11M8cCc5PiVW6OgsZ1MYf8T0J7Hhu8AHBBubqRmecOahJI7NO9f/HiYSrF2pqGezwmvJFugNZmcBIty1qPN9HRewIzYVmahcLM+/FiTanD43KVYBt8+ABydlGr+Psp6IzbFcLsGRLnk86Iq3VddypXwL1ty4jjc+lzkPV+P1KsxM7Q8Vdebs0yaeUQFoW7o8GKuRhnYYs18tyJF96sSpEpfZIkffN14nT2ML7xLhl81bp3MXpQKl49u7J/Sg89xa9mM3t5hHtU2VdRv3Jjw8VXLr11KLDWwIDAQABMA0GCSqGSIb3DQEBCwUAA4IBAQAQDPh0tRj7Honl3JfQkDUUswaLzkkc/76zvempdE8Jk0H/iUwtXucoBPoQvFskXTnjIkvVf5dEGl24Y024qOlNkjroeMl4QCM9zD+29D8gx9Iceb+/3XtKis3aLggTd65uqxnrxuGkJxycLrEmMhM0HBGvp5p18JbDXQZKpkLlePwOCPsIqsO7D+3q1/YoLdMEmqj4OOGiMPagn6TEYJvtc9LhNOAt8anpklUwiCLcle59f532M5rbxeUxZo0yTjg0fOyri2tWPT5SBMliidUsMZgwvPhGdfMabVMufBESrCh/GGV1dcyfs/egcH2AeUSMBgvNz1GmxuszH9Ox4tBy";
+    const CERT_NO_SUBJECT_CN_DER_B64: &str = "MIICpDCCAYwCCQDKL604yUhsqzANBgkqhkiG9w0BAQsFADAUMRIwEAYDVQQKDAlObyBDTiBPcmcwHhcNMjYwNDE5MjEwNDU4WhcNMzYwNDE2MjEwNDU4WjAUMRIwEAYDVQQKDAlObyBDTiBPcmcwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQCg77X51JXFX3Utf8MeyHQk4rxVqz5Nw44JlV6PWLyGj0h3PApp36HYSPNq9Vy1Trape5jUFXu6qlP1GpUiE+NtNm3RXz66/KYXvyDykm9Um5tvYW9xrSc21TKBepnXgkd+gDdSysOYMugi3mYezn0tpZZEM+TXuhRJ+WeJSt02eU8NPHz7613aKiRq522vjeXeyliKD3X+h1CxfLRGKRrYJCSSD3TefwFUOk9d/qgEb2PitLrcwuY/1TAUIZS7+BOM+hV4R8zoo6xJ5Ma1g1iQGp9CmS29Xk4bfgr4uQI8SZuqNlEdjCOgUvwt0L2PxO+rjL7dXFY1Y4c18zdkJaaJAgMBAAEwDQYJKoZIhvcNAQELBQADggEBAJUHFEm87sNgs3QG4Ve+1B5egYr5KLb0musrgE5BymVlcX7Ns3nQ8vO2yOQsSU14Cl8mSjXTEDwYUlha4CICMqIbfsIqLD0rh9dvFXdHsRkIQZ03nGOwXJL9ae8R3ypoj0xGIx+LAIpEkcURmjpBvumeo2psSJJpoLCHhpAtZRUwPJBqH/WzY/8wBRL3OTloxhmQimaXvdmmW8vkFHxAEhEuwfYvKVvg5qwunhAYpPxSN3uOXaS5YjHHUwMjssuFXbFQhnbRM7Jvqxly/bldHYxaYNdc0hfSA0w4BtZdM+toX/JjDKh/7p7EbWTeSCXWIwh4RrbgqPmaL3VbtIr5IG4=";
+
+    #[test]
+    fn content_length_parser_handles_chunked_and_fixed_length() {
+        let mut fixed = http::HeaderMap::new();
+        fixed.insert(
+            http::header::CONTENT_LENGTH,
+            http::HeaderValue::from_static("512"),
+        );
+        assert_eq!(parse_content_length(&fixed), Some(512));
+
+        let mut chunked = http::HeaderMap::new();
+        chunked.insert(
+            http::header::TRANSFER_ENCODING,
+            http::HeaderValue::from_static("chunked"),
+        );
+        chunked.insert(
+            http::header::CONTENT_LENGTH,
+            http::HeaderValue::from_static("1024"),
+        );
+        assert_eq!(parse_content_length(&chunked), None);
+
+        let mut invalid = http::HeaderMap::new();
+        invalid.insert(
+            http::header::CONTENT_LENGTH,
+            http::HeaderValue::from_static("not-a-number"),
+        );
+        assert_eq!(parse_content_length(&invalid), None);
+    }
+
+    #[test]
+    fn tls_summary_parsing_happy_path_and_future_validity() {
+        let der = base64::engine::general_purpose::STANDARD
+            .decode(CERT_WITH_CN_DER_B64)
+            .expect("decode der");
+        let tls = parse_tls_summary(Some(&der)).expect("parse tls summary");
+
+        assert_eq!(tls.certificate_cn.as_deref(), Some("example.com"));
+        assert_eq!(tls.issuer_cn.as_deref(), Some("example.com"));
+        assert!(tls.valid_until.expect("valid_until") > 0);
+        assert!(tls.valid_until.expect("valid_until") > super::now_unix_ms());
+    }
+
+    #[test]
+    fn tls_summary_parsing_handles_malformed_der_and_missing_cn() {
+        assert!(parse_tls_summary(Some(&[0x01, 0x02, 0x03])).is_none());
+
+        let der = base64::engine::general_purpose::STANDARD
+            .decode(CERT_NO_SUBJECT_CN_DER_B64)
+            .expect("decode der");
+        let tls = parse_tls_summary(Some(&der)).expect("parse tls summary");
+
+        assert!(tls.certificate_cn.is_none());
+        assert!(tls.valid_until.is_some());
+    }
 }

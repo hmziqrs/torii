@@ -20,7 +20,8 @@ pub(super) enum ResponseTab {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ResponseMetaPopover {
+pub(super) enum ResponseMetaHover {
+    None,
     Status,
     Time,
     Size,
