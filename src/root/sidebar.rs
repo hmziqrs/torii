@@ -6,7 +6,7 @@ use crate::{
 use gpui::{div, prelude::*, px, relative};
 use gpui_component::{
     ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _, h_flex,
-    button::{Button, ButtonVariants as _},
+    button::{Button, ButtonRounded, ButtonVariants as _},
     menu::PopupMenuItem,
     scroll::ScrollableElement as _,
     sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem},
@@ -29,6 +29,8 @@ impl AppRoot {
         };
         let weak_root = cx.entity().downgrade();
         let is_collections = sidebar_section == SidebarSection::Collections;
+        let collections_selected = is_collections;
+        let environments_selected = !is_collections;
 
         h_flex()
             .size_full()
@@ -51,7 +53,8 @@ impl AppRoot {
                             .child(
                                 Button::new("rail-collections")
                                     .ghost()
-                                    .selected(is_collections)
+                                    .selected(collections_selected)
+                                    .rounded(ButtonRounded::None)
                                     .xsmall()
                                     .compact()
                                     .w_full()
@@ -80,7 +83,8 @@ impl AppRoot {
                             .child(
                                 Button::new("rail-environments")
                                     .ghost()
-                                    .selected(!is_collections)
+                                    .selected(environments_selected)
+                                    .rounded(ButtonRounded::None)
                                     .xsmall()
                                     .compact()
                                     .w_full()
@@ -103,82 +107,6 @@ impl AppRoot {
                                                     .text_center()
                                                     .line_height(relative(1.))
                                                     .child("Env"),
-                                            ),
-                                    ),
-                            )
-                            .child(div().h(px(4.)))
-                            .child(
-                                Button::new("rail-settings")
-                                    .ghost()
-                                    .selected(active_key == Some(ItemKey::settings()))
-                                    .xsmall()
-                                    .compact()
-                                    .w_full()
-                                    .h(px(56.))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.open_item(ItemKey::settings(), cx);
-                                    }))
-                                    .child(
-                                        v_flex()
-                                            .items_center()
-                                            .gap_0()
-                                            .child(Icon::new(IconName::Settings2).size_6())
-                                            .child(
-                                                div()
-                                                    .text_size(px(8.))
-                                                    .text_center()
-                                                    .line_height(relative(1.))
-                                                    .child("Prefs"),
-                                            ),
-                                    ),
-                            )
-                            .child(
-                                Button::new("rail-about")
-                                    .ghost()
-                                    .selected(active_key == Some(ItemKey::about()))
-                                    .xsmall()
-                                    .compact()
-                                    .w_full()
-                                    .h(px(56.))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.open_item(ItemKey::about(), cx);
-                                    }))
-                                    .child(
-                                        v_flex()
-                                            .items_center()
-                                            .gap_0()
-                                            .child(Icon::new(IconName::Info).size_6())
-                                            .child(
-                                                div()
-                                                    .text_size(px(8.))
-                                                    .text_center()
-                                                    .line_height(relative(1.))
-                                                    .child("About"),
-                                            ),
-                                    ),
-                            )
-                            .child(
-                                Button::new("rail-layout-debug")
-                                    .ghost()
-                                    .selected(active_key == Some(ItemKey::layout_debug()))
-                                    .xsmall()
-                                    .compact()
-                                    .w_full()
-                                    .h(px(56.))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.open_item(ItemKey::layout_debug(), cx);
-                                    }))
-                                    .child(
-                                        v_flex()
-                                            .items_center()
-                                            .gap_0()
-                                            .child(Icon::new(IconName::Settings2).size_6())
-                                            .child(
-                                                div()
-                                                    .text_size(px(8.))
-                                                    .text_center()
-                                                    .line_height(relative(1.))
-                                                    .child("Debug"),
                                             ),
                                     ),
                             ),
