@@ -28,7 +28,7 @@ pub(super) fn render_meta_bar(
         .child(time::render_time_popover(view, response, cx))
         .child(dot(cx))
         .child(size::render_size_popover(view, response, cx))
-        .child(div().flex_1())
+        .child(dot(cx))
         .child(
             div()
                 .flex_none()
