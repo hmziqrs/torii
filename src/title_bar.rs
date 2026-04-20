@@ -12,7 +12,7 @@ use gpui_component::{
     menu::{AppMenuBar, DropdownMenu as _},
 };
 
-use crate::app::{SelectFont, SelectRadius};
+use crate::app::{About, OpenLayoutDebug, OpenSettings, SelectFont, SelectRadius};
 use crate::menus;
 
 pub struct AppTitleBar {
@@ -180,6 +180,10 @@ impl Render for SettingsDropdown {
                                 radius == 0,
                                 Box::new(SelectRadius(0)),
                             )
+                            .separator()
+                            .menu(es_fluent::localize("tab_kind_settings", None), Box::new(OpenSettings))
+                            .menu(es_fluent::localize("tab_kind_layout_debug", None), Box::new(OpenLayoutDebug))
+                            .menu(es_fluent::localize("tab_kind_about", None), Box::new(About))
                     })
                     .anchor(Corner::TopRight),
             )

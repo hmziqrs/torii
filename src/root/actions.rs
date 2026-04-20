@@ -1,6 +1,9 @@
 use super::AppRoot;
 use crate::{
-    app::{About, CloseTab, NewRequest, NextTab, PrevTab, ToggleSidebar},
+    app::{
+        About, CloseTab, NewRequest, NextTab, OpenLayoutDebug, OpenSettings, PrevTab,
+        ToggleSidebar,
+    },
     domain::item_id::ItemId,
     session::item_key::ItemKey,
 };
@@ -10,6 +13,24 @@ use gpui_component::WindowExt as _;
 impl AppRoot {
     pub(super) fn on_about_action(&mut self, _: &About, _: &mut Window, cx: &mut Context<Self>) {
         self.open_item(ItemKey::about(), cx);
+    }
+
+    pub(super) fn on_open_settings_action(
+        &mut self,
+        _: &OpenSettings,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_item(ItemKey::settings(), cx);
+    }
+
+    pub(super) fn on_open_layout_debug_action(
+        &mut self,
+        _: &OpenLayoutDebug,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_item(ItemKey::layout_debug(), cx);
     }
 
     pub(super) fn on_close_tab_action(

@@ -452,6 +452,8 @@ impl Render for AppRoot {
         v_flex()
             .size_full()
             .on_action(cx.listener(Self::on_about_action))
+            .on_action(cx.listener(Self::on_open_settings_action))
+            .on_action(cx.listener(Self::on_open_layout_debug_action))
             .on_action(cx.listener(Self::on_close_tab_action))
             .on_action(cx.listener(Self::on_new_request_action))
             .on_action(cx.listener(Self::on_next_tab_action))

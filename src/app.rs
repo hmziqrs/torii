@@ -21,6 +21,8 @@ actions!(
     app,
     [
         About,
+        OpenSettings,
+        OpenLayoutDebug,
         Quit,
         ToggleSearch,
         CloseTab,
