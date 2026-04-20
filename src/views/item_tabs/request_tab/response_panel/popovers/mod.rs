@@ -29,7 +29,11 @@ pub(super) fn render_meta_bar(
         .child(dot(cx))
         .child(size::render_size_popover(view, response, cx))
         .child(div().flex_1())
-        .child(network::render_network_popover(view, response, cx))
+        .child(
+            div()
+                .flex_none()
+                .child(network::render_network_popover(view, response, cx)),
+        )
 }
 
 pub(super) fn hover_popover_trigger(
@@ -39,18 +43,21 @@ pub(super) fn hover_popover_trigger(
     content: impl Fn(&App) -> AnyElement + 'static,
     _cx: &mut Context<RequestTabView>,
 ) -> AnyElement {
+    let trigger_id = format!("{id}-trigger");
     HoverCard::new(id)
         .anchor(anchor)
         .open_delay(Duration::from_millis(80))
         .close_delay(Duration::from_millis(160))
         .appearance(true)
-        .trigger(token.id(id))
+        .trigger(div().flex_none().child(token.id(trigger_id)))
         .content(move |_, _, popover_cx| content(popover_cx))
         .into_any_element()
 }
 
 pub(super) fn token_text(label: impl Into<String>, color: gpui::Hsla, bold: bool) -> gpui::Div {
     div()
+        .flex_none()
+        .whitespace_nowrap()
         .text_xs()
         .when(bold, |el| el.font_weight(FontWeight::BOLD))
         .text_color(color)
