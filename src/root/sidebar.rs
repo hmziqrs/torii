@@ -3,9 +3,9 @@ use crate::{
     services::workspace_tree::{CollectionTree, FolderTree, TreeItem},
     session::{item_key::ItemKey, window_layout::SidebarSection},
 };
-use gpui::prelude::*;
+use gpui::{div, prelude::*, px};
 use gpui_component::{
-    Icon, IconName, Sizable as _,
+    ActiveTheme as _, Icon, IconName, Sizable as _, h_flex,
     menu::PopupMenuItem,
     sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem},
 };
@@ -16,154 +16,225 @@ impl AppRoot {
         active_key: Option<ItemKey>,
         cx: &mut gpui::Context<Self>,
     ) -> impl gpui::IntoElement {
-        let selected_workspace_id = self.session.read(cx).selected_workspace_id;
+        let (selected_workspace_id, sidebar_section, sidebar_collapsed) = {
+            let session = self.session.read(cx);
+            (
+                session.selected_workspace_id,
+                session.window_layout.sidebar_section,
+                session.window_layout.sidebar_collapsed,
+            )
+        };
         let weak_root = cx.entity().downgrade();
+        let is_collections = sidebar_section == SidebarSection::Collections;
 
-        Sidebar::new("app-sidebar")
-            .w(gpui::relative(1.))
-            .border_0()
+        h_flex()
+            .size_full()
+            .overflow_hidden()
             .child(
-                SidebarGroup::new(es_fluent::localize("sidebar_workspaces", None)).child(
-                    SidebarMenu::new().children(self.catalog.workspaces.iter().map(|workspace| {
-                        let item_key = ItemKey::workspace(workspace.id);
-                        let weak_root = weak_root.clone();
-                        SidebarMenuItem::new(workspace.name.clone())
-                            .icon(Icon::new(IconName::Inbox).small())
-                            .active(
-                                active_key == Some(item_key)
-                                    || selected_workspace_id == Some(workspace.id),
-                            )
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.open_item(item_key, cx);
-                            }))
-                            .context_menu(move |menu, _, _| {
-                                let weak_root = weak_root.clone();
-                                menu.item(
-                                    PopupMenuItem::new(es_fluent::localize("menu_delete", None))
-                                        .icon(Icon::new(IconName::Close))
-                                        .on_click(move |_, window, cx| {
-                                            let _ = weak_root.update(cx, |this, cx| {
-                                                this.delete_item(item_key, window, cx);
-                                            });
-                                        }),
-                                )
-                            })
-                    })),
-                ),
-            )
-            .when_some(self.catalog.selected_workspace(), |sidebar, workspace| {
-                let section = self.session.read(cx).window_layout.sidebar_section;
-                let is_collections = section == SidebarSection::Collections;
-                sidebar
-                    // Section switcher row — two SidebarMenuItems acting as tab buttons
+                div()
+                    .w(px(140.))
+                    .h_full()
+                    .flex_shrink_0()
+                    .overflow_hidden()
+                    .border_r_1()
+                    .border_color(cx.theme().sidebar_border)
                     .child(
-                        SidebarGroup::new("").child(
-                            SidebarMenu::new()
-                                .child(
-                                    SidebarMenuItem::new("Collections")
-                                        .icon(Icon::new(IconName::BookOpen).small())
-                                        .active(is_collections)
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.session.update(cx, |session, cx| {
-                                                session.window_layout.sidebar_section =
-                                                    SidebarSection::Collections;
-                                                cx.notify();
-                                            });
-                                        })),
-                                )
-                                .child(
-                                    SidebarMenuItem::new("Environments")
-                                        .icon(Icon::new(IconName::Globe).small())
-                                        .active(!is_collections)
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.session.update(cx, |session, cx| {
-                                                session.window_layout.sidebar_section =
-                                                    SidebarSection::Environments;
-                                                cx.notify();
-                                            });
-                                        })),
+                        Sidebar::new("app-sidebar-rail")
+                            .collapsible(false)
+                            .w(gpui::relative(1.))
+                            .border_0()
+                            .child(
+                                SidebarGroup::new("").child(
+                                    SidebarMenu::new()
+                                        .child(
+                                            SidebarMenuItem::new("Collections")
+                                                .icon(Icon::new(IconName::BookOpen).small())
+                                                .active(is_collections)
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.session.update(cx, |session, cx| {
+                                                        session.window_layout.sidebar_section =
+                                                            SidebarSection::Collections;
+                                                        cx.notify();
+                                                    });
+                                                })),
+                                        )
+                                        .child(
+                                            SidebarMenuItem::new("Environments")
+                                                .icon(Icon::new(IconName::Globe).small())
+                                                .active(!is_collections)
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.session.update(cx, |session, cx| {
+                                                        session.window_layout.sidebar_section =
+                                                            SidebarSection::Environments;
+                                                        cx.notify();
+                                                    });
+                                                })),
+                                        ),
                                 ),
-                        ),
-                    )
-                    // Collections section (gated)
-                    .when(is_collections, |sidebar| {
-                        sidebar.child(
-                            SidebarGroup::new(es_fluent::localize("sidebar_collections", None))
-                                .child(SidebarMenu::new().children(
-                                    workspace.collections.iter().map(|collection| {
-                                        render_collection_menu_item(collection, active_key, cx)
-                                    }),
-                                )),
-                        )
-                    })
-                    // Environments section (gated)
-                    .when(!is_collections, |sidebar| {
-                        sidebar.child(
-                            SidebarGroup::new(es_fluent::localize("sidebar_environments", None))
-                                .child(SidebarMenu::new().children(
-                                    workspace.environments.iter().map(|environment| {
-                                        let item_key = ItemKey::environment(environment.id);
-                                        let weak_root = weak_root.clone();
-                                        SidebarMenuItem::new(environment.name.clone())
-                                            .icon(Icon::new(IconName::Globe).small())
-                                            .active(active_key == Some(item_key))
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.open_item(item_key, cx);
-                                            }))
-                                            .context_menu(move |menu, _, _| {
-                                                let weak_root = weak_root.clone();
-                                                menu.item(
-                                                    PopupMenuItem::new(es_fluent::localize(
-                                                        "menu_delete",
-                                                        None,
-                                                    ))
-                                                    .icon(Icon::new(IconName::Close))
-                                                    .on_click(move |_, window, cx| {
-                                                        let _ = weak_root.update(cx, |this, cx| {
-                                                            this.delete_item(item_key, window, cx);
-                                                        });
-                                                    }),
-                                                )
-                                            })
-                                    }),
-                                )),
-                        )
-                    })
-            })
-            .child(
-                SidebarGroup::new(es_fluent::localize("sidebar_utilities", None)).child(
-                    SidebarMenu::new()
-                        .child(
-                            SidebarMenuItem::new(es_fluent::localize("tab_kind_settings", None))
-                                .icon(Icon::new(IconName::Settings2).small())
-                                .active(active_key == Some(ItemKey::settings()))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.open_item(ItemKey::settings(), cx);
-                                })),
-                        )
-                        .child(
-                            SidebarMenuItem::new(es_fluent::localize("tab_kind_about", None))
-                                .icon(Icon::new(IconName::Info).small())
-                                .active(active_key == Some(ItemKey::about()))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.open_item(ItemKey::about(), cx);
-                                })),
-                        )
-                        .child(
-                            SidebarMenuItem::new(es_fluent::localize(
-                                "tab_kind_layout_debug",
-                                None,
-                            ))
-                            .icon(Icon::new(IconName::Settings2).small())
-                            .active(active_key == Some(ItemKey::layout_debug()))
-                            .on_click(cx.listener(
-                                |this, _, _, cx| {
-                                    this.open_item(ItemKey::layout_debug(), cx);
-                                },
-                            )),
-                        ),
-                ),
+                            )
+                            .child(
+                                SidebarGroup::new(es_fluent::localize("sidebar_utilities", None))
+                                    .child(
+                                        SidebarMenu::new()
+                                            .child(
+                                                SidebarMenuItem::new(es_fluent::localize(
+                                                    "tab_kind_settings",
+                                                    None,
+                                                ))
+                                                .icon(Icon::new(IconName::Settings2).small())
+                                                .active(active_key == Some(ItemKey::settings()))
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.open_item(ItemKey::settings(), cx);
+                                                })),
+                                            )
+                                            .child(
+                                                SidebarMenuItem::new(es_fluent::localize(
+                                                    "tab_kind_about",
+                                                    None,
+                                                ))
+                                                .icon(Icon::new(IconName::Info).small())
+                                                .active(active_key == Some(ItemKey::about()))
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.open_item(ItemKey::about(), cx);
+                                                })),
+                                            )
+                                            .child(
+                                                SidebarMenuItem::new(es_fluent::localize(
+                                                    "tab_kind_layout_debug",
+                                                    None,
+                                                ))
+                                                .icon(Icon::new(IconName::Settings2).small())
+                                                .active(active_key == Some(ItemKey::layout_debug()))
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.open_item(ItemKey::layout_debug(), cx);
+                                                })),
+                                            ),
+                                    ),
+                            ),
+                    ),
             )
+            .when(!sidebar_collapsed, |this| {
+                this.child(
+                    div().flex_1().min_w_0().h_full().overflow_hidden().child(
+                        Sidebar::new("app-sidebar-content")
+                            .collapsible(false)
+                            .w(gpui::relative(1.))
+                            .border_0()
+                            .child(
+                                SidebarGroup::new(es_fluent::localize("sidebar_workspaces", None))
+                                    .child(SidebarMenu::new().children(
+                                        self.catalog.workspaces.iter().map(|workspace| {
+                                            let item_key = ItemKey::workspace(workspace.id);
+                                            let weak_root = weak_root.clone();
+                                            SidebarMenuItem::new(workspace.name.clone())
+                                                .icon(Icon::new(IconName::Inbox).small())
+                                                .active(
+                                                    active_key == Some(item_key)
+                                                        || selected_workspace_id
+                                                            == Some(workspace.id),
+                                                )
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.open_item(item_key, cx);
+                                                }))
+                                                .context_menu(move |menu, _, _| {
+                                                    let weak_root = weak_root.clone();
+                                                    menu.item(
+                                                        PopupMenuItem::new(es_fluent::localize(
+                                                            "menu_delete",
+                                                            None,
+                                                        ))
+                                                        .icon(Icon::new(IconName::Close))
+                                                        .on_click(move |_, window, cx| {
+                                                            let _ =
+                                                                weak_root.update(cx, |this, cx| {
+                                                                    this.delete_item(
+                                                                        item_key, window, cx,
+                                                                    );
+                                                                });
+                                                        }),
+                                                    )
+                                                })
+                                        }),
+                                    )),
+                            )
+                            .when_some(self.catalog.selected_workspace(), |sidebar, workspace| {
+                                // Collections section (gated)
+                                sidebar
+                                    .when(is_collections, |sidebar| {
+                                        sidebar.child(
+                                            SidebarGroup::new(es_fluent::localize(
+                                                "sidebar_collections",
+                                                None,
+                                            ))
+                                            .child(
+                                                SidebarMenu::new().children(
+                                                    workspace.collections.iter().map(
+                                                        |collection| {
+                                                            render_collection_menu_item(
+                                                                collection, active_key, cx,
+                                                            )
+                                                        },
+                                                    ),
+                                                ),
+                                            ),
+                                        )
+                                    })
+                                    // Environments section (gated)
+                                    .when(!is_collections, |sidebar| {
+                                        sidebar.child(
+                                            SidebarGroup::new(es_fluent::localize(
+                                                "sidebar_environments",
+                                                None,
+                                            ))
+                                            .child(
+                                                SidebarMenu::new()
+                                                    .children(workspace.environments.iter().map(
+                                                    |environment| {
+                                                        let item_key =
+                                                            ItemKey::environment(environment.id);
+                                                        let weak_root = weak_root.clone();
+                                                        SidebarMenuItem::new(
+                                                            environment.name.clone(),
+                                                        )
+                                                        .icon(Icon::new(IconName::Globe).small())
+                                                        .active(active_key == Some(item_key))
+                                                        .on_click(cx.listener(
+                                                            move |this, _, _, cx| {
+                                                                this.open_item(item_key, cx);
+                                                            },
+                                                        ))
+                                                        .context_menu(move |menu, _, _| {
+                                                            let weak_root = weak_root.clone();
+                                                            menu.item(
+                                                                PopupMenuItem::new(
+                                                                    es_fluent::localize(
+                                                                        "menu_delete",
+                                                                        None,
+                                                                    ),
+                                                                )
+                                                                .icon(Icon::new(IconName::Close))
+                                                                .on_click(move |_, window, cx| {
+                                                                    let _ = weak_root.update(
+                                                                        cx,
+                                                                        |this, cx| {
+                                                                            this.delete_item(
+                                                                                item_key, window,
+                                                                                cx,
+                                                                            );
+                                                                        },
+                                                                    );
+                                                                }),
+                                                            )
+                                                        })
+                                                    },
+                                                )),
+                                            ),
+                                        )
+                                    })
+                            }),
+                    ),
+                )
+            })
     }
 }
 

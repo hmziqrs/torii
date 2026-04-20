@@ -23,7 +23,7 @@ impl Default for WindowLayoutState {
     fn default() -> Self {
         Self {
             sidebar_collapsed: false,
-            sidebar_width_px: 255.0,
+            sidebar_width_px: 320.0,
             sidebar_section: SidebarSection::default(),
         }
     }

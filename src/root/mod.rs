@@ -444,6 +444,10 @@ impl Render for AppRoot {
         // no more entity.update() inside render().
 
         let weak_root = cx.entity().downgrade();
+        let sidebar_rail_width = 140.0;
+        let sidebar_content_min_width = 140.0;
+        let sidebar_expanded_min_width = sidebar_rail_width + sidebar_content_min_width;
+        let sidebar_expanded_max_width = 520.0;
 
         v_flex()
             .size_full()
@@ -477,12 +481,28 @@ impl Render for AppRoot {
                             })
                             .child(
                                 resizable_panel()
-                                    .size(px(if sidebar_collapsed { 140. } else { sidebar_width_px }))
+                                    .size(px(if sidebar_collapsed {
+                                        sidebar_rail_width
+                                    } else {
+                                        sidebar_width_px.max(sidebar_expanded_min_width)
+                                    }))
                                     .size_range(
-                                        px(if sidebar_collapsed { 140. } else { 180. })
-                                            ..px(if sidebar_collapsed { 140. } else { 420. }),
+                                        px(if sidebar_collapsed {
+                                            sidebar_rail_width
+                                        } else {
+                                            sidebar_expanded_min_width
+                                        })..px(if sidebar_collapsed {
+                                            sidebar_rail_width
+                                        } else {
+                                            sidebar_expanded_max_width
+                                        }),
                                     )
-                                    .child(self.render_sidebar(sidebar_selection, cx)),
+                                    .child(
+                                        div()
+                                            .size_full()
+                                            .overflow_hidden()
+                                            .child(self.render_sidebar(sidebar_selection, cx)),
+                                    ),
                             )
                             .child(
                                 resizable_panel().child(
