@@ -3,7 +3,10 @@ use crate::{
     domain::{
         history::HistoryState,
         ids::{CollectionId, RequestDraftId},
-        response::{BodyRef, ResponseBudgets, ResponseSummary, normalize_unix_ms},
+        response::{
+            BodyRef, PhaseTimings, ResponseBudgets, ResponseMetaV2, ResponseSizeBreakdown,
+            ResponseSummary, normalize_unix_ms,
+        },
     },
     services::workspace_tree::load_workspace_catalog,
     session::{
@@ -82,6 +85,12 @@ impl AppRoot {
                             }
                             _ => None,
                         };
+                        let body_decoded_bytes = body_ref.size_bytes();
+                        let meta_v2 = history_entry
+                            .response_meta_v2_json
+                            .as_deref()
+                            .and_then(|raw| serde_json::from_str::<ResponseMetaV2>(raw).ok())
+                            .unwrap_or_default();
 
                         tab.editor_mut()
                             .restore_completed_response(ResponseSummary {
@@ -95,6 +104,23 @@ impl AppRoot {
                                 dispatched_at_unix_ms,
                                 first_byte_at_unix_ms,
                                 completed_at_unix_ms,
+                                http_version: meta_v2.http_version,
+                                local_addr: meta_v2.local_addr,
+                                remote_addr: meta_v2.remote_addr,
+                                tls: meta_v2.tls,
+                                size: ResponseSizeBreakdown {
+                                    body_decoded_bytes,
+                                    ..meta_v2.size
+                                },
+                                request_size: meta_v2.request_size,
+                                phase_timings: if meta_v2.phase_timings.ttfb_ms.is_some() {
+                                    meta_v2.phase_timings
+                                } else {
+                                    PhaseTimings {
+                                        ttfb_ms,
+                                        ..meta_v2.phase_timings
+                                    }
+                                },
                             });
                         tab.mark_response_tables_dirty();
                     }

@@ -2,9 +2,9 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme as _, Sizable as _,
     button::Button,
+    h_flex,
     input::{Input, InputState},
     resizable::{resizable_panel, v_resizable},
-    h_flex,
     v_flex,
 };
 
@@ -49,7 +49,9 @@ impl Render for LayoutDebugPage {
                     .border_b_1()
                     .border_color(cx.theme().border)
                     .child(
-                        div().w_full().child(Input::new(&self.url_like_input).large()),
+                        div()
+                            .w_full()
+                            .child(Input::new(&self.url_like_input).large()),
                     ),
             )
             .child(
@@ -65,7 +67,8 @@ impl Render for LayoutDebugPage {
                             .outline()
                             .label("Request -")
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.request_item_count = this.request_item_count.saturating_sub(1).max(1);
+                                this.request_item_count =
+                                    this.request_item_count.saturating_sub(1).max(1);
                                 cx.notify();
                             })),
                     )
@@ -83,7 +86,8 @@ impl Render for LayoutDebugPage {
                             .outline()
                             .label("Response -")
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.response_item_count = this.response_item_count.saturating_sub(1).max(1);
+                                this.response_item_count =
+                                    this.response_item_count.saturating_sub(1).max(1);
                                 cx.notify();
                             })),
                     )
@@ -92,7 +96,8 @@ impl Render for LayoutDebugPage {
                             .outline()
                             .label("Response +")
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.response_item_count = this.response_item_count.saturating_add(1);
+                                this.response_item_count =
+                                    this.response_item_count.saturating_add(1);
                                 cx.notify();
                             })),
                     )
@@ -135,27 +140,24 @@ impl Render for LayoutDebugPage {
                                                 .flex_1()
                                                 .min_h_0()
                                                 .overflow_y_scroll()
-                                                .child(
-                                                    v_flex()
-                                                        .gap_2()
-                                                        .p_2()
-                                                        .children((0..self.request_item_count).map(|i| {
-                                                            div()
-                                                                .flex_shrink_0()
-                                                                .w_full()
-                                                                .h(px(68.))
-                                                                .rounded(px(6.))
-                                                                .bg(box_colors[i % box_colors.len()])
-                                                                .border_1()
-                                                                .border_color(cx.theme().border)
-                                                                .px_3()
-                                                                .py_2()
-                                                                .child(format!(
-                                                                    "Mock request content row {}",
-                                                                    i + 1
-                                                                ))
-                                                        })),
-                                                ),
+                                                .child(v_flex().gap_2().p_2().children(
+                                                    (0..self.request_item_count).map(|i| {
+                                                        div()
+                                                            .flex_shrink_0()
+                                                            .w_full()
+                                                            .h(px(68.))
+                                                            .rounded(px(6.))
+                                                            .bg(box_colors[i % box_colors.len()])
+                                                            .border_1()
+                                                            .border_color(cx.theme().border)
+                                                            .px_3()
+                                                            .py_2()
+                                                            .child(format!(
+                                                                "Mock request content row {}",
+                                                                i + 1
+                                                            ))
+                                                    }),
+                                                )),
                                         ),
                                 ),
                         )
@@ -185,30 +187,25 @@ impl Render for LayoutDebugPage {
                                                 .flex_1()
                                                 .min_h_0()
                                                 .overflow_y_scroll()
-                                                .child(
-                                                    v_flex()
-                                                        .px_3()
-                                                        .py_2()
-                                                        .gap_2()
-                                                        .children((0..self.response_item_count).map(|i| {
-                                                            div()
-                                                                .flex_shrink_0()
-                                                                .w_full()
-                                                                .h(px(44.))
-                                                                .rounded(px(4.))
-                                                                .bg(gpui::hsla(
-                                                                    35. / 360.,
-                                                                    0.30,
-                                                                    0.18
-                                                                        + (i % 2) as f32 * 0.05,
-                                                                    1.0,
-                                                                ))
-                                                                .child(format!(
-                                                                    "Mock response block {}",
-                                                                    i + 1
-                                                                ))
-                                                        })),
-                                                ),
+                                                .child(v_flex().px_3().py_2().gap_2().children(
+                                                    (0..self.response_item_count).map(|i| {
+                                                        div()
+                                                            .flex_shrink_0()
+                                                            .w_full()
+                                                            .h(px(44.))
+                                                            .rounded(px(4.))
+                                                            .bg(gpui::hsla(
+                                                                35. / 360.,
+                                                                0.30,
+                                                                0.18 + (i % 2) as f32 * 0.05,
+                                                                1.0,
+                                                            ))
+                                                            .child(format!(
+                                                                "Mock response block {}",
+                                                                i + 1
+                                                            ))
+                                                    }),
+                                                )),
                                         ),
                                 ),
                         ),

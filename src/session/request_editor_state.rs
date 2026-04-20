@@ -501,6 +501,13 @@ mod tests {
             dispatched_at_unix_ms: None,
             first_byte_at_unix_ms: None,
             completed_at_unix_ms: None,
+            http_version: None,
+            local_addr: None,
+            remote_addr: None,
+            tls: None,
+            size: crate::domain::response::ResponseSizeBreakdown::default(),
+            request_size: crate::domain::response::RequestSizeBreakdown::default(),
+            phase_timings: crate::domain::response::PhaseTimings::default(),
         };
         assert!(editor.complete_exec(summary, op_id));
         assert!(editor.exec_status().is_terminal());
@@ -533,6 +540,13 @@ mod tests {
             dispatched_at_unix_ms: None,
             first_byte_at_unix_ms: None,
             completed_at_unix_ms: None,
+            http_version: None,
+            local_addr: None,
+            remote_addr: None,
+            tls: None,
+            size: crate::domain::response::ResponseSizeBreakdown::default(),
+            request_size: crate::domain::response::RequestSizeBreakdown::default(),
+            phase_timings: crate::domain::response::PhaseTimings::default(),
         };
         assert!(!editor.complete_exec(summary, op1));
         assert!(editor.exec_status().is_in_flight()); // Still sending for op2
@@ -600,6 +614,13 @@ mod tests {
             dispatched_at_unix_ms: None,
             first_byte_at_unix_ms: None,
             completed_at_unix_ms: None,
+            http_version: None,
+            local_addr: None,
+            remote_addr: None,
+            tls: None,
+            size: crate::domain::response::ResponseSizeBreakdown::default(),
+            request_size: crate::domain::response::RequestSizeBreakdown::default(),
+            phase_timings: crate::domain::response::PhaseTimings::default(),
         };
         assert!(editor.complete_exec(summary, op_id));
 

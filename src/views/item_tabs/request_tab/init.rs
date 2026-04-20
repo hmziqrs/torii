@@ -235,6 +235,7 @@ impl RequestTabView {
             next_kv_row_id: 1,
             active_section: RequestSectionTab::Params,
             active_response_tab: ResponseTab::Body,
+            active_meta_popover: None,
             loaded_full_body_blob_id: None,
             loaded_full_body_text: None,
             input_sync_guard: ReentrancyGuard::default(),

@@ -20,6 +20,14 @@ pub(super) enum ResponseTab {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ResponseMetaPopover {
+    Status,
+    Time,
+    Size,
+    Network,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum BodyFileTarget {
     Binary,
     FormDataIndex(usize),

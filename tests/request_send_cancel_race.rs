@@ -70,6 +70,7 @@ impl HttpTransport for HoldReleaseTransport {
         _headers: http::HeaderMap,
         _body: RequestBodyPayload,
         cancel: CancellationToken,
+        _phase_collector: Arc<torii::services::request_execution::PhaseTimingCollector>,
     ) -> Result<TransportResponse> {
         {
             let mut count = self.send_count.lock().unwrap();
@@ -103,6 +104,11 @@ impl HttpTransport for HoldReleaseTransport {
             status_text: "OK".to_string(),
             headers: http::HeaderMap::new(),
             media_type: Some("text/plain".to_string()),
+            http_version: Some(http::Version::HTTP_11),
+            remote_addr: None,
+            peer_cert_der: None,
+            response_headers_size: Some(0),
+            content_length: None,
             body_stream: stream,
         })
     }
@@ -266,6 +272,13 @@ fn late_response_after_cancel_is_ignored() {
         dispatched_at_unix_ms: None,
         first_byte_at_unix_ms: None,
         completed_at_unix_ms: None,
+        http_version: None,
+        local_addr: None,
+        remote_addr: None,
+        tls: None,
+        size: torii::domain::response::ResponseSizeBreakdown::default(),
+        request_size: torii::domain::response::RequestSizeBreakdown::default(),
+        phase_timings: torii::domain::response::PhaseTimings::default(),
     };
     let accepted = editor.complete_exec(summary, op1);
     assert!(!accepted, "late op1 response must be ignored");
@@ -283,6 +296,13 @@ fn late_response_after_cancel_is_ignored() {
         dispatched_at_unix_ms: None,
         first_byte_at_unix_ms: None,
         completed_at_unix_ms: None,
+        http_version: None,
+        local_addr: None,
+        remote_addr: None,
+        tls: None,
+        size: torii::domain::response::ResponseSizeBreakdown::default(),
+        request_size: torii::domain::response::RequestSizeBreakdown::default(),
+        phase_timings: torii::domain::response::PhaseTimings::default(),
     };
     let accepted2 = editor.complete_exec(summary2, op2);
     assert!(accepted2, "op2 response must be accepted");

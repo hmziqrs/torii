@@ -43,6 +43,72 @@ pub struct ResponseSummary {
     pub dispatched_at_unix_ms: Option<i64>,
     pub first_byte_at_unix_ms: Option<i64>,
     pub completed_at_unix_ms: Option<i64>,
+    pub http_version: Option<String>,
+    pub local_addr: Option<String>,
+    pub remote_addr: Option<String>,
+    pub tls: Option<TlsSummary>,
+    pub size: ResponseSizeBreakdown,
+    pub request_size: RequestSizeBreakdown,
+    pub phase_timings: PhaseTimings,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TlsSummary {
+    pub protocol: Option<String>,
+    pub cipher: Option<String>,
+    pub certificate_cn: Option<String>,
+    pub issuer_cn: Option<String>,
+    pub valid_until: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResponseSizeBreakdown {
+    pub headers_bytes: Option<u64>,
+    pub body_wire_bytes: Option<u64>,
+    pub body_decoded_bytes: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequestSizeBreakdown {
+    pub headers_bytes: Option<u64>,
+    pub body_bytes: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PhaseTimings {
+    pub prepare_ms: Option<u64>,
+    pub dns_ms: Option<u64>,
+    pub connect_ms: Option<u64>,
+    pub tcp_ms: Option<u64>,
+    pub tls_ms: Option<u64>,
+    pub ttfb_ms: Option<u64>,
+    pub download_ms: Option<u64>,
+    pub process_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResponseMetaV2 {
+    pub http_version: Option<String>,
+    pub local_addr: Option<String>,
+    pub remote_addr: Option<String>,
+    pub tls: Option<TlsSummary>,
+    pub size: ResponseSizeBreakdown,
+    pub request_size: RequestSizeBreakdown,
+    pub phase_timings: PhaseTimings,
+}
+
+impl ResponseSummary {
+    pub fn meta_v2(&self) -> ResponseMetaV2 {
+        ResponseMetaV2 {
+            http_version: self.http_version.clone(),
+            local_addr: self.local_addr.clone(),
+            remote_addr: self.remote_addr.clone(),
+            tls: self.tls.clone(),
+            size: self.size.clone(),
+            request_size: self.request_size.clone(),
+            phase_timings: self.phase_timings.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,7 +183,8 @@ impl ResponseBudgets {
 #[cfg(test)]
 mod tests {
     use super::{
-        HeaderJsonFormat, ResponseHeaderRow, normalize_unix_ms, parse_response_header_rows,
+        HeaderJsonFormat, PhaseTimings, RequestSizeBreakdown, ResponseHeaderRow, ResponseMetaV2,
+        ResponseSizeBreakdown, TlsSummary, normalize_unix_ms, parse_response_header_rows,
         serialize_response_header_rows,
     };
 
@@ -151,5 +218,44 @@ mod tests {
     fn normalize_unix_ms_converts_seconds() {
         assert_eq!(normalize_unix_ms(1_700_000_000), 1_700_000_000_000);
         assert_eq!(normalize_unix_ms(1_700_000_000_000), 1_700_000_000_000);
+    }
+
+    #[test]
+    fn response_meta_v2_roundtrip() {
+        let meta = ResponseMetaV2 {
+            http_version: Some("HTTP/2".to_string()),
+            local_addr: None,
+            remote_addr: Some("1.2.3.4:443".to_string()),
+            tls: Some(TlsSummary {
+                protocol: None,
+                cipher: None,
+                certificate_cn: Some("example.com".to_string()),
+                issuer_cn: Some("Example CA".to_string()),
+                valid_until: Some(1_800_000_000_000),
+            }),
+            size: ResponseSizeBreakdown {
+                headers_bytes: Some(320),
+                body_wire_bytes: Some(1200),
+                body_decoded_bytes: 2400,
+            },
+            request_size: RequestSizeBreakdown {
+                headers_bytes: Some(180),
+                body_bytes: 512,
+            },
+            phase_timings: PhaseTimings {
+                prepare_ms: Some(1),
+                dns_ms: Some(2),
+                connect_ms: Some(3),
+                tcp_ms: None,
+                tls_ms: None,
+                ttfb_ms: Some(4),
+                download_ms: Some(5),
+                process_ms: Some(6),
+            },
+        };
+
+        let raw = serde_json::to_string(&meta).expect("serialize");
+        let decoded: ResponseMetaV2 = serde_json::from_str(&raw).expect("deserialize");
+        assert_eq!(decoded, meta);
     }
 }

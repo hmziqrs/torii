@@ -93,6 +93,7 @@ pub struct RequestTabView {
     next_kv_row_id: u64,
     active_section: RequestSectionTab,
     active_response_tab: ResponseTab,
+    active_meta_popover: Option<ResponseMetaPopover>,
     loaded_full_body_blob_id: Option<String>,
     loaded_full_body_text: Option<String>,
     input_sync_guard: ReentrancyGuard,

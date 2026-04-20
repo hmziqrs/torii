@@ -37,6 +37,7 @@ pub trait HistoryRepository: Send + Sync {
         blob_size: Option<i64>,
         response_headers_json: Option<&str>,
         response_media_type: Option<&str>,
+        response_meta_v2_json: Option<&str>,
         dispatched_at: Option<i64>,
         first_byte_at: Option<i64>,
     ) -> RepoResult<()>;
@@ -90,6 +91,7 @@ impl HistoryRepository for SqliteHistoryRepository {
             updated_at: ts,
             response_headers_json: None,
             response_media_type: None,
+            response_meta_v2_json: None,
             dispatched_at: None,
             first_byte_at: None,
             cancelled_at: None,
@@ -107,10 +109,10 @@ impl HistoryRepository for SqliteHistoryRepository {
                  (id, workspace_id, request_id, method, url, status_code, started_at, completed_at,
                   state, blob_hash, blob_size, error_message, created_at, updated_at,
                   recovery_attempts, finalized_at,
-                  response_headers_json, response_media_type, dispatched_at, first_byte_at,
+                  response_headers_json, response_media_type, response_meta_v2_json, dispatched_at, first_byte_at,
                   cancelled_at, partial_size,
                   request_method, request_url_redacted, request_headers_redacted_json, request_auth_kind, request_body_summary_json)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(entry.id.to_string())
             .bind(entry.workspace_id.to_string())
@@ -130,6 +132,7 @@ impl HistoryRepository for SqliteHistoryRepository {
             .bind(entry.finalized_at)
             .bind(entry.response_headers_json.clone())
             .bind(entry.response_media_type.clone())
+            .bind(entry.response_meta_v2_json.clone())
             .bind(entry.dispatched_at)
             .bind(entry.first_byte_at)
             .bind(entry.cancelled_at)
@@ -156,6 +159,7 @@ impl HistoryRepository for SqliteHistoryRepository {
         blob_size: Option<i64>,
         response_headers_json: Option<&str>,
         response_media_type: Option<&str>,
+        response_meta_v2_json: Option<&str>,
         dispatched_at: Option<i64>,
         first_byte_at: Option<i64>,
     ) -> RepoResult<()> {
@@ -173,6 +177,7 @@ impl HistoryRepository for SqliteHistoryRepository {
                      finalized_at = ?,
                      response_headers_json = ?,
                      response_media_type = ?,
+                     response_meta_v2_json = ?,
                      dispatched_at = ?,
                      first_byte_at = ?
                  WHERE id = ?",
@@ -186,6 +191,7 @@ impl HistoryRepository for SqliteHistoryRepository {
             .bind(ts)
             .bind(response_headers_json)
             .bind(response_media_type)
+            .bind(response_meta_v2_json)
             .bind(dispatched_at)
             .bind(first_byte_at)
             .bind(id.to_string())
@@ -360,6 +366,7 @@ fn map_history_row(row: sqlx::sqlite::SqliteRow) -> RepoResult<HistoryEntry> {
         updated_at: row.get("updated_at"),
         response_headers_json: row.try_get("response_headers_json").unwrap_or(None),
         response_media_type: row.try_get("response_media_type").unwrap_or(None),
+        response_meta_v2_json: row.try_get("response_meta_v2_json").unwrap_or(None),
         dispatched_at: row.try_get("dispatched_at").unwrap_or(None),
         first_byte_at: row.try_get("first_byte_at").unwrap_or(None),
         cancelled_at: row.try_get("cancelled_at").unwrap_or(None),

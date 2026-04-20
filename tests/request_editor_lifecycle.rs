@@ -193,6 +193,7 @@ fn history_response_metadata_roundtrip() -> Result<()> {
         Some(4096),
         Some(headers),
         Some("application/json"),
+        None,
         Some(1000),
         Some(1200),
     )?;
@@ -229,11 +230,11 @@ fn history_get_latest_for_request() -> Result<()> {
     // Create multiple history entries for same request
     let entry1 =
         history_repo.create_pending(workspace.id, Some(request.id), "GET", "/api", None)?;
-    history_repo.finalize_completed(entry1.id, 200, None, None, None, None, None, None)?;
+    history_repo.finalize_completed(entry1.id, 200, None, None, None, None, None, None, None)?;
 
     let entry2 =
         history_repo.create_pending(workspace.id, Some(request.id), "GET", "/api", None)?;
-    history_repo.finalize_completed(entry2.id, 404, None, None, None, None, None, None)?;
+    history_repo.finalize_completed(entry2.id, 404, None, None, None, None, None, None, None)?;
 
     // Latest should be one of the completed entries for this request
     let latest = history_repo.get_latest_for_request(request.id)?;

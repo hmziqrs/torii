@@ -5,6 +5,7 @@ mod actions;
 mod chrome;
 mod content;
 mod content_tabs;
+mod popovers;
 mod tables;
 
 pub(super) use tables::{CookiesTableDelegate, HeadersTableDelegate, TimingTableDelegate};
@@ -73,56 +74,11 @@ pub(super) fn render_response_panel(
                 ExecStatus::Completed { response } => response.clone(),
                 _ => unreachable!(),
             };
-            let status_color = status_code_color(response.status_code);
-            let status_size = format_bytes(response.body_ref.size_bytes());
-            let time_str = response
-                .total_ms
-                .map(|ms| format!("{ms} ms"))
-                .unwrap_or_else(|| "—".to_string());
+            let header_row = popovers::render_meta_bar(view, &response, response_label, cx);
 
-            let header_row = h_flex()
-                .flex_shrink_0()
-                .gap_3()
-                .items_center()
-                .pt_3()
-                .child(response_label)
-                .child(Divider::vertical().color(cx.theme().border))
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(status_color)
-                        .child(format!(
-                            "{} {}",
-                            response.status_code, response.status_text
-                        )),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(muted)
-                        .child(format!(
-                            "{}: {status_size}",
-                            es_fluent::localize("request_tab_response_size", None)
-                        )),
-                )
-                .child(div().text_xs().text_color(muted).child("•"))
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(muted)
-                        .child(format!(
-                            "{}: {time_str}",
-                            es_fluent::localize("request_tab_response_total_time", None)
-                        )),
-                );
-
-            v_flex()
-                .flex_1()
-                .min_h_0()
-                .gap_2()
-                .child(header_row)
-                .child(content::render_completed_response_body(view, &response, window, cx))
+            v_flex().flex_1().min_h_0().gap_2().child(header_row).child(
+                content::render_completed_response_body(view, &response, window, cx),
+            )
         }
 
         ExecStatus::Failed { .. } => {
@@ -142,7 +98,10 @@ pub(super) fn render_response_panel(
                 .gap_2()
                 .child(response_label)
                 .child(
-                    div().flex_1().flex_col().gap_2()
+                    div()
+                        .flex_1()
+                        .flex_col()
+                        .gap_2()
                         .child(
                             div()
                                 .text_sm()
@@ -185,14 +144,9 @@ pub(super) fn render_response_panel(
             let msg = match partial_size {
                 Some(size) => format!(
                     "{} ({size})",
-                    es_fluent::localize(
-                        "request_tab_response_cancelled_with_bytes",
-                        None
-                    )
+                    es_fluent::localize("request_tab_response_cancelled_with_bytes", None)
                 ),
-                None => {
-                    es_fluent::localize("request_tab_response_cancelled", None).to_string()
-                }
+                None => es_fluent::localize("request_tab_response_cancelled", None).to_string(),
             };
             v_flex()
                 .flex_1()

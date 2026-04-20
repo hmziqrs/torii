@@ -1,4 +1,8 @@
-use std::{pin::Pin, sync::Arc, time::Instant};
+use std::{
+    pin::Pin,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 
 use anyhow::{Context as _, Result, anyhow};
 use base64::Engine as _;
@@ -7,15 +11,18 @@ use futures::StreamExt as _;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+use tower_layer::Layer;
+use tower_service::Service;
 use tracing::{info_span, warn};
+use x509_parser::prelude::parse_x509_certificate;
 
 use crate::{
     domain::{
         ids::{HistoryEntryId, RequestId, WorkspaceId},
         request::{ApiKeyLocation, AuthType, BodyType, RequestItem},
         response::{
-            BodyRef, ResponseBudgets, ResponseHeaderRow, ResponseSummary,
-            serialize_response_header_rows,
+            BodyRef, PhaseTimings, RequestSizeBreakdown, ResponseBudgets, ResponseHeaderRow,
+            ResponseSizeBreakdown, ResponseSummary, TlsSummary, serialize_response_header_rows,
         },
     },
     infra::{blobs::BlobStore, secrets::SecretStoreRef},
@@ -24,6 +31,10 @@ use crate::{
     services::request_body_payload::{RequestBodyPayload, build_request_body_payload},
     services::telemetry,
 };
+
+tokio::task_local! {
+    static ACTIVE_PHASE_COLLECTOR: Arc<PhaseTimingCollector>;
+}
 
 #[async_trait::async_trait]
 pub trait HttpTransport: Send + Sync {
@@ -34,6 +45,7 @@ pub trait HttpTransport: Send + Sync {
         headers: http::HeaderMap,
         body: RequestBodyPayload,
         cancel: CancellationToken,
+        phase_collector: Arc<PhaseTimingCollector>,
     ) -> Result<TransportResponse>;
 }
 
@@ -42,7 +54,114 @@ pub struct TransportResponse {
     pub status_text: String,
     pub headers: http::HeaderMap,
     pub media_type: Option<String>,
+    pub http_version: Option<http::Version>,
+    pub remote_addr: Option<std::net::SocketAddr>,
+    pub peer_cert_der: Option<Vec<u8>>,
+    pub response_headers_size: Option<u64>,
+    pub content_length: Option<u64>,
     pub body_stream: Pin<Box<dyn futures::Stream<Item = Result<Bytes>> + Send>>,
+}
+
+#[derive(Default)]
+pub struct PhaseTimingCollector {
+    timings: Mutex<PhaseTimings>,
+}
+
+impl PhaseTimingCollector {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn snapshot(&self) -> PhaseTimings {
+        self.timings
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+
+    fn record_dns(&self, ms: u64) {
+        self.timings
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .dns_ms = Some(ms);
+    }
+
+    fn record_connect(&self, ms: u64) {
+        self.timings
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .connect_ms = Some(ms);
+    }
+}
+
+#[derive(Clone, Default)]
+struct TimedResolver;
+
+impl reqwest::dns::Resolve for TimedResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let host = name.as_str().to_string();
+        Box::pin(async move {
+            let start = Instant::now();
+            let addrs = tokio::net::lookup_host((host.as_str(), 0))
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
+            let addrs: Vec<std::net::SocketAddr> = addrs.collect();
+            let _ = ACTIVE_PHASE_COLLECTOR.try_with(|collector| {
+                collector.record_dns(start.elapsed().as_millis() as u64);
+            });
+            Ok::<reqwest::dns::Addrs, Box<dyn std::error::Error + Send + Sync>>(Box::new(
+                addrs.into_iter(),
+            ))
+        })
+    }
+}
+
+#[derive(Clone, Default)]
+struct TimedConnectLayer;
+
+#[derive(Clone)]
+struct TimedConnectService<S> {
+    inner: S,
+}
+
+impl<S> Layer<S> for TimedConnectLayer {
+    type Service = TimedConnectService<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        TimedConnectService { inner }
+    }
+}
+
+impl<S, Req> Service<Req> for TimedConnectService<S>
+where
+    S: Service<Req> + Clone + Send + 'static,
+    S::Future: Send + 'static,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future =
+        Pin<Box<dyn futures::Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: Req) -> Self::Future {
+        let started = Instant::now();
+        let fut = self.inner.call(req);
+        Box::pin(async move {
+            let result = fut.await;
+            if result.is_ok() {
+                let _ = ACTIVE_PHASE_COLLECTOR.try_with(|collector| {
+                    collector.record_connect(started.elapsed().as_millis() as u64);
+                });
+            }
+            result
+        })
+    }
 }
 
 pub struct ReqwestTransport {
@@ -56,6 +175,9 @@ impl ReqwestTransport {
             .connect_timeout(std::time::Duration::from_secs(10))
             .redirect(reqwest::redirect::Policy::limited(10))
             .tls_built_in_root_certs(true)
+            .tls_info(true)
+            .dns_resolver2(TimedResolver)
+            .connector_layer(TimedConnectLayer)
             .no_proxy()
             .build()
             .context("failed to build reqwest client")?;
@@ -72,6 +194,7 @@ impl HttpTransport for ReqwestTransport {
         headers: http::HeaderMap,
         body: RequestBodyPayload,
         cancel: CancellationToken,
+        phase_collector: Arc<PhaseTimingCollector>,
     ) -> Result<TransportResponse> {
         let mut builder = self.client.request(method, url.as_str());
         for (name, value) in &headers {
@@ -87,16 +210,20 @@ impl HttpTransport for ReqwestTransport {
             }
         }
 
-        let send_fut = builder.send();
-        tokio::pin!(send_fut);
-        let response = tokio::select! {
-            _ = cancel.cancelled() => {
-                return Err(anyhow!("request send cancelled"));
-            }
-            result = &mut send_fut => {
-                result.context("request send failed")?
-            }
-        };
+        let response = ACTIVE_PHASE_COLLECTOR
+            .scope(phase_collector, async {
+                let send_fut = builder.send();
+                tokio::pin!(send_fut);
+                tokio::select! {
+                    _ = cancel.cancelled() => {
+                        Err(anyhow!("request send cancelled"))
+                    }
+                    result = &mut send_fut => {
+                        result.context("request send failed")
+                    }
+                }
+            })
+            .await?;
 
         let status_code = response.status().as_u16();
         let status_text = response
@@ -111,6 +238,18 @@ impl HttpTransport for ReqwestTransport {
             .get(http::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
             .map(|s| s.split(';').next().unwrap_or(s).trim().to_string());
+        let http_version = Some(response.version());
+        let remote_addr = response.remote_addr();
+        let response_headers_size = Some(header_map_size_bytes(&resp_headers));
+        let content_length = response
+            .headers()
+            .get(http::header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok());
+        let peer_cert_der = response
+            .extensions()
+            .get::<reqwest::tls::TlsInfo>()
+            .and_then(|info| info.peer_certificate().map(|der| der.to_vec()));
 
         let stream = response
             .bytes_stream()
@@ -122,6 +261,11 @@ impl HttpTransport for ReqwestTransport {
             status_text,
             headers: resp_headers,
             media_type,
+            http_version,
+            remote_addr,
+            peer_cert_der,
+            response_headers_size,
+            content_length,
             body_stream: boxed,
         })
     }
@@ -208,6 +352,7 @@ impl RequestExecutionService {
                     }
                     BodyRef::Empty => (None, None),
                 };
+                let meta_v2_json = serde_json::to_string(&summary.meta_v2()).ok();
                 let _ = self.history_repo.finalize_completed(
                     operation_id,
                     summary.status_code as i64,
@@ -215,6 +360,7 @@ impl RequestExecutionService {
                     blob_size,
                     headers_json,
                     summary.media_type.as_deref(),
+                    meta_v2_json.as_deref(),
                     summary.dispatched_at_unix_ms,
                     summary.first_byte_at_unix_ms,
                 );
@@ -259,6 +405,7 @@ impl RequestExecutionService {
     ) -> Result<ExecOutcome> {
         info_span!("request.send", method = %request.method, url = %request.url)
             .in_scope(|| tracing::info!("request lifecycle started"));
+        let lifecycle_started = Instant::now();
 
         let parsed_url = match url::Url::parse(&request.url) {
             Ok(u) => u,
@@ -355,9 +502,13 @@ impl RequestExecutionService {
                 )));
             }
         }
+        let request_headers_size = Some(header_map_size_bytes(&header_map));
+        let request_body_size = built_body.body_bytes;
 
         let dispatched_at = Instant::now();
         let dispatched_at_unix_ms = now_unix_ms();
+        let prepare_ms = Some(lifecycle_started.elapsed().as_millis() as u64);
+        let phase_collector = Arc::new(PhaseTimingCollector::new());
         tracing::info!(method = %request.method, "request dispatched");
         let transport_response = match self
             .transport
@@ -367,6 +518,7 @@ impl RequestExecutionService {
                 header_map,
                 built_body.payload,
                 cancel.clone(),
+                phase_collector.clone(),
             )
             .await
         {
@@ -391,19 +543,34 @@ impl RequestExecutionService {
         let status_text = transport_response.status_text;
         let media_type = transport_response.media_type;
         let resp_headers = transport_response.headers;
+        let http_version = transport_response.http_version.map(http_version_to_string);
+        let remote_addr = transport_response.remote_addr.map(|addr| addr.to_string());
+        let response_headers_size = transport_response.response_headers_size;
+        let content_length = transport_response.content_length;
+        let tls = parse_tls_summary(transport_response.peer_cert_der.as_deref());
         let headers_json = serialize_headers(&resp_headers);
 
         if let Some(tx) = progress_tx.as_ref() {
             let _ = tx.try_send(ExecProgressEvent::ResponseStreamingStarted);
         }
 
+        let download_started = Instant::now();
         let body_ref = self
             .stream_response_body(transport_response.body_stream, &media_type, cancel)
             .await?;
+        let download_ms = Some(download_started.elapsed().as_millis() as u64);
 
+        let process_started = Instant::now();
         let completed_at_unix_ms = now_unix_ms();
         let total_ms = Some(dispatched_at.elapsed().as_millis() as u64);
         let ttfb_ms = Some(first_byte_elapsed.as_millis() as u64);
+        let decoded_body_size = body_ref.size_bytes();
+        let process_ms = Some(process_started.elapsed().as_millis() as u64);
+        let mut phase_timings = phase_collector.snapshot();
+        phase_timings.prepare_ms = prepare_ms;
+        phase_timings.ttfb_ms = ttfb_ms;
+        phase_timings.download_ms = download_ms;
+        phase_timings.process_ms = process_ms;
 
         Ok(ExecOutcome::Completed(ResponseSummary {
             status_code,
@@ -416,6 +583,20 @@ impl RequestExecutionService {
             dispatched_at_unix_ms: Some(dispatched_at_unix_ms),
             first_byte_at_unix_ms: Some(first_byte_at_unix_ms),
             completed_at_unix_ms: Some(completed_at_unix_ms),
+            http_version,
+            local_addr: None,
+            remote_addr,
+            tls,
+            size: ResponseSizeBreakdown {
+                headers_bytes: response_headers_size,
+                body_wire_bytes: content_length,
+                body_decoded_bytes: decoded_body_size,
+            },
+            request_size: RequestSizeBreakdown {
+                headers_bytes: request_headers_size,
+                body_bytes: request_body_size,
+            },
+            phase_timings,
         }))
     }
 
@@ -653,6 +834,55 @@ fn serialize_headers(headers: &http::HeaderMap) -> Option<String> {
         })
         .collect::<Vec<_>>();
     serialize_response_header_rows(&rows)
+}
+
+fn header_map_size_bytes(headers: &http::HeaderMap) -> u64 {
+    headers
+        .iter()
+        .map(|(name, value)| {
+            // "Name: Value\r\n"
+            name.as_str().len() as u64 + 2 + value.as_bytes().len() as u64 + 2
+        })
+        .sum()
+}
+
+fn http_version_to_string(version: http::Version) -> String {
+    match version {
+        http::Version::HTTP_09 => "HTTP/0.9",
+        http::Version::HTTP_10 => "HTTP/1.0",
+        http::Version::HTTP_11 => "HTTP/1.1",
+        http::Version::HTTP_2 => "HTTP/2",
+        http::Version::HTTP_3 => "HTTP/3",
+        _ => "HTTP/?",
+    }
+    .to_string()
+}
+
+fn parse_tls_summary(peer_cert_der: Option<&[u8]>) -> Option<TlsSummary> {
+    let der = peer_cert_der?;
+    let (_, cert) = parse_x509_certificate(der).ok()?;
+
+    let certificate_cn = cert
+        .subject()
+        .iter_common_name()
+        .next()
+        .and_then(|cn| cn.as_str().ok())
+        .map(|s| s.to_string());
+    let issuer_cn = cert
+        .issuer()
+        .iter_common_name()
+        .next()
+        .and_then(|cn| cn.as_str().ok())
+        .map(|s| s.to_string());
+    let valid_until = cert.validity().not_after.timestamp().checked_mul(1000);
+
+    Some(TlsSummary {
+        protocol: None,
+        cipher: None,
+        certificate_cn,
+        issuer_cn,
+        valid_until,
+    })
 }
 
 fn now_unix_ms() -> i64 {

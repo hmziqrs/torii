@@ -178,6 +178,7 @@ impl HttpTransport for MockTransport {
         headers: http::HeaderMap,
         body: RequestBodyPayload,
         cancel: CancellationToken,
+        _phase_collector: Arc<torii::services::request_execution::PhaseTimingCollector>,
     ) -> Result<TransportResponse> {
         let captured_body = match body {
             RequestBodyPayload::None => None,
@@ -250,6 +251,11 @@ impl HttpTransport for MockTransport {
             status_text: response.status_text,
             headers: resp_headers,
             media_type,
+            http_version: Some(http::Version::HTTP_11),
+            remote_addr: None,
+            peer_cert_der: None,
+            response_headers_size: Some(0),
+            content_length: None,
             body_stream,
         })
     }

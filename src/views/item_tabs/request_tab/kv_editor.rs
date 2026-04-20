@@ -1,6 +1,6 @@
 use super::*;
-use gpui_component::table::DataTable;
 use gpui_component::IconName;
+use gpui_component::table::DataTable;
 
 // ---------------------------------------------------------------------------
 // Key-value table delegate — reusable across Params, Headers,

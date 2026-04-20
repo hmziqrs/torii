@@ -210,9 +210,11 @@ impl AppRoot {
             (ItemKind::Request, Some(ItemId::Request(id))) => {
                 self.request_pages.get(&id)?.read(cx).has_unsaved_changes()
             }
-            (ItemKind::Request, Some(ItemId::RequestDraft(did))) => {
-                self.request_draft_pages.get(&did)?.read(cx).has_unsaved_changes()
-            }
+            (ItemKind::Request, Some(ItemId::RequestDraft(did))) => self
+                .request_draft_pages
+                .get(&did)?
+                .read(cx)
+                .has_unsaved_changes(),
             _ => return None,
         };
 

@@ -20,32 +20,38 @@ impl RequestTabView {
             state
         });
 
-        self.kv_subscriptions.entry(target).or_default().push(cx.subscribe_in(
-            &key_input,
-            window,
-            move |this: &mut RequestTabView,
-                  _: &Entity<InputState>,
-                  event: &InputEvent,
-                  window: &mut Window,
-                  cx| {
-                if let InputEvent::Change = event {
-                    this.on_kv_rows_changed(target, window, cx);
-                }
-            },
-        ));
-        self.kv_subscriptions.entry(target).or_default().push(cx.subscribe_in(
-            &value_input,
-            window,
-            move |this: &mut RequestTabView,
-                  _: &Entity<InputState>,
-                  event: &InputEvent,
-                  window: &mut Window,
-                  cx| {
-                if let InputEvent::Change = event {
-                    this.on_kv_rows_changed(target, window, cx);
-                }
-            },
-        ));
+        self.kv_subscriptions
+            .entry(target)
+            .or_default()
+            .push(cx.subscribe_in(
+                &key_input,
+                window,
+                move |this: &mut RequestTabView,
+                      _: &Entity<InputState>,
+                      event: &InputEvent,
+                      window: &mut Window,
+                      cx| {
+                    if let InputEvent::Change = event {
+                        this.on_kv_rows_changed(target, window, cx);
+                    }
+                },
+            ));
+        self.kv_subscriptions
+            .entry(target)
+            .or_default()
+            .push(cx.subscribe_in(
+                &value_input,
+                window,
+                move |this: &mut RequestTabView,
+                      _: &Entity<InputState>,
+                      event: &InputEvent,
+                      window: &mut Window,
+                      cx| {
+                    if let InputEvent::Change = event {
+                        this.on_kv_rows_changed(target, window, cx);
+                    }
+                },
+            ));
 
         KeyValueEditorRow {
             id,

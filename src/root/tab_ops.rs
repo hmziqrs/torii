@@ -283,10 +283,7 @@ impl AppRoot {
                 drop(services);
                 self.refresh_catalog(cx);
                 self.open_item(ItemKey::request(new_request.id), cx);
-                window.push_notification(
-                    es_fluent::localize("request_tab_duplicate_ok", None),
-                    cx,
-                );
+                window.push_notification(es_fluent::localize("request_tab_duplicate_ok", None), cx);
             }
             Err(err) => {
                 tracing::error!("failed to duplicate request: {err}");

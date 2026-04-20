@@ -24,6 +24,17 @@ impl RequestTabView {
         }
     }
 
+    pub(super) fn set_active_meta_popover(
+        &mut self,
+        popover: Option<ResponseMetaPopover>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.active_meta_popover != popover {
+            self.active_meta_popover = popover;
+            cx.notify();
+        }
+    }
+
     pub(super) fn open_settings_dialog(&self, window: &mut Window, cx: &mut Context<Self>) {
         let name_input = self.name_input.clone();
         let timeout_input = self.timeout_input.clone();

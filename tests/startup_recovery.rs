@@ -38,6 +38,7 @@ fn startup_recovery_reconciles_pending_history_and_orphans() -> Result<()> {
         None,
         None,
         None,
+        None,
     )?;
 
     let orphan_blob = blob_store.write_bytes(b"orphan-blob", Some("text/plain"))?;
@@ -157,7 +158,7 @@ fn startup_recovery_marks_stale_pending_for_request_as_failed() -> Result<()> {
         "https://api.test/slow",
         None,
     )?;
-    history_repo.finalize_completed(completed.id, 200, None, None, None, None, None, None)?;
+    history_repo.finalize_completed(completed.id, 200, None, None, None, None, None, None, None)?;
 
     // Run recovery
     let recovery = RecoveryCoordinator::new(db.clone(), history_repo.clone(), blob_store)

@@ -18,6 +18,7 @@ pub enum RequestBodyPayload {
 pub struct BuiltRequestBody {
     pub payload: RequestBodyPayload,
     pub content_type: Option<String>,
+    pub body_bytes: u64,
 }
 
 pub fn build_request_body_payload(
@@ -28,14 +29,17 @@ pub fn build_request_body_payload(
         BodyType::None => Ok(BuiltRequestBody {
             payload: RequestBodyPayload::None,
             content_type: None,
+            body_bytes: 0,
         }),
         BodyType::RawText { content } => Ok(BuiltRequestBody {
             payload: RequestBodyPayload::Bytes(Bytes::from(content.clone())),
             content_type: Some("text/plain".to_string()),
+            body_bytes: content.len() as u64,
         }),
         BodyType::RawJson { content } => Ok(BuiltRequestBody {
             payload: RequestBodyPayload::Bytes(Bytes::from(content.clone())),
             content_type: Some("application/json".to_string()),
+            body_bytes: content.len() as u64,
         }),
         BodyType::UrlEncoded { entries } => {
             let pairs: Vec<(String, String)> = entries
@@ -45,9 +49,11 @@ pub fn build_request_body_payload(
                 .collect();
             let encoded = serde_urlencoded::to_string(&pairs)
                 .map_err(|e| anyhow!("failed to encode url-form body: {e}"))?;
+            let encoded_len = encoded.len() as u64;
             Ok(BuiltRequestBody {
                 payload: RequestBodyPayload::Bytes(Bytes::from(encoded)),
                 content_type: Some("application/x-www-form-urlencoded".to_string()),
+                body_bytes: encoded_len,
             })
         }
         BodyType::FormData {
@@ -56,18 +62,22 @@ pub fn build_request_body_payload(
         } => {
             let boundary = format!("torii-{}", uuid::Uuid::now_v7());
             let mut segments: Vec<PayloadStream> = Vec::new();
+            let mut body_bytes = 0_u64;
 
             for field in text_fields.iter().filter(|f| f.enabled) {
-                segments.push(single_chunk(format!("--{}\r\n", boundary).into_bytes()));
-                segments.push(single_chunk(
-                    format!(
-                        "Content-Disposition: form-data; name=\"{}\"\r\n\r\n",
-                        field.key
-                    )
-                    .into_bytes(),
-                ));
-                segments.push(single_chunk(field.value.clone().into_bytes()));
-                segments.push(single_chunk(b"\r\n".to_vec()));
+                let s1 = format!("--{}\r\n", boundary).into_bytes();
+                let s2 = format!(
+                    "Content-Disposition: form-data; name=\"{}\"\r\n\r\n",
+                    field.key
+                )
+                .into_bytes();
+                let s3 = field.value.clone().into_bytes();
+                let s4 = b"\r\n".to_vec();
+                body_bytes += (s1.len() + s2.len() + s3.len() + s4.len()) as u64;
+                segments.push(single_chunk(s1));
+                segments.push(single_chunk(s2));
+                segments.push(single_chunk(s3));
+                segments.push(single_chunk(s4));
             }
 
             for field in file_fields.iter().filter(|f| f.enabled) {
@@ -77,31 +87,40 @@ pub fn build_request_body_payload(
                         field.key
                     ));
                 }
-                segments.push(single_chunk(format!("--{}\r\n", boundary).into_bytes()));
-                segments.push(single_chunk(
-                    format!(
-                        "Content-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\n",
-                        field.key,
-                        field
-                            .file_name
-                            .clone()
-                            .unwrap_or_else(|| "file.bin".to_string())
-                    )
-                    .into_bytes(),
-                ));
-                segments.push(single_chunk(
-                    b"Content-Type: application/octet-stream\r\n\r\n".to_vec(),
-                ));
+                let s1 = format!("--{}\r\n", boundary).into_bytes();
+                let s2 = format!(
+                    "Content-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\n",
+                    field.key,
+                    field
+                        .file_name
+                        .clone()
+                        .unwrap_or_else(|| "file.bin".to_string())
+                )
+                .into_bytes();
+                let s3 = b"Content-Type: application/octet-stream\r\n\r\n".to_vec();
+                body_bytes += (s1.len() + s2.len() + s3.len()) as u64;
+                segments.push(single_chunk(s1));
+                segments.push(single_chunk(s2));
+                segments.push(single_chunk(s3));
                 segments.push(blob_file_stream(blob_store, &field.blob_hash)?);
-                segments.push(single_chunk(b"\r\n".to_vec()));
+                let file_size = std::fs::metadata(blob_store.path_for_hash(&field.blob_hash))
+                    .map(|meta| meta.len())
+                    .unwrap_or(0);
+                body_bytes += file_size;
+                let s4 = b"\r\n".to_vec();
+                body_bytes += s4.len() as u64;
+                segments.push(single_chunk(s4));
             }
 
-            segments.push(single_chunk(format!("--{}--\r\n", boundary).into_bytes()));
+            let closing = format!("--{}--\r\n", boundary).into_bytes();
+            body_bytes += closing.len() as u64;
+            segments.push(single_chunk(closing));
 
             let chained = stream::iter(segments).flatten();
             Ok(BuiltRequestBody {
                 payload: RequestBodyPayload::Stream(Box::pin(chained)),
                 content_type: Some(format!("multipart/form-data; boundary={boundary}")),
+                body_bytes,
             })
         }
         BodyType::BinaryFile {
@@ -120,6 +139,9 @@ pub fn build_request_body_payload(
             Ok(BuiltRequestBody {
                 payload: RequestBodyPayload::Stream(blob_file_stream(blob_store, blob_hash)?),
                 content_type: Some("application/octet-stream".to_string()),
+                body_bytes: std::fs::metadata(blob_store.path_for_hash(blob_hash))
+                    .map_err(|e| anyhow!("failed to stat body blob '{}': {e}", blob_hash))?
+                    .len(),
             })
         }
     }

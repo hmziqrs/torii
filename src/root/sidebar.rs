@@ -156,9 +156,11 @@ impl AppRoot {
                             ))
                             .icon(Icon::new(IconName::Settings2).small())
                             .active(active_key == Some(ItemKey::layout_debug()))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.open_item(ItemKey::layout_debug(), cx);
-                            })),
+                            .on_click(cx.listener(
+                                |this, _, _, cx| {
+                                    this.open_item(ItemKey::layout_debug(), cx);
+                                },
+                            )),
                         ),
                 ),
             )
