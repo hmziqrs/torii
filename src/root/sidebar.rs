@@ -3,7 +3,7 @@ use crate::{
     services::workspace_tree::{CollectionTree, FolderTree, TreeItem},
     session::{item_key::ItemKey, window_layout::SidebarSection},
 };
-use gpui::{div, prelude::*, px};
+use gpui::{div, prelude::*, px, relative};
 use gpui_component::{
     ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _, h_flex,
     button::{Button, ButtonVariants as _},
@@ -35,7 +35,7 @@ impl AppRoot {
             .overflow_hidden()
             .child(
                 div()
-                    .w(px(140.))
+                    .w(px(96.))
                     .h_full()
                     .flex_shrink_0()
                     .overflow_hidden()
@@ -45,14 +45,16 @@ impl AppRoot {
                         v_flex()
                             .size_full()
                             .overflow_y_scrollbar()
-                            .p_2()
-                            .gap_1()
+                            .p_1()
+                            .gap_px()
                             .child(
                                 Button::new("rail-collections")
                                     .ghost()
                                     .selected(is_collections)
+                                    .xsmall()
+                                    .compact()
                                     .w_full()
-                                    .h(px(52.))
+                                    .h(px(42.))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.session.update(cx, |session, cx| {
                                             session.window_layout.sidebar_section =
@@ -63,17 +65,25 @@ impl AppRoot {
                                     .child(
                                         v_flex()
                                             .items_center()
-                                            .gap_px()
-                                            .child(Icon::new(IconName::BookOpen).size_4())
-                                            .child(div().text_xs().child("Collections")),
+                                            .gap_0()
+                                            .child(Icon::new(IconName::BookOpen).size_5())
+                                            .child(
+                                                div()
+                                                    .text_size(px(9.))
+                                                    .line_height(relative(1.))
+                                                    .whitespace_nowrap()
+                                                    .child("Collections"),
+                                            ),
                                     ),
                             )
                             .child(
                                 Button::new("rail-environments")
                                     .ghost()
                                     .selected(!is_collections)
+                                    .xsmall()
+                                    .compact()
                                     .w_full()
-                                    .h(px(52.))
+                                    .h(px(42.))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.session.update(cx, |session, cx| {
                                             session.window_layout.sidebar_section =
@@ -84,61 +94,91 @@ impl AppRoot {
                                     .child(
                                         v_flex()
                                             .items_center()
-                                            .gap_px()
-                                            .child(Icon::new(IconName::Globe).size_4())
-                                            .child(div().text_xs().child("Environments")),
+                                            .gap_0()
+                                            .child(Icon::new(IconName::Globe).size_5())
+                                            .child(
+                                                div()
+                                                    .text_size(px(9.))
+                                                    .line_height(relative(1.))
+                                                    .whitespace_nowrap()
+                                                    .child("Environments"),
+                                            ),
                                     ),
                             )
-                            .child(div().h(px(8.)))
+                            .child(div().h(px(4.)))
                             .child(
                                 Button::new("rail-settings")
                                     .ghost()
                                     .selected(active_key == Some(ItemKey::settings()))
+                                    .xsmall()
+                                    .compact()
                                     .w_full()
-                                    .h(px(52.))
+                                    .h(px(42.))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.open_item(ItemKey::settings(), cx);
                                     }))
                                     .child(
                                         v_flex()
                                             .items_center()
-                                            .gap_px()
-                                            .child(Icon::new(IconName::Settings2).size_4())
-                                            .child(div().text_xs().child("Settings")),
+                                            .gap_0()
+                                            .child(Icon::new(IconName::Settings2).size_5())
+                                            .child(
+                                                div()
+                                                    .text_size(px(9.))
+                                                    .line_height(relative(1.))
+                                                    .whitespace_nowrap()
+                                                    .child("Settings"),
+                                            ),
                                     ),
                             )
                             .child(
                                 Button::new("rail-about")
                                     .ghost()
                                     .selected(active_key == Some(ItemKey::about()))
+                                    .xsmall()
+                                    .compact()
                                     .w_full()
-                                    .h(px(52.))
+                                    .h(px(42.))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.open_item(ItemKey::about(), cx);
                                     }))
                                     .child(
                                         v_flex()
                                             .items_center()
-                                            .gap_px()
-                                            .child(Icon::new(IconName::Info).size_4())
-                                            .child(div().text_xs().child("About")),
+                                            .gap_0()
+                                            .child(Icon::new(IconName::Info).size_5())
+                                            .child(
+                                                div()
+                                                    .text_size(px(9.))
+                                                    .line_height(relative(1.))
+                                                    .whitespace_nowrap()
+                                                    .child("About"),
+                                            ),
                                     ),
                             )
                             .child(
                                 Button::new("rail-layout-debug")
                                     .ghost()
                                     .selected(active_key == Some(ItemKey::layout_debug()))
+                                    .xsmall()
+                                    .compact()
                                     .w_full()
-                                    .h(px(52.))
+                                    .h(px(42.))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.open_item(ItemKey::layout_debug(), cx);
                                     }))
                                     .child(
                                         v_flex()
                                             .items_center()
-                                            .gap_px()
-                                            .child(Icon::new(IconName::Settings2).size_4())
-                                            .child(div().text_xs().child("Layout")),
+                                            .gap_0()
+                                            .child(Icon::new(IconName::Settings2).size_5())
+                                            .child(
+                                                div()
+                                                    .text_size(px(9.))
+                                                    .line_height(relative(1.))
+                                                    .whitespace_nowrap()
+                                                    .child("Layout"),
+                                            ),
                                     ),
                             ),
                     ),
