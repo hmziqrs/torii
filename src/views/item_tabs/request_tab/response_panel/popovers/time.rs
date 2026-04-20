@@ -6,7 +6,7 @@ use super::*;
 const WATERFALL_WIDTH: f32 = 260.;
 
 pub(super) fn render_time_popover(
-    view: &mut RequestTabView,
+    _view: &mut RequestTabView,
     response: &crate::domain::response::ResponseSummary,
     cx: &mut Context<RequestTabView>,
 ) -> gpui::AnyElement {
@@ -20,11 +20,8 @@ pub(super) fn render_time_popover(
     let total_ms = response.total_ms;
 
     hover_popover_trigger(
-        view,
         "response-time-popover",
         token_text(token, cx.theme().muted_foreground, false),
-        ResponseMetaHover::Time,
-        view.time_meta_focus.clone(),
         Anchor::TopLeft,
         move |cx| {
             let muted = cx.theme().muted_foreground.opacity(0.8);

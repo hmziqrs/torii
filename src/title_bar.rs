@@ -181,8 +181,14 @@ impl Render for SettingsDropdown {
                                 Box::new(SelectRadius(0)),
                             )
                             .separator()
-                            .menu(es_fluent::localize("tab_kind_settings", None), Box::new(OpenSettings))
-                            .menu(es_fluent::localize("tab_kind_layout_debug", None), Box::new(OpenLayoutDebug))
+                            .menu(
+                                es_fluent::localize("tab_kind_settings", None),
+                                Box::new(OpenSettings),
+                            )
+                            .menu(
+                                es_fluent::localize("tab_kind_layout_debug", None),
+                                Box::new(OpenLayoutDebug),
+                            )
                             .menu(es_fluent::localize("tab_kind_about", None), Box::new(About))
                     })
                     .anchor(Corner::TopRight),

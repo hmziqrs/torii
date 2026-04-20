@@ -398,6 +398,7 @@ request_tab_response_size_popover_uncompressed = Uncompressed
 
 request_tab_response_details_popover_title = Network
 request_tab_response_details_http_version = HTTP Version
+request_tab_response_details_local_addr = Local Address
 request_tab_response_details_remote_addr = Remote Address
 request_tab_response_details_cert_cn = Certificate CN
 request_tab_response_details_issuer_cn = Issuer CN

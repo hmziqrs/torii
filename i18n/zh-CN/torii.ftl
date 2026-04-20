@@ -398,6 +398,7 @@ request_tab_response_size_popover_uncompressed = 解压后
 
 request_tab_response_details_popover_title = 网络
 request_tab_response_details_http_version = HTTP 版本
+request_tab_response_details_local_addr = 本地地址
 request_tab_response_details_remote_addr = 远端地址
 request_tab_response_details_cert_cn = 证书 CN
 request_tab_response_details_issuer_cn = 颁发者 CN

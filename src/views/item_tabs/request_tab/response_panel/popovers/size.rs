@@ -4,7 +4,7 @@ use gpui_component::Anchor;
 use super::*;
 
 pub(super) fn render_size_popover(
-    view: &mut RequestTabView,
+    _view: &mut RequestTabView,
     response: &crate::domain::response::ResponseSummary,
     cx: &mut Context<RequestTabView>,
 ) -> gpui::AnyElement {
@@ -17,11 +17,8 @@ pub(super) fn render_size_popover(
     let request_size = response.request_size.clone();
 
     hover_popover_trigger(
-        view,
         "response-size-popover",
         token_text(token, cx.theme().muted_foreground, false),
-        ResponseMetaHover::Size,
-        view.size_meta_focus.clone(),
         Anchor::TopLeft,
         move |cx| {
             let muted = cx.theme().muted_foreground;

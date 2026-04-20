@@ -1,8 +1,7 @@
-use gpui::{
-    AnyElement, App, FocusHandle, FontWeight, InteractiveElement as _, IntoElement,
-    ParentElement as _, RenderOnce, StatefulInteractiveElement as _, Styled as _, Window, div, px,
-};
-use gpui_component::{ActiveTheme as _, Anchor, Selectable, h_flex, popover::Popover};
+use std::time::Duration;
+
+use gpui::{AnyElement, App, FontWeight, IntoElement, ParentElement as _, Styled as _, div, px};
+use gpui_component::{ActiveTheme as _, Anchor, h_flex, hover_card::HoverCard};
 
 use super::*;
 
@@ -34,47 +33,19 @@ pub(super) fn render_meta_bar(
 }
 
 pub(super) fn hover_popover_trigger(
-    view: &mut RequestTabView,
     id: &'static str,
     token: gpui::Div,
-    variant: ResponseMetaHover,
-    focus_handle: FocusHandle,
     anchor: Anchor,
     content: impl Fn(&App) -> AnyElement + 'static,
-    cx: &mut Context<RequestTabView>,
+    _cx: &mut Context<RequestTabView>,
 ) -> AnyElement {
-    let view_entity = cx.entity();
-    let trigger = token
-        .id(id)
-        .track_focus(&focus_handle)
-        .on_hover(cx.listener(move |this, hovered, _, cx| {
-            if *hovered {
-                this.meta_hover_enter(variant, cx);
-            } else {
-                this.meta_hover_leave(variant, cx);
-            }
-        }));
-
-    Popover::new(id)
+    HoverCard::new(id)
         .anchor(anchor)
-        .open(view.meta_hover == variant)
-        .overlay_closable(false)
+        .open_delay(Duration::from_millis(80))
+        .close_delay(Duration::from_millis(160))
         .appearance(true)
-        .trigger(PopoverTrigger::new(trigger.into_any_element()))
-        .content(move |_, window, popover_cx| {
-            div()
-                .id(format!("{id}-content"))
-                .on_hover(
-                    window.listener_for(&view_entity, move |this, hovered, _, cx| {
-                        if *hovered {
-                            this.meta_hover_enter(variant, cx);
-                        } else {
-                            this.meta_hover_leave(variant, cx);
-                        }
-                    }),
-                )
-                .child(content(popover_cx))
-        })
+        .trigger(token.id(id))
+        .content(move |_, _, popover_cx| content(popover_cx))
         .into_any_element()
 }
 
@@ -123,36 +94,4 @@ pub(super) fn row(label: String, value: String, muted: gpui::Hsla) -> gpui::Div 
         .gap_2()
         .child(div().text_xs().text_color(muted).child(label))
         .child(div().text_xs().font_family("monospace").child(value))
-}
-
-#[derive(IntoElement)]
-struct PopoverTrigger {
-    element: AnyElement,
-    selected: bool,
-}
-
-impl PopoverTrigger {
-    fn new(element: AnyElement) -> Self {
-        Self {
-            element,
-            selected: false,
-        }
-    }
-}
-
-impl Selectable for PopoverTrigger {
-    fn selected(mut self, selected: bool) -> Self {
-        self.selected = selected;
-        self
-    }
-
-    fn is_selected(&self) -> bool {
-        self.selected
-    }
-}
-
-impl RenderOnce for PopoverTrigger {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        self.element
-    }
 }

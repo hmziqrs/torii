@@ -1,8 +1,7 @@
 use super::AppRoot;
 use crate::{
     app::{
-        About, CloseTab, NewRequest, NextTab, OpenLayoutDebug, OpenSettings, PrevTab,
-        ToggleSidebar,
+        About, CloseTab, NewRequest, NextTab, OpenLayoutDebug, OpenSettings, PrevTab, ToggleSidebar,
     },
     domain::item_id::ItemId,
     session::item_key::ItemKey,

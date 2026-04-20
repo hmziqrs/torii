@@ -8,6 +8,7 @@ use anyhow::{Context as _, Result, anyhow};
 use base64::Engine as _;
 use bytes::Bytes;
 use futures::StreamExt as _;
+use hyper_util::client::legacy::connect::HttpInfo;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -55,6 +56,7 @@ pub struct TransportResponse {
     pub headers: http::HeaderMap,
     pub media_type: Option<String>,
     pub http_version: Option<http::Version>,
+    pub local_addr: Option<std::net::SocketAddr>,
     pub remote_addr: Option<std::net::SocketAddr>,
     pub peer_cert_der: Option<Vec<u8>>,
     pub response_headers_size: Option<u64>,
@@ -239,7 +241,15 @@ impl HttpTransport for ReqwestTransport {
             .and_then(|v| v.to_str().ok())
             .map(|s| s.split(';').next().unwrap_or(s).trim().to_string());
         let http_version = Some(response.version());
-        let remote_addr = response.remote_addr();
+        let local_addr = response
+            .extensions()
+            .get::<HttpInfo>()
+            .map(HttpInfo::local_addr);
+        let remote_addr = response
+            .extensions()
+            .get::<HttpInfo>()
+            .map(HttpInfo::remote_addr)
+            .or_else(|| response.remote_addr());
         let response_headers_size = Some(header_map_size_bytes(&resp_headers));
         let content_length = parse_content_length(&resp_headers);
         let peer_cert_der = response
@@ -258,6 +268,7 @@ impl HttpTransport for ReqwestTransport {
             headers: resp_headers,
             media_type,
             http_version,
+            local_addr,
             remote_addr,
             peer_cert_der,
             response_headers_size,
@@ -540,6 +551,7 @@ impl RequestExecutionService {
         let media_type = transport_response.media_type;
         let resp_headers = transport_response.headers;
         let http_version = transport_response.http_version.map(http_version_to_string);
+        let local_addr = transport_response.local_addr.map(|addr| addr.to_string());
         let remote_addr = transport_response.remote_addr.map(|addr| addr.to_string());
         let response_headers_size = transport_response.response_headers_size;
         let content_length = transport_response.content_length;
@@ -580,7 +592,7 @@ impl RequestExecutionService {
             first_byte_at_unix_ms: Some(first_byte_at_unix_ms),
             completed_at_unix_ms: Some(completed_at_unix_ms),
             http_version,
-            local_addr: None,
+            local_addr,
             remote_addr,
             tls,
             size: ResponseSizeBreakdown {

@@ -8804,6 +8804,7 @@ dependencies = [
  "gpui-wry",
  "gpui_platform",
  "http",
+ "hyper-util",
  "keyring",
  "koruma",
  "koruma-collection",

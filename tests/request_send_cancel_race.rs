@@ -105,6 +105,7 @@ impl HttpTransport for HoldReleaseTransport {
             headers: http::HeaderMap::new(),
             media_type: Some("text/plain".to_string()),
             http_version: Some(http::Version::HTTP_11),
+            local_addr: None,
             remote_addr: None,
             peer_cert_der: None,
             response_headers_size: Some(0),

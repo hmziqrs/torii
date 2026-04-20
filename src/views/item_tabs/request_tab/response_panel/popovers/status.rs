@@ -4,7 +4,7 @@ use gpui_component::Anchor;
 use super::*;
 
 pub(super) fn render_status_popover(
-    view: &mut RequestTabView,
+    _view: &mut RequestTabView,
     response: &crate::domain::response::ResponseSummary,
     cx: &mut Context<RequestTabView>,
 ) -> gpui::AnyElement {
@@ -20,7 +20,6 @@ pub(super) fn render_status_popover(
     };
 
     hover_popover_trigger(
-        view,
         "response-status-popover",
         div()
             .text_xs()
@@ -33,8 +32,6 @@ pub(super) fn render_status_popover(
             .bg(status_color.opacity(0.12))
             .rounded(px(6.))
             .child(code.to_string()),
-        ResponseMetaHover::Status,
-        view.status_meta_focus.clone(),
         Anchor::TopLeft,
         move |cx| {
             let title = es_fluent::localize("request_tab_response_meta_status", None).to_string();

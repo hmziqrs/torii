@@ -187,12 +187,7 @@ impl RequestTabView {
             state
         });
         let body_search_input = cx.new(|cx| InputState::new(window, cx));
-        let status_meta_focus = cx.focus_handle().tab_stop(true);
-        let time_meta_focus = cx.focus_handle().tab_stop(true);
-        let size_meta_focus = cx.focus_handle().tab_stop(true);
-        let network_meta_focus = cx.focus_handle().tab_stop(true);
-
-        let mut subscriptions = Self::register_input_subscriptions(
+        let subscriptions = Self::register_input_subscriptions(
             window,
             cx,
             &name_input,
@@ -212,30 +207,6 @@ impl RequestTabView {
             &timeout_input,
             &follow_redirects_input,
         );
-        subscriptions.push(cx.on_focus(&status_meta_focus, window, |this, _, cx| {
-            this.meta_hover_enter(ResponseMetaHover::Status, cx);
-        }));
-        subscriptions.push(cx.on_blur(&status_meta_focus, window, |this, _, cx| {
-            this.meta_hover_leave(ResponseMetaHover::Status, cx);
-        }));
-        subscriptions.push(cx.on_focus(&time_meta_focus, window, |this, _, cx| {
-            this.meta_hover_enter(ResponseMetaHover::Time, cx);
-        }));
-        subscriptions.push(cx.on_blur(&time_meta_focus, window, |this, _, cx| {
-            this.meta_hover_leave(ResponseMetaHover::Time, cx);
-        }));
-        subscriptions.push(cx.on_focus(&size_meta_focus, window, |this, _, cx| {
-            this.meta_hover_enter(ResponseMetaHover::Size, cx);
-        }));
-        subscriptions.push(cx.on_blur(&size_meta_focus, window, |this, _, cx| {
-            this.meta_hover_leave(ResponseMetaHover::Size, cx);
-        }));
-        subscriptions.push(cx.on_focus(&network_meta_focus, window, |this, _, cx| {
-            this.meta_hover_enter(ResponseMetaHover::Network, cx);
-        }));
-        subscriptions.push(cx.on_blur(&network_meta_focus, window, |this, _, cx| {
-            this.meta_hover_leave(ResponseMetaHover::Network, cx);
-        }));
 
         let this_entity = cx.entity();
         let mut this = Self {
@@ -264,12 +235,6 @@ impl RequestTabView {
             next_kv_row_id: 1,
             active_section: RequestSectionTab::Params,
             active_response_tab: ResponseTab::Body,
-            meta_hover: ResponseMetaHover::None,
-            meta_hover_close_task: None,
-            status_meta_focus,
-            time_meta_focus,
-            size_meta_focus,
-            network_meta_focus,
             loaded_full_body_blob_id: None,
             loaded_full_body_text: None,
             input_sync_guard: ReentrancyGuard::default(),

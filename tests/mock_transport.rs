@@ -252,6 +252,7 @@ impl HttpTransport for MockTransport {
             headers: resp_headers,
             media_type,
             http_version: Some(http::Version::HTTP_11),
+            local_addr: None,
             remote_addr: None,
             peer_cert_der: None,
             response_headers_size: Some(0),

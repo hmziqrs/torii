@@ -56,6 +56,7 @@ quick-xml = "0.37"
 x509-parser = "0.18"
 tower-layer = "0.3"
 tower-service = "0.3"
+hyper-util = { version = "0.1.20", features = ["client-legacy"] }
 
 [package]
 name = "torii"
@@ -109,6 +110,7 @@ quick-xml.workspace = true
 x509-parser.workspace = true
 tower-layer.workspace = true
 tower-service.workspace = true
+hyper-util.workspace = true
 
 [build-dependencies]
 es-fluent = { workspace = true, features = ["build"] }

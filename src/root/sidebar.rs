@@ -5,8 +5,9 @@ use crate::{
 };
 use gpui::{div, prelude::*, px, relative};
 use gpui_component::{
-    ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _, h_flex,
+    ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _,
     button::{Button, ButtonRounded, ButtonVariants as _},
+    h_flex,
     menu::PopupMenuItem,
     scroll::ScrollableElement as _,
     sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem},
@@ -186,25 +187,28 @@ impl AppRoot {
                                                 None,
                                             ))
                                             .child(
-                                                SidebarMenu::new()
-                                                    .children(workspace.environments.iter().map(
-                                                    |environment| {
-                                                        let item_key =
-                                                            ItemKey::environment(environment.id);
-                                                        let weak_root = weak_root.clone();
-                                                        SidebarMenuItem::new(
-                                                            environment.name.clone(),
-                                                        )
-                                                        .icon(Icon::new(IconName::Globe).small())
-                                                        .active(active_key == Some(item_key))
-                                                        .on_click(cx.listener(
-                                                            move |this, _, _, cx| {
-                                                                this.open_item(item_key, cx);
-                                                            },
-                                                        ))
-                                                        .context_menu(move |menu, _, _| {
+                                                SidebarMenu::new().children(
+                                                    workspace.environments.iter().map(
+                                                        |environment| {
+                                                            let item_key = ItemKey::environment(
+                                                                environment.id,
+                                                            );
                                                             let weak_root = weak_root.clone();
-                                                            menu.item(
+                                                            SidebarMenuItem::new(
+                                                                environment.name.clone(),
+                                                            )
+                                                            .icon(
+                                                                Icon::new(IconName::Globe).small(),
+                                                            )
+                                                            .active(active_key == Some(item_key))
+                                                            .on_click(cx.listener(
+                                                                move |this, _, _, cx| {
+                                                                    this.open_item(item_key, cx);
+                                                                },
+                                                            ))
+                                                            .context_menu(move |menu, _, _| {
+                                                                let weak_root = weak_root.clone();
+                                                                menu.item(
                                                                 PopupMenuItem::new(
                                                                     es_fluent::localize(
                                                                         "menu_delete",
@@ -224,9 +228,10 @@ impl AppRoot {
                                                                     );
                                                                 }),
                                                             )
-                                                        })
-                                                    },
-                                                )),
+                                                            })
+                                                        },
+                                                    ),
+                                                ),
                                             ),
                                         )
                                     })
