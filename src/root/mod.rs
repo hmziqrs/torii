@@ -444,10 +444,10 @@ impl Render for AppRoot {
         // no more entity.update() inside render().
 
         let weak_root = cx.entity().downgrade();
-        let sidebar_rail_width = 96.0;
-        let sidebar_content_min_width = 170.0;
+        let sidebar_rail_width = 72.0;
+        let sidebar_content_min_width = 150.0;
         let sidebar_expanded_min_width = sidebar_rail_width + sidebar_content_min_width;
-        let sidebar_expanded_max_width = 500.0;
+        let sidebar_expanded_max_width = 440.0;
 
         v_flex()
             .size_full()

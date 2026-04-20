@@ -35,7 +35,7 @@ impl AppRoot {
             .overflow_hidden()
             .child(
                 div()
-                    .w(px(96.))
+                    .w(px(72.))
                     .h_full()
                     .flex_shrink_0()
                     .overflow_hidden()
@@ -45,7 +45,8 @@ impl AppRoot {
                         v_flex()
                             .size_full()
                             .overflow_y_scrollbar()
-                            .p_1()
+                            .px_px()
+                            .py_1()
                             .gap_px()
                             .child(
                                 Button::new("rail-collections")
@@ -54,7 +55,7 @@ impl AppRoot {
                                     .xsmall()
                                     .compact()
                                     .w_full()
-                                    .h(px(42.))
+                                    .h(px(56.))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.session.update(cx, |session, cx| {
                                             session.window_layout.sidebar_section =
@@ -66,13 +67,13 @@ impl AppRoot {
                                         v_flex()
                                             .items_center()
                                             .gap_0()
-                                            .child(Icon::new(IconName::BookOpen).size_5())
+                                            .child(Icon::new(IconName::BookOpen).size_6())
                                             .child(
                                                 div()
-                                                    .text_size(px(9.))
+                                                    .text_size(px(8.))
+                                                    .text_center()
                                                     .line_height(relative(1.))
-                                                    .whitespace_nowrap()
-                                                    .child("Collections"),
+                                                    .child("Collect"),
                                             ),
                                     ),
                             )
@@ -83,7 +84,7 @@ impl AppRoot {
                                     .xsmall()
                                     .compact()
                                     .w_full()
-                                    .h(px(42.))
+                                    .h(px(56.))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.session.update(cx, |session, cx| {
                                             session.window_layout.sidebar_section =
@@ -95,13 +96,13 @@ impl AppRoot {
                                         v_flex()
                                             .items_center()
                                             .gap_0()
-                                            .child(Icon::new(IconName::Globe).size_5())
+                                            .child(Icon::new(IconName::Globe).size_6())
                                             .child(
                                                 div()
-                                                    .text_size(px(9.))
+                                                    .text_size(px(8.))
+                                                    .text_center()
                                                     .line_height(relative(1.))
-                                                    .whitespace_nowrap()
-                                                    .child("Environments"),
+                                                    .child("Env"),
                                             ),
                                     ),
                             )
@@ -113,7 +114,7 @@ impl AppRoot {
                                     .xsmall()
                                     .compact()
                                     .w_full()
-                                    .h(px(42.))
+                                    .h(px(56.))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.open_item(ItemKey::settings(), cx);
                                     }))
@@ -121,13 +122,13 @@ impl AppRoot {
                                         v_flex()
                                             .items_center()
                                             .gap_0()
-                                            .child(Icon::new(IconName::Settings2).size_5())
+                                            .child(Icon::new(IconName::Settings2).size_6())
                                             .child(
                                                 div()
-                                                    .text_size(px(9.))
+                                                    .text_size(px(8.))
+                                                    .text_center()
                                                     .line_height(relative(1.))
-                                                    .whitespace_nowrap()
-                                                    .child("Settings"),
+                                                    .child("Prefs"),
                                             ),
                                     ),
                             )
@@ -138,7 +139,7 @@ impl AppRoot {
                                     .xsmall()
                                     .compact()
                                     .w_full()
-                                    .h(px(42.))
+                                    .h(px(56.))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.open_item(ItemKey::about(), cx);
                                     }))
@@ -146,12 +147,12 @@ impl AppRoot {
                                         v_flex()
                                             .items_center()
                                             .gap_0()
-                                            .child(Icon::new(IconName::Info).size_5())
+                                            .child(Icon::new(IconName::Info).size_6())
                                             .child(
                                                 div()
-                                                    .text_size(px(9.))
+                                                    .text_size(px(8.))
+                                                    .text_center()
                                                     .line_height(relative(1.))
-                                                    .whitespace_nowrap()
                                                     .child("About"),
                                             ),
                                     ),
@@ -163,7 +164,7 @@ impl AppRoot {
                                     .xsmall()
                                     .compact()
                                     .w_full()
-                                    .h(px(42.))
+                                    .h(px(56.))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.open_item(ItemKey::layout_debug(), cx);
                                     }))
@@ -171,13 +172,13 @@ impl AppRoot {
                                         v_flex()
                                             .items_center()
                                             .gap_0()
-                                            .child(Icon::new(IconName::Settings2).size_5())
+                                            .child(Icon::new(IconName::Settings2).size_6())
                                             .child(
                                                 div()
-                                                    .text_size(px(9.))
+                                                    .text_size(px(8.))
+                                                    .text_center()
                                                     .line_height(relative(1.))
-                                                    .whitespace_nowrap()
-                                                    .child("Layout"),
+                                                    .child("Debug"),
                                             ),
                                     ),
                             ),
