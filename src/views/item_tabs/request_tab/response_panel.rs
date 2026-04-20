@@ -74,7 +74,7 @@ pub(super) fn render_response_panel(
                 ExecStatus::Completed { response } => response.clone(),
                 _ => unreachable!(),
             };
-            let header_row = popovers::render_meta_bar(view, &response, response_label, cx);
+            let header_row = popovers::render_meta_bar(view, &response, cx);
 
             v_flex().flex_1().min_h_0().gap_2().child(header_row).child(
                 content::render_completed_response_body(view, &response, window, cx),

@@ -13,7 +13,6 @@ mod time;
 pub(super) fn render_meta_bar(
     view: &mut RequestTabView,
     response: &crate::domain::response::ResponseSummary,
-    response_label: gpui::Div,
     cx: &mut Context<RequestTabView>,
 ) -> gpui::Div {
     h_flex()
@@ -21,8 +20,6 @@ pub(super) fn render_meta_bar(
         .gap_3()
         .items_center()
         .pt_3()
-        .child(response_label)
-        .child(Divider::vertical().color(cx.theme().border))
         .child(status::render_status_popover(view, response, cx))
         .child(dot(cx))
         .child(time::render_time_popover(view, response, cx))
