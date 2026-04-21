@@ -248,7 +248,7 @@ impl AppRoot {
         self.persist_session_state(cx);
     }
 
-    fn refresh_catalog(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn refresh_catalog(&mut self, cx: &mut Context<Self>) {
         let services = services(cx);
         let selected_workspace_id = self.session.read(cx).selected_workspace_id;
         match crate::services::workspace_tree::load_workspace_catalog(

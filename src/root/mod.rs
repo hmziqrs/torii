@@ -15,12 +15,14 @@ use gpui_component::{
 
 use crate::{
     domain::{
-        ids::{RequestDraftId, RequestId},
+        collection::CollectionStorageKind,
+        ids::{RequestDraftId, RequestId, WorkspaceId},
         item_id::ItemId,
     },
     repos::tab_session_repo::TabSessionMetadata,
     services::{
         app_services::{AppServices, AppServicesGlobal},
+        linked_collection_reconcile::{LinkedCollectionEvent, LinkedCollectionMonitor},
         workspace_tree::{WorkspaceCatalog, load_workspace_catalog},
     },
     session::{
@@ -50,6 +52,8 @@ pub struct AppRoot {
     _subscriptions: Vec<Subscription>,
     /// Tracks the previously active tab so we can release webviews on tab switch.
     previous_active_tab: Option<TabKey>,
+    linked_collection_monitor: Option<LinkedCollectionMonitor>,
+    linked_monitor_workspace_id: Option<WorkspaceId>,
 }
 
 impl AppRoot {
@@ -136,6 +140,7 @@ impl AppRoot {
                         Ok(catalog) => this.catalog = catalog,
                         Err(err) => tracing::error!("failed to refresh workspace catalog: {err}"),
                     }
+                    this.sync_linked_collection_monitor(selected_workspace_id, cx);
                 }
 
                 // Release the HTML preview webview when switching away from a request tab.
@@ -153,7 +158,33 @@ impl AppRoot {
             }
         })];
 
-        Self {
+        let io_runtime = services.io_runtime.clone();
+        cx.spawn(async move |this, cx| {
+            loop {
+                // Run timer on Tokio runtime; GPUI async context does not provide a Tokio reactor.
+                let sleep_join = io_runtime.spawn(async {
+                    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                });
+                let _ = sleep_join.await;
+
+                let update = this.update(cx, |this, cx| {
+                    let events = this
+                        .linked_collection_monitor
+                        .as_ref()
+                        .map(|monitor| monitor.drain_events())
+                        .unwrap_or_default();
+                    if !events.is_empty() {
+                        this.apply_linked_reconcile_events(events, cx);
+                    }
+                });
+                if update.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+
+        let mut root = Self {
             focus_handle: cx.focus_handle(),
             title_bar,
             session,
@@ -165,6 +196,82 @@ impl AppRoot {
             request_draft_pages: std::collections::HashMap::new(),
             _subscriptions: subscriptions,
             previous_active_tab: None,
+            linked_collection_monitor: None,
+            linked_monitor_workspace_id: None,
+        };
+        root.sync_linked_collection_monitor(selected_workspace_id, cx);
+        root
+    }
+
+    fn apply_linked_reconcile_events(
+        &mut self,
+        events: Vec<LinkedCollectionEvent>,
+        cx: &mut Context<Self>,
+    ) {
+        if events.is_empty() {
+            return;
+        }
+
+        self.refresh_catalog(cx);
+
+        let stale_selection = {
+            let session = self.session.read(cx);
+            session
+                .sidebar_selection
+                .is_some_and(|selection| !self.catalog.contains(selection))
+        };
+        if stale_selection {
+            self.session.update(cx, |session, cx| {
+                let fallback = session.tab_manager.active().map(|active| active.item());
+                session.set_sidebar_selection(fallback, cx);
+            });
+            self.persist_session_state(cx);
+        }
+    }
+
+    fn sync_linked_collection_monitor(
+        &mut self,
+        selected_workspace_id: Option<WorkspaceId>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.linked_monitor_workspace_id == selected_workspace_id {
+            return;
+        }
+
+        self.linked_collection_monitor = None;
+        self.linked_monitor_workspace_id = selected_workspace_id;
+
+        let Some(workspace_id) = selected_workspace_id else {
+            return;
+        };
+        let services = services(cx);
+        let linked_roots = services
+            .repos
+            .collection
+            .list_by_workspace(workspace_id)
+            .ok()
+            .into_iter()
+            .flatten()
+            .filter(|collection| collection.storage_kind == CollectionStorageKind::Linked)
+            .filter_map(|collection| {
+                collection
+                    .storage_config
+                    .linked_root_path
+                    .map(|root| (collection.id, root))
+            })
+            .collect::<Vec<_>>();
+
+        if linked_roots.is_empty() {
+            return;
+        }
+
+        match LinkedCollectionMonitor::start_for_roots(linked_roots) {
+            Ok(monitor) => {
+                self.linked_collection_monitor = Some(monitor);
+            }
+            Err(err) => {
+                tracing::warn!("failed to start linked collection monitor: {err}");
+            }
         }
     }
 

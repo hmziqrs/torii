@@ -24,7 +24,6 @@ use crate::{
 
 use super::{
     app_services::{AppServices, Repositories},
-    linked_collection_reconcile::LinkedCollectionMonitor,
     recovery::RecoveryCoordinator,
     request_execution::{RequestExecutionService, ReqwestTransport},
     secret_manager::SecretManager,
@@ -110,14 +109,6 @@ fn build_app_services() -> Result<AppServices> {
         request_repo.clone(),
         environment_repo.clone(),
     );
-    let linked_collection_monitor =
-        match LinkedCollectionMonitor::start(workspace_repo.clone(), collection_repo.clone(), io_runtime.clone()) {
-            Ok(monitor) => Some(monitor),
-            Err(err) => {
-                tracing::warn!("failed to start linked collection monitor: {err}");
-                None
-            }
-        };
 
     Ok(AppServices {
         paths,
@@ -141,7 +132,6 @@ fn build_app_services() -> Result<AppServices> {
         ui_preferences,
         recovery,
         session_restore,
-        linked_collection_monitor,
     })
 }
 
@@ -240,14 +230,6 @@ fn fallback_app_services() -> AppServices {
         request_repo.clone(),
         environment_repo.clone(),
     );
-    let linked_collection_monitor =
-        match LinkedCollectionMonitor::start(workspace_repo.clone(), collection_repo.clone(), io_runtime.clone()) {
-            Ok(monitor) => Some(monitor),
-            Err(err) => {
-                tracing::warn!("failed to start fallback linked collection monitor: {err}");
-                None
-            }
-        };
 
     AppServices {
         paths: fallback_paths,
@@ -271,7 +253,6 @@ fn fallback_app_services() -> AppServices {
         ui_preferences,
         recovery,
         session_restore,
-        linked_collection_monitor,
     }
 }
 

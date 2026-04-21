@@ -35,7 +35,7 @@ es-fluent-manager-embedded = "0.14"
 strum = "0.28"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["io"] }
-notify = "6.1"
+notify-debouncer-full = "0.3"
 reqwest = { version = "0.12", features = ["stream", "gzip", "brotli", "deflate"] }
 http = "1"
 url = "2"
@@ -90,7 +90,7 @@ es-fluent-manager-embedded.workspace = true
 strum.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
-notify.workspace = true
+notify-debouncer-full.workspace = true
 reqwest.workspace = true
 http.workspace = true
 url.workspace = true

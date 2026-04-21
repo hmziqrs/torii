@@ -1,19 +1,20 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
     path::{Path, PathBuf},
-    sync::mpsc::{Receiver, Sender},
-    time::{Duration, Instant},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
 };
 
 use anyhow::Result;
-use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-
-use crate::{
-    domain::ids::CollectionId,
-    repos::{collection_repo::CollectionRepoRef, workspace_repo::WorkspaceRepoRef},
-    services::tokio_runtime::TokioRuntime,
+use notify_debouncer_full::{
+    DebounceEventResult, DebouncedEvent, new_debouncer,
+    notify::{EventKind, RecursiveMode, Watcher},
 };
+
+use crate::domain::ids::CollectionId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinkedCollectionEvent {
@@ -31,268 +32,70 @@ pub enum LinkedCollectionEventKind {
     FullRescanRequested,
 }
 
-#[derive(Debug, Clone)]
-struct PendingCollectionEvents {
-    first_seen: Instant,
-    events: Vec<LinkedCollectionEvent>,
-}
-
-#[derive(Debug, Clone)]
-pub struct LinkedCollectionReconcileQueue {
-    debounce_window: Duration,
-    full_rescan_threshold: usize,
-    pending: HashMap<CollectionId, PendingCollectionEvents>,
-}
-
-impl LinkedCollectionReconcileQueue {
-    pub fn new(debounce_window: Duration, full_rescan_threshold: usize) -> Self {
-        Self {
-            debounce_window,
-            full_rescan_threshold,
-            pending: HashMap::new(),
-        }
-    }
-
-    pub fn push(&mut self, event: LinkedCollectionEvent, now: Instant) {
-        let entry = self
-            .pending
-            .entry(event.collection_id)
-            .or_insert_with(|| PendingCollectionEvents {
-                first_seen: now,
-                events: Vec::new(),
-            });
-        if entry.events.is_empty() {
-            entry.first_seen = now;
-        }
-        entry.events.push(event);
-    }
-
-    pub fn drain_ready(&mut self, now: Instant) -> Vec<LinkedCollectionEvent> {
-        let mut ready_ids = Vec::new();
-        for (collection_id, pending) in &self.pending {
-            if now.saturating_duration_since(pending.first_seen) >= self.debounce_window {
-                ready_ids.push(*collection_id);
-            }
-        }
-
-        let mut drained = Vec::new();
-        for collection_id in ready_ids {
-            if let Some(pending) = self.pending.remove(&collection_id) {
-                drained.extend(coalesce_collection_events(
-                    collection_id,
-                    pending.events,
-                    self.full_rescan_threshold,
-                ));
-            }
-        }
-        drained
-    }
-}
-
-fn coalesce_collection_events(
-    collection_id: CollectionId,
-    events: Vec<LinkedCollectionEvent>,
-    full_rescan_threshold: usize,
-) -> Vec<LinkedCollectionEvent> {
-    if events.is_empty() {
-        return Vec::new();
-    }
-    if events.len() > full_rescan_threshold {
-        let path = events
-            .first()
-            .map(|event| event.path.clone())
-            .unwrap_or_default();
-        return vec![LinkedCollectionEvent {
-            collection_id,
-            kind: LinkedCollectionEventKind::FullRescanRequested,
-            path,
-        }];
-    }
-
-    // Deduplicate by path and keep the last event kind for deterministic replay.
-    let mut by_path: HashMap<PathBuf, LinkedCollectionEventKind> = HashMap::new();
-    for event in events {
-        by_path.insert(event.path, event.kind);
-    }
-
-    by_path
-        .into_iter()
-        .map(|(path, kind)| LinkedCollectionEvent {
-            collection_id,
-            kind,
-            path,
-        })
-        .collect()
-}
-
-pub struct LinkedCollectionWatcher {
-    watcher: RecommendedWatcher,
-    tx: Sender<notify::Result<Event>>,
-    rx: Receiver<notify::Result<Event>>,
-    watched_roots: HashMap<PathBuf, CollectionId>,
-}
-
-impl LinkedCollectionWatcher {
-    pub fn new() -> Result<Self> {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let tx_clone = tx.clone();
-        let watcher = notify::recommended_watcher(move |res| {
-            // Drop send failures quietly; consumer may have been dropped.
-            let _ = tx_clone.send(res);
-        })?;
-
-        Ok(Self {
-            watcher,
-            tx,
-            rx,
-            watched_roots: HashMap::new(),
-        })
-    }
-
-    pub fn watch_collection(&mut self, collection_id: CollectionId, root: PathBuf) -> Result<()> {
-        self.watcher.watch(&root, RecursiveMode::Recursive)?;
-        self.watched_roots.insert(root, collection_id);
-        Ok(())
-    }
-
-    pub fn unwatch_collection(&mut self, collection_id: CollectionId) -> Result<()> {
-        let root = self
-            .watched_roots
-            .iter()
-            .find_map(|(path, id)| (*id == collection_id).then_some(path.clone()));
-        if let Some(root) = root {
-            self.watcher.unwatch(&root)?;
-            self.watched_roots.remove(&root);
-        }
-        Ok(())
-    }
-
-    pub fn poll_events(&self) -> Vec<LinkedCollectionEvent> {
-        let mut out = Vec::new();
-        while let Ok(event_res) = self.rx.try_recv() {
-            let Ok(event) = event_res else {
-                continue;
-            };
-            if let Some((collection_id, path, kind)) = self.map_notify_event(&event) {
-                out.push(LinkedCollectionEvent {
-                    collection_id,
-                    kind,
-                    path,
-                });
-            }
-        }
-        out
-    }
-
-    fn map_notify_event(
-        &self,
-        event: &Event,
-    ) -> Option<(CollectionId, PathBuf, LinkedCollectionEventKind)> {
-        let kind = map_event_kind(&event.kind)?;
-        let path = event.paths.first()?.clone();
-        let collection_id = self.find_collection_for_path(&path)?;
-        Some((collection_id, path, kind))
-    }
-
-    fn find_collection_for_path(&self, path: &Path) -> Option<CollectionId> {
-        // Longest-prefix match handles nested roots deterministically.
-        let mut best: Option<(usize, CollectionId)> = None;
-        for (root, collection_id) in &self.watched_roots {
-            if path.starts_with(root) {
-                let score = root.as_os_str().len();
-                match best {
-                    Some((best_score, _)) if best_score >= score => {}
-                    _ => best = Some((score, *collection_id)),
-                }
-            }
-        }
-        best.map(|(_, collection_id)| collection_id)
-    }
-
-    #[allow(dead_code)]
-    pub fn event_sender(&self) -> Sender<notify::Result<Event>> {
-        self.tx.clone()
-    }
-}
-
-fn map_event_kind(kind: &EventKind) -> Option<LinkedCollectionEventKind> {
-    match kind {
-        EventKind::Create(_) => Some(LinkedCollectionEventKind::FileAdded),
-        EventKind::Modify(_) => Some(LinkedCollectionEventKind::FileChanged),
-        EventKind::Remove(remove_kind) => match remove_kind {
-            notify::event::RemoveKind::Folder => Some(LinkedCollectionEventKind::DirectoryRemoved),
-            _ => Some(LinkedCollectionEventKind::FileRemoved),
-        },
-        _ => None,
-    }
-}
-
-#[derive(Debug)]
-struct LinkedCollectionMonitorInner {
-    pending_events: Mutex<Vec<LinkedCollectionEvent>>,
-    cancel: tokio_util::sync::CancellationToken,
-}
-
-impl Drop for LinkedCollectionMonitorInner {
-    fn drop(&mut self) {
-        self.cancel.cancel();
-    }
-}
-
-#[derive(Clone)]
 pub struct LinkedCollectionMonitor {
-    inner: Arc<LinkedCollectionMonitorInner>,
+    pending_events: Arc<Mutex<Vec<LinkedCollectionEvent>>>,
+    stop: Arc<AtomicBool>,
+    _worker: std::thread::JoinHandle<()>,
 }
 
 impl LinkedCollectionMonitor {
-    pub fn start(
-        workspaces: WorkspaceRepoRef,
-        collections: CollectionRepoRef,
-        io_runtime: Arc<TokioRuntime>,
-    ) -> Result<Self> {
-        let mut watcher = LinkedCollectionWatcher::new()?;
-        for (collection_id, root_path) in discover_linked_roots(&workspaces, &collections)? {
-            if root_path.exists() {
-                watcher.watch_collection(collection_id, root_path)?;
-            } else {
-                tracing::warn!(
-                    collection_id = %collection_id,
-                    "linked collection root path is missing; watcher not attached"
-                );
-            }
-        }
+    pub fn start_for_roots(roots: Vec<(CollectionId, PathBuf)>) -> Result<Self> {
+        let pending_events = Arc::new(Mutex::new(Vec::new()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_pending = pending_events.clone();
+        let worker_stop = stop.clone();
 
-        let inner = Arc::new(LinkedCollectionMonitorInner {
-            pending_events: Mutex::new(Vec::new()),
-            cancel: tokio_util::sync::CancellationToken::new(),
-        });
-        let worker_inner = inner.clone();
-        io_runtime.spawn(async move {
-            let mut queue = LinkedCollectionReconcileQueue::new(Duration::from_millis(75), 50);
-            loop {
-                if worker_inner.cancel.is_cancelled() {
-                    break;
+        let worker = std::thread::spawn(move || {
+            let root_map = roots;
+            let mut callback_root_map = HashMap::new();
+            for (collection_id, root) in &root_map {
+                callback_root_map.insert(root.clone(), *collection_id);
+            }
+
+            let callback_pending = worker_pending.clone();
+            let callback = move |res: DebounceEventResult| {
+                let Ok(events) = res else {
+                    return;
+                };
+                let mapped = map_debounced_events(events, &callback_root_map, 50);
+                if mapped.is_empty() {
+                    return;
                 }
-                let now = Instant::now();
-                for event in watcher.poll_events() {
-                    queue.push(event, now);
+                if let Ok(mut guard) = callback_pending.lock() {
+                    guard.extend(mapped);
                 }
-                let ready = queue.drain_ready(now);
-                if !ready.is_empty() {
-                    tracing::debug!(event_count = ready.len(), "linked_collection.reconcile");
-                    if let Ok(mut guard) = worker_inner.pending_events.lock() {
-                        guard.extend(ready);
-                    }
+            };
+
+            let mut debouncer =
+                match new_debouncer(Duration::from_millis(75), None, callback)
+            {
+                Ok(debouncer) => debouncer,
+                Err(err) => {
+                    tracing::error!("failed to initialize linked collection debouncer: {err}");
+                    return;
                 }
-                tokio::time::sleep(Duration::from_millis(25)).await;
+            };
+
+            for (_, root) in &root_map {
+                if let Err(err) = debouncer.watcher().watch(root, RecursiveMode::Recursive) {
+                    tracing::warn!(root = %root.display(), "failed to watch linked root: {err}");
+                }
+            }
+
+            while !worker_stop.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(50));
             }
         });
 
-        Ok(Self { inner })
+        Ok(Self {
+            pending_events,
+            stop,
+            _worker: worker,
+        })
     }
 
     pub fn drain_events(&self) -> Vec<LinkedCollectionEvent> {
-        if let Ok(mut guard) = self.inner.pending_events.lock() {
+        if let Ok(mut guard) = self.pending_events.lock() {
             std::mem::take(&mut *guard)
         } else {
             Vec::new()
@@ -300,96 +103,143 @@ impl LinkedCollectionMonitor {
     }
 }
 
-fn discover_linked_roots(
-    workspaces: &WorkspaceRepoRef,
-    collections: &CollectionRepoRef,
-) -> Result<Vec<(CollectionId, PathBuf)>> {
-    let mut roots = Vec::new();
-    for workspace in workspaces.list()? {
-        for collection in collections.list_by_workspace(workspace.id)? {
-            if collection.storage_kind != crate::domain::collection::CollectionStorageKind::Linked {
-                continue;
-            }
-            if let Some(root_path) = collection.storage_config.linked_root_path {
-                roots.push((collection.id, root_path));
+impl Drop for LinkedCollectionMonitor {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+fn map_debounced_events(
+    events: Vec<DebouncedEvent>,
+    roots: &HashMap<PathBuf, CollectionId>,
+    full_rescan_threshold: usize,
+) -> Vec<LinkedCollectionEvent> {
+    if events.is_empty() {
+        return Vec::new();
+    }
+
+    let mut by_collection: HashMap<CollectionId, Vec<LinkedCollectionEvent>> = HashMap::new();
+    for event in events {
+        let Some(path) = event.event.paths.first().cloned() else {
+            continue;
+        };
+        let Some(collection_id) = find_collection_for_path(&path, roots) else {
+            continue;
+        };
+        let Some(kind) = map_event_kind(&event.event.kind) else {
+            continue;
+        };
+        by_collection
+            .entry(collection_id)
+            .or_default()
+            .push(LinkedCollectionEvent {
+                collection_id,
+                kind,
+                path,
+            });
+    }
+
+    let mut out = Vec::new();
+    for (collection_id, mut collection_events) in by_collection {
+        if collection_events.len() > full_rescan_threshold {
+            let path = collection_events
+                .first()
+                .map(|event| event.path.clone())
+                .unwrap_or_default();
+            out.push(LinkedCollectionEvent {
+                collection_id,
+                kind: LinkedCollectionEventKind::FullRescanRequested,
+                path,
+            });
+            continue;
+        }
+        // Deduplicate same-path events within the debounce window: last one wins.
+        let mut by_path: HashMap<PathBuf, LinkedCollectionEventKind> = HashMap::new();
+        for event in collection_events.drain(..) {
+            by_path.insert(event.path, event.kind);
+        }
+        out.extend(by_path.into_iter().map(|(path, kind)| LinkedCollectionEvent {
+            collection_id,
+            kind,
+            path,
+        }));
+    }
+    out
+}
+
+fn find_collection_for_path(path: &Path, roots: &HashMap<PathBuf, CollectionId>) -> Option<CollectionId> {
+    let mut best: Option<(usize, CollectionId)> = None;
+    for (root, collection_id) in roots {
+        if path.starts_with(root) {
+            let score = root.as_os_str().len();
+            match best {
+                Some((best_score, _)) if best_score >= score => {}
+                _ => best = Some((score, *collection_id)),
             }
         }
     }
-    Ok(roots)
+    best.map(|(_, collection_id)| collection_id)
+}
+
+fn map_event_kind(kind: &EventKind) -> Option<LinkedCollectionEventKind> {
+    match kind {
+        EventKind::Create(_) => Some(LinkedCollectionEventKind::FileAdded),
+        EventKind::Modify(_) => Some(LinkedCollectionEventKind::FileChanged),
+        EventKind::Remove(remove_kind) => match remove_kind {
+            notify_debouncer_full::notify::event::RemoveKind::Folder => {
+                Some(LinkedCollectionEventKind::DirectoryRemoved)
+            }
+            _ => Some(LinkedCollectionEventKind::FileRemoved),
+        },
+        _ => None,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use notify_debouncer_full::notify::event::{CreateKind, ModifyKind, RemoveKind};
 
-    fn mk_event(collection_id: CollectionId, kind: LinkedCollectionEventKind, path: &str) -> LinkedCollectionEvent {
-        LinkedCollectionEvent {
-            collection_id,
-            kind,
-            path: PathBuf::from(path),
+    fn ev(path: &str, kind: EventKind) -> DebouncedEvent {
+        DebouncedEvent {
+            event: notify_debouncer_full::notify::Event {
+                kind,
+                paths: vec![PathBuf::from(path)],
+                attrs: Default::default(),
+            },
+            time: std::time::Instant::now(),
         }
     }
 
     #[test]
-    fn queue_debounces_per_collection() {
+    fn map_events_collapse_to_full_rescan_for_burst() {
         let collection_id = CollectionId::new();
-        let mut queue = LinkedCollectionReconcileQueue::new(Duration::from_millis(50), 50);
-        let start = Instant::now();
+        let root = PathBuf::from("/tmp/root");
+        let roots = HashMap::from([(root.clone(), collection_id)]);
+        let events = (0..60)
+            .map(|i| ev(&format!("/tmp/root/f{i}.json"), EventKind::Modify(ModifyKind::Any)))
+            .collect::<Vec<_>>();
 
-        queue.push(
-            mk_event(collection_id, LinkedCollectionEventKind::FileChanged, "/tmp/a"),
-            start,
-        );
-        queue.push(
-            mk_event(collection_id, LinkedCollectionEventKind::FileChanged, "/tmp/b"),
-            start + Duration::from_millis(10),
-        );
-
-        let early = queue.drain_ready(start + Duration::from_millis(30));
-        assert!(early.is_empty());
-
-        let ready = queue.drain_ready(start + Duration::from_millis(60));
-        assert_eq!(ready.len(), 2);
+        let mapped = map_debounced_events(events, &roots, 50);
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(mapped[0].kind, LinkedCollectionEventKind::FullRescanRequested);
+        assert_eq!(mapped[0].collection_id, collection_id);
     }
 
     #[test]
-    fn queue_collapses_burst_to_full_rescan() {
+    fn map_events_dedupe_same_path_last_wins() {
         let collection_id = CollectionId::new();
-        let mut queue = LinkedCollectionReconcileQueue::new(Duration::from_millis(10), 3);
-        let start = Instant::now();
-        for i in 0..4 {
-            queue.push(
-                mk_event(
-                    collection_id,
-                    LinkedCollectionEventKind::FileChanged,
-                    &format!("/tmp/file-{i}.json"),
-                ),
-                start,
-            );
-        }
+        let root = PathBuf::from("/tmp/root");
+        let roots = HashMap::from([(root.clone(), collection_id)]);
+        let path = "/tmp/root/a.json";
+        let events = vec![
+            ev(path, EventKind::Create(CreateKind::File)),
+            ev(path, EventKind::Modify(ModifyKind::Any)),
+            ev(path, EventKind::Remove(RemoveKind::File)),
+        ];
 
-        let ready = queue.drain_ready(start + Duration::from_millis(20));
-        assert_eq!(ready.len(), 1);
-        assert_eq!(ready[0].kind, LinkedCollectionEventKind::FullRescanRequested);
-    }
-
-    #[test]
-    fn queue_deduplicates_by_path_last_event_wins() {
-        let collection_id = CollectionId::new();
-        let mut queue = LinkedCollectionReconcileQueue::new(Duration::from_millis(5), 50);
-        let start = Instant::now();
-
-        queue.push(
-            mk_event(collection_id, LinkedCollectionEventKind::FileAdded, "/tmp/same"),
-            start,
-        );
-        queue.push(
-            mk_event(collection_id, LinkedCollectionEventKind::FileRemoved, "/tmp/same"),
-            start,
-        );
-
-        let ready = queue.drain_ready(start + Duration::from_millis(10));
-        assert_eq!(ready.len(), 1);
-        assert_eq!(ready[0].kind, LinkedCollectionEventKind::FileRemoved);
+        let mapped = map_debounced_events(events, &roots, 50);
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(mapped[0].kind, LinkedCollectionEventKind::FileRemoved);
     }
 }
