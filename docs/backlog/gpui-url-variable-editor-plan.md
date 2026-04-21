@@ -91,7 +91,7 @@ Introduce a resolver that maps tokens to runtime meaning.
 
 Resolution source:
 
-- the resolver reads from the warm variable snapshot already held in `WorkspaceScopeState` — it does not query the variable store or `VariableResolutionService` per keypress
+- the resolver reads from the warm variable snapshot held in `WorkspaceScopeState` (to be introduced by Phase 4 Slice 2) — it does not query the variable store or `VariableResolutionService` per keypress
 - the precedence order follows Phase 4: request-local overrides → active environment variables → workspace variables
 - full request resolution (producing `ResolvedRequest`) remains `VariableResolutionService`'s responsibility and only runs on explicit send; the URL editor resolver is a lightweight existence check against the in-memory snapshot, not a parallel resolution pipeline
 
@@ -156,7 +156,7 @@ Notes:
 
 - the exact language string may need adjustment depending on what the highlighter recognizes
 - syntax highlighting is not the main reason for phase 1; the main reason is to switch onto the editor code path
-- do not call `.line_number(false)` or `.soft_wrap(false)` on a single-line editor: both have `debug_assert!(is_multi_line())` guards that will panic in debug builds when `multi_line` is false; line numbers already do not render in single-line mode and soft wrap is a no-op
+- do not call `.line_number(false)` or `.soft_wrap(false)` on a single-line editor: `line_number` has a `debug_assert!(is_code_editor() && is_multi_line())` guard and `soft_wrap` has a `debug_assert!(is_multi_line())` guard — both panic in debug builds when `multi_line` is false; line numbers already do not render in single-line mode and soft wrap is a no-op
 
 Success criteria:
 
