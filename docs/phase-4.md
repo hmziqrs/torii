@@ -3,7 +3,7 @@
 > Derived from `docs/plan.md` Phase 4
 > Constrained by `docs/gpui-performance.md`
 > Builds on `docs/completed/phase-3.5.md`
-> Date: 2026-04-20
+> Date: 2026-04-21
 
 ## 1. Objective
 
@@ -88,9 +88,9 @@ What is still missing:
 - `src/root/sidebar.rs` renders a fully materialized recursive tree using `SidebarMenuItem::children`.
 - The current tree has no explicit expansion state model, no flat row model, no keyboard navigation contract, and no drag/drop support.
 - Child ordering is not Postman-like yet:
-  - `build_tree_items()` in `src/services/workspace_tree.rs` sorts folders and requests separately
-  - folders are always rendered before requests
-  - mixed sibling reordering is therefore impossible today
+  - `build_tree_items()` in `src/services/workspace_tree.rs` uses a per-kind `sort_order` sequence; the current render layer separates folders from requests rather than merging them by a unified sibling rank
+  - folders appear before requests under the same parent regardless of insertion order
+  - mixed sibling reordering (folder A, request B, folder C) is therefore impossible today
 - UI CRUD is minimal:
   - sidebar exposes delete for most items
   - collections expose "new request"
@@ -171,7 +171,7 @@ Included in Phase 4:
 
 - collection type model and adapter boundary for `Managed` and `Linked` collections
 - linked collection file layout and local read/write round-trip
-- linked collection watcher/reconcile contract, even if the full watcher implementation lands later
+- linked collection watcher/reconcile contract and a basic filesystem watcher implementation
 - the REST request editor's variable-resolution path
 - structured variable editors for workspace, environment, and request scopes
 - transaction-safe tree mutations
@@ -217,6 +217,7 @@ Semantics:
   - authoritative content lives in SQLite
   - future cloud sync may replicate from this authority later
   - current release only needs local SQLite behavior
+  - `storage_config_json` is `'{}'` for managed collections; this is a valid no-op configuration, not a missing-value sentinel
 - `Linked`
   - authoritative content lives in a local folder tree
   - the folder may be inside a Git repository
@@ -239,15 +240,35 @@ Recommended adapter split:
 
 ```rust
 trait CollectionStore {
+    // tree reads
     fn load_tree(&self, collection_id: CollectionId) -> Result<CollectionTreeValue>;
+
+    // request operations
     fn load_request(&self, request_id: RequestId) -> Result<RequestItem>;
     fn save_request(&self, request: &RequestItem) -> Result<RequestItem>;
-    fn create_folder(...);
-    fn create_environment(...);
-    fn move_item(...);
-    fn delete_item(...);
+    fn create_request(&self, parent: ParentKey, name: &str) -> Result<RequestItem>;
+    fn rename_request(&self, request_id: RequestId, name: &str) -> Result<()>;
+    fn delete_request(&self, request_id: RequestId) -> Result<()>;
+
+    // folder operations
+    fn create_folder(&self, parent: ParentKey, name: &str) -> Result<Folder>;
+    fn rename_folder(&self, folder_id: FolderId, name: &str) -> Result<()>;
+    fn delete_folder(&self, folder_id: FolderId) -> Result<DeleteClosure>;
+
+    // environment operations
+    fn list_environments(&self, collection_id: CollectionId) -> Result<Vec<Environment>>;
+    fn load_environment(&self, env_id: EnvironmentId) -> Result<Environment>;
+    fn save_environment(&self, env: &Environment) -> Result<Environment>;
+    fn create_environment(&self, collection_id: CollectionId, name: &str) -> Result<Environment>;
+    fn delete_environment(&self, env_id: EnvironmentId) -> Result<()>;
+
+    // move and reorder
+    fn move_item(&self, item: TreeSiblingId, target_parent: ParentKey, position: SiblingPosition) -> Result<()>;
+    fn reorder_items(&self, parent: ParentKey, ordered: &[TreeSiblingId]) -> Result<()>;
 }
 ```
+
+This is the minimal interface for Phase 4 CRUD and drag/drop. Extend as new operations require it — do not widen it prematurely.
 
 Concrete implementations:
 
@@ -297,6 +318,12 @@ Format rules:
 - folder nesting mirrors the sidebar tree
 - collection-level metadata lives in a hidden control directory such as `.torii/`
 - environments live outside the request tree so they are not confused with request folders
+
+Reserved name rule:
+
+- `.torii` is a reserved directory name inside a linked collection
+- creating a folder or request with the name `.torii` must be rejected with a user-visible error
+- this applies at the linked collection store level, not only in the UI
 
 Stable identity rule:
 
@@ -427,6 +454,12 @@ Sources for `LinkedCollectionEventKind` should include:
 - directory removed
 - full rescan requested
 
+Debounce and coalescing rule:
+
+- the reconcile processor must coalesce filesystem events within a short debounce window (50–100 ms) before acting on them
+- when the event count for a single collection exceeds a threshold (for example more than 50 events in one window), collapse the batch to a single `FullRescanRequested` event rather than processing events individually
+- this prevents a Git checkout or merge that touches many files from firing hundreds of individual UI recomputes
+
 Important constraint:
 
 - Git actions should not trigger a bespoke `reload_after_checkout()` path in the UI
@@ -472,18 +505,31 @@ This becomes the mutation service's unit of ordering rather than separate per-ki
 Compatibility rule for existing data:
 
 - old rows can keep their current `sort_order` values
-- the first Phase 4 structural write under a parent should normalize the combined sibling order for that parent
-- optionally run a startup normalization pass for demo data so drag/drop starts from a stable baseline
+- however, the existing per-kind sequences are independent (a folder and a request under the same parent can both have `sort_order = 0`)
+- the normalization pass must resolve these collisions explicitly: within each tied group, place folders before requests as the initial stable baseline, then assign unique contiguous values
+- the first Phase 4 structural write under a parent must normalize the combined sibling order for that parent
+- optionally run a startup normalization pass for demo data so drag/drop starts from a stable baseline without requiring the first write to trigger normalization
 
 ## 7.7 Session-Scoped Workspace State
 
 `WorkspaceSession` needs per-workspace UI state instead of a single global selection-only model.
 
+Recommended expandable ID type:
+
+```rust
+enum ExpandableId {
+    Collection(CollectionId),
+    Folder(FolderId),
+}
+```
+
+Only containers can be expanded; using a purpose-built type prevents non-sensical entries such as request IDs or `None`-id draft keys in the expansion set.
+
 Recommended hot state:
 
 ```rust
 struct WorkspaceScopeState {
-    expanded_items: BTreeSet<ItemKey>,
+    expanded_items: BTreeSet<ExpandableId>,
     active_environment_id: Option<EnvironmentId>,
 }
 ```
@@ -601,7 +647,9 @@ Legacy compatibility:
 
 - environment repo readers should accept both:
   - current object-map JSON (`{"baseUrl":"..."}`)
-  - new row-array JSON
+  - new row-array JSON (`[{"key":"baseUrl","enabled":true,"value":{"Plain":{"value":"..."}}}]`)
+- an empty object `{}` is treated as zero variable entries
+- when converting from object-map to row-array, preserve the natural iteration order of the JSON object rather than sorting alphabetically; this keeps the initial display order predictable for existing users
 - next successful save of an environment rewrites the value into the row-array format
 
 This avoids brittle SQL JSON migration logic and keeps seeded demo data readable.
@@ -621,6 +669,13 @@ Resolution rules:
 - no resolved value is written back into the request draft
 - resolution happens on explicit send, and optionally on an explicit preview/debug action
 - resolution does not run continuously while typing
+
+`ResolvedRequest` type rule:
+
+- introduce a distinct `ResolvedRequest` type that is separate from `RequestItem`
+- `ResolvedRequest` has no persistence path; no repo accepts it as a save target
+- this prevents accidental `request_repo.save(resolved_request)` at the type level
+- resolution produces a `ResolvedRequest`; execution consumes it
 
 Fields that should resolve in Phase 4:
 
@@ -642,7 +697,8 @@ Missing-variable rule:
 
 - unresolved placeholders become a preflight validation failure
 - the request is not sent
-- the UI should surface the missing variable names and the scope chain that was checked
+- the UI must surface the missing variable names and the scope chain that was checked
+- the failure is displayed inline below the URL bar in the request tab, as a sticky notice that replaces the normal "ready to send" state; it clears as soon as the variable is defined or the send is retried successfully
 
 Observability rule:
 
@@ -654,7 +710,8 @@ Observability rule:
 ```text
 src/
   domain/
-    variable.rs
+    collection.rs          ← extend with CollectionStorageKind, CollectionStorageConfig
+    variable.rs            ← new: VariableEntry, VariableValue, ResolvedRequest
   repos/
     workspace_repo.rs
     environment_repo.rs
@@ -666,7 +723,6 @@ src/
     tree_mutation.rs
     variable_resolution.rs
     linked_collection_reconcile.rs
-    git_service.rs
   infra/
     linked_collection_format.rs
   session/
@@ -695,6 +751,9 @@ migrations/
 
 Notes:
 
+- `CollectionStorageKind` and `CollectionStorageConfig` extend the existing `src/domain/collection.rs` rather than living in a new file — they are attributes of the `Collection` domain type, not a separate module
+- `variable.rs` is new and also owns `ResolvedRequest`; do not put `ResolvedRequest` inside `request.rs` where it could be confused with a persistable type
+- `git_service.rs` is deliberately absent; remote Git workflows are out of scope for Phase 4 and belong in a later phase module
 - keep using `src/services/workspace_tree.rs` as the primary read-side module, but extend it to produce flat rows and unified ordering
 - add a new mutation service rather than trying to force cross-kind drag/drop semantics into the existing per-repo reorder APIs
 - reuse the existing request KV editor patterns where they fit, but do not shoehorn variable secrets into `KeyValuePair`
@@ -713,27 +772,28 @@ Tasks:
   - `ALTER TABLE workspaces ADD COLUMN variables_json TEXT NOT NULL DEFAULT '[]'`
   - `ALTER TABLE requests ADD COLUMN variable_overrides_json TEXT NOT NULL DEFAULT '[]'`
   - create `tab_session_workspace_state`
-- introduce `CollectionStorageKind` and collection storage config types
-- introduce `VariableEntry` / `VariableValue` domain types
+- introduce `CollectionStorageKind` and collection storage config types in `src/domain/collection.rs`
+- introduce `VariableEntry` / `VariableValue` / `ResolvedRequest` domain types in `src/domain/variable.rs`
 - update repo mappings:
   - collection repo reads/writes storage kind + storage config
   - workspace repo reads/writes `variables_json`
   - environment repo reads/writes row-array variables and accepts legacy map JSON
   - request repo reads/writes `variable_overrides_json`
-- update `RequestItem` and request editor dirty detection to include variable overrides
-- define the linked-collection reconcile event contract that later watcher and Git flows will feed into
+- update `RequestItem` and request editor dirty detection to include variable overrides; unsaved-draft warnings and tab-close prompts depend on this being correct from the start
+- define the linked-collection reconcile event contract (`LinkedCollectionEvent`, `LinkedCollectionEventKind`) that later watcher and Git flows will feed into
 
 Definition of done:
 
 - collection rows can express `Managed` and `Linked` storage
 - all three variable scopes have a stable persisted shape
+- `RequestItem` dirty detection covers `variable_overrides_json`
 - session workspace state roundtrips independently of tab stack state
 - old environment JSON still loads
 - later watcher/Git work has a single reconcile contract to target
 
-## Slice 1: Collection Store Boundary and Linked Format
+## Slice 1: Collection Store Boundary, Linked Format, and Watcher Contract
 
-Purpose: land the storage abstraction before more UI code assumes SQLite-only collections.
+Purpose: land the storage abstraction and a working filesystem watcher before more UI code assumes SQLite-only collections.
 
 Tasks:
 
@@ -742,30 +802,39 @@ Tasks:
 - implement `LinkedCollectionStore` over the file-backed collection format
 - add create/open flows for:
   - managed collection
-  - linked collection with chosen root path
+  - linked collection with chosen root path; expose root path as a text input field in this phase since GPUI does not provide a built-in OS file/directory picker — a dedicated picker integration can replace the text input in a later slice
 - define the on-disk layout writer/reader for collection, folder, request, and environment items
 - keep stable IDs in file metadata and never derive identity from paths
 - lock parent-owned ordering metadata:
   - `.torii/collection.json` owns root child order
   - `.torii-folder.json` owns folder child order
+- enforce the `.torii` reserved name rule at the `LinkedCollectionStore` level
 - resolve collection-store calls without leaking Git concepts into the tree/request UI
 - allow app-local cache/index data, but make full rebuild from tracked files the correctness path
+- wire a basic filesystem watcher (using the `notify` crate or equivalent) that converts raw OS events into `LinkedCollectionEvent` values and routes them through the reconcile processor defined in Slice 0; implement the debounce/coalesce window from §7.5
+- implement the degraded collection state: if a linked collection's `linked_root_path` is inaccessible at startup (drive removed, directory deleted, path on a network share), the collection must open in a degraded/offline state with a clear user-visible indicator, rather than crashing or silently showing an empty tree
 
 Definition of done:
 
 - tree and item-loading code can resolve the correct store from collection type
+- adapter dispatch is correct: calling code resolves `ManagedCollectionStore` for a managed collection ID and `LinkedCollectionStore` for a linked collection ID, with an integration test covering both paths
 - linked collections can round-trip locally without Git UX
 - linked collection order/identity are fully reproducible from tracked text files alone
 - UI/state code no longer assumes all collection descendants live in SQLite
+- a linked collection with an inaccessible root path opens in a degraded state with a visible error, not a crash or empty tree
+- basic watcher fires reconcile events for file add, change, and removal under a linked collection root
 
-## Slice 2: Flat Tree Model and Session Expansion State
+## Slice 2: Flat Tree Model, Session Expansion State, and Expansion Keyboard Bindings
 
-Purpose: remove recursive tree rendering as the source of truth.
+Purpose: remove recursive tree rendering as the source of truth, and land the full expansion event surface at the same time.
 
 Tasks:
 
-- extend `WorkspaceSession` with per-workspace scope state
+- extend `WorkspaceSession` with per-workspace scope state using `BTreeSet<ExpandableId>`
 - add expansion toggle events for collections and folders
+- add keyboard bindings for tree expansion co-located with the expansion model:
+  - `Left` collapses the focused container or moves focus to its parent
+  - `Right` expands the focused container
 - change `workspace_tree.rs` to produce flat rows from the selected workspace tree
 - merge folders and requests by unified sibling order
 - update `root/sidebar.rs` to render from flat rows instead of recursive `children(...)`
@@ -781,17 +850,20 @@ Definition of done:
 - the sidebar renders from a stable row vector
 - expansion state is explicit, session-scoped, and persisted
 - the row model is independent from the rendering widget choice
+- Left/Right keyboard bindings are wired and functional
 
 ## Slice 3: CRUD Surfaces and Structured Editors
 
 Purpose: expose the missing create/rename/edit workflows before drag/drop starts moving data around.
+
+Prerequisites: Slice 1 (`CollectionStore` bound available).
 
 Tasks:
 
 - add create and rename flows for every item kind
 - when creating a collection, require choosing the collection type:
   - `Managed`
-  - `Linked`
+  - `Linked` (root path via text input; see Slice 1 note on file picker)
 - add delete confirmations where destructive behavior is ambiguous
 - upgrade item tabs:
   - workspace tab:
@@ -839,22 +911,26 @@ enum TreeDropIntent {
 - introduce legality checks:
   - no dropping a folder into itself
   - no dropping a folder into its descendant
-- no dropping onto a request as a container
-- no cross-workspace drag in this phase
-- environment rows are not drag targets
-- no cross-storage drag in this phase
-  - moving items between two managed collections is allowed
-  - moving items between two linked collections is allowed only if the linked-store implementation can do it transactionally
-  - moving between managed and linked collections is deferred until an explicit import/export flow exists
-- no Git-aware drop path in this phase
-  - drag/drop mutates the collection store only
-  - any later Git status changes are observed through the reconcile path
+  - no dropping onto a request as a container
+  - no cross-workspace drag in this phase
+  - environment rows are not drag targets
+  - no cross-storage drag in this phase
+    - moving items between two managed collections is allowed
+    - moving items between two linked collections is allowed only if the linked-store implementation can do it transactionally
+    - moving between managed and linked collections is deferred until an explicit import/export flow exists
+  - no Git-aware drop path in this phase
+    - drag/drop mutates the collection store only
+    - any later Git status changes are observed through the reconcile path
 - add `TreeMutationService` that owns transactional combined-order updates
 - support:
   - collection reorder in workspace
   - folder move/reorder across collections and parents
   - request move/reorder across collections and parents
 - renumber combined sibling order after each structural mutation
+- drop indicator visual:
+  - `Before` and `After` intents render as a horizontal line between rows at the correct index position
+  - `Into` intent renders as a highlight on the target container row
+  - hit-zone calculation is index-based on the flat row vector, not tree-structure-based; use row index and a configurable threshold (e.g., top 25% / bottom 25% of row height) to distinguish Before/After from Into
 - optionally auto-expand a hovered closed container after a delay
   - store the task handle explicitly
   - cancel/replace it when the hover target changes
@@ -896,10 +972,9 @@ Purpose: turn the variable model into real request behavior.
 Tasks:
 
 - add `VariableResolutionService`
-- before URL parsing and auth/body materialization, produce a transient `ResolvedRequest`
+- before URL parsing and auth/body materialization, produce a transient `ResolvedRequest` (the distinct non-persistable type from `src/domain/variable.rs`)
 - apply resolution to the Phase 4 supported fields only
-- fail preflight if any referenced variable is missing
-- surface missing-variable failures distinctly in the request tab
+- fail preflight if any referenced variable is missing; display the failure inline below the URL bar as a sticky notice (see §7.10) that lists the missing variable names and the scope chain that was checked
 - source request/environment/workspace variable rows from the active collection store and workspace state, not from SQLite-only assumptions
 - keep history and logs secret-safe:
   - do not persist resolved secret values into SQLite or blobs
@@ -911,12 +986,15 @@ Tasks:
 Definition of done:
 
 - request sends no longer treat `{{var}}` as literal text when the variable exists
-- missing variables fail fast and clearly
+- missing variables fail fast and clearly with the correct inline UI placement
+- `ResolvedRequest` is the only type that flows into the HTTP execution layer; `RequestItem` cannot be passed directly to it
 - resolution precedence is unit-tested
 
 ## Slice 7: Delete Semantics and Draft Cleanup
 
 Purpose: make destructive mutations complete rather than partial.
+
+Note: this slice has two logically independent concerns. Tab cleanup and selection clearing work correctly regardless of whether Slice 5 has landed. Active-environment invalidation depends on Slice 5. Both are in scope here, but if Slice 7 needs to be split for scheduling reasons, the environment invalidation part has a hard dependency on Slice 5.
 
 Tasks:
 
@@ -934,16 +1012,14 @@ Definition of done:
 - deleting a parent node leaves no dangling request tabs or stale environment selection
 - draft tabs behave consistently with persisted tabs during delete cascades
 
-## Slice 8: Keyboard Actions, Observability, and Performance Audit
+## Slice 8: Remaining Keyboard Actions, Observability, and Performance Audit
 
 Purpose: finish the phase without leaving hidden interaction or idle-CPU regressions behind.
 
 Tasks:
 
-- add tree keyboard behavior:
+- add remaining tree keyboard behavior (Left/Right expansion is already wired in Slice 2):
   - `Enter` opens/focuses the selected item
-  - `Left` collapses the current container or selects its parent
-  - `Right` expands the current container
   - `Delete` / platform-appropriate destructive key path triggers delete flow
   - context-menu key / alternate gesture opens item menu
 - add tracing spans:
@@ -958,13 +1034,18 @@ Tasks:
   - rejected illegal drops
   - missing variable failures
   - async entity update drops
-- run a focused GPUI performance audit against the tree and variable editor flows
+- run a focused GPUI performance audit against the tree and variable editor flows with concrete pass/fail criteria:
+  - attach the GPUI frame profiler and confirm sidebar `render()` time stays under an acceptable budget with 200+ visible rows
+  - confirm zero catalog reloads occur during 10 rapid expand/collapse cycles (verify via `tree.catalog_reload` counter staying at zero)
+  - confirm no idle CPU climb after 30 seconds of inactivity with the tree fully loaded
+  - confirm variable row rebuild does not leak subscriptions (verify by comparing subscription count before and after 5 rebuild cycles)
 
 Definition of done:
 
-- tree workflows are keyboard-usable
+- remaining tree workflows are keyboard-usable
 - structural mutations and variable failures are observable in traces/logs
 - the Phase 4 surfaces pass the render-loop checklist from `docs/gpui-performance.md`
+- all four performance audit criteria pass
 
 ## 10. Validation Gates
 
@@ -974,17 +1055,24 @@ Required automated coverage:
   - collection storage kind persistence
   - workspace/request/environment variable persistence
   - legacy environment map JSON read compatibility
+  - legacy environment map JSON idempotency: read old format → save → read again → save again produces identical output on the second round-trip
 - linked collection tests for:
   - file format round-trip
   - stable ID preservation across rename/move
   - parent metadata owns sibling ordering
   - full rebuild from tracked files reproduces tree/order without cache
   - reconcile of file add/change/remove into collection state
+- collection store adapter dispatch tests:
+  - given a managed collection ID, `CollectionStore` resolution returns a `ManagedCollectionStore`
+  - given a linked collection ID, `CollectionStore` resolution returns a `LinkedCollectionStore`
+  - CRUD operations on a managed collection ID do not touch the filesystem
+  - CRUD operations on a linked collection ID do not touch the managed SQLite tables
 - tree tests for:
   - flat row expansion behavior
   - unified mixed sibling ordering
+  - sort_order collision normalization produces unique contiguous values
   - illegal folder-into-descendant rejection
-  - cross-collection move semantics
+  - cross-collection move semantics within the same storage kind
 - session tests for:
   - active environment persistence
   - expanded-items persistence
@@ -1032,8 +1120,8 @@ Required GPUI performance audit:
 - [ ] Workspace variables, environment variables, and request-local overrides all exist
 - [ ] Active environment is session-scoped per workspace and restored on reopen
 - [ ] Request send path resolves variables with deterministic precedence
-- [ ] Missing variables fail preflight with a clear user-facing state
+- [ ] Missing variables fail preflight with a clear user-facing state shown inline below the URL bar
 - [ ] Parent deletion closes persisted and draft descendant tabs
 - [ ] Deleting the active environment clears stale session state cleanly
-- [ ] All new strings are Fluent-based in both supported locales
+- [ ] All new strings are Fluent-based in both supported locales (`i18n/en/torii.ftl` and `i18n/zh-CN/torii.ftl`)
 - [ ] Phase 4 passes the `docs/gpui-performance.md` render-loop checklist

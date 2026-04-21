@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Torii is a desktop API client (Postman-like) built in Rust on top of Zed's GPUI framework. The build and implementation plan is tracked in `docs/plan.md`; phase-specific execution docs live in `docs/phase-3.md` and `docs/completed/`. `docs/state_management.md` is the canonical V2 state architecture reference — consult it before making architectural decisions.
+Torii is a desktop API client (Postman-like) built in Rust on top of Zed's GPUI framework. The build and implementation plan is tracked in `docs/plan.md`; phase-specific execution docs live in `docs/phase-3.md` and `docs/completed/`. `docs/plan.md` Section 3 is the canonical V2 state architecture reference — consult it before making architectural decisions. `docs/gpui-architecture.md` is the GPUI-specific state design reference (ownership policy, memory budgets, entity reentrancy, cancellation model, secrets); `docs/gpui-performance.md` covers render-loop and idle-CPU failure modes — consult both before implementing any new view, entity, subscription, or streaming flow.
 
 ## Common commands
 
@@ -68,6 +68,15 @@ The active tab's content is dispatched in `AppRoot::render_active_tab_content` t
 ### UI and theming
 
 `gpui-component` provides the primitives (sidebar, menus, resizable panels, popups, notifications). Before building a custom component, check what `gpui-component` already exposes — introducing bespoke low-level GPUI elements is the exception, not the default. Theme/font/radius/locale are persisted through `UiPreferencesStore` (SQLite-backed via `preferences_repo`) and applied on startup in `app::init`. `themes/` is hot-reloaded at runtime via `ThemeRegistry::watch_dir`.
+
+### GPUI implementation references
+
+Before writing any new view, entity, subscription, or async task, check:
+
+- `docs/gpui-architecture.md` — ownership policy, memory budgets, streaming/backpressure, cancellation model, entity reentrancy, secrets in async flows
+- `docs/gpui-performance.md` — render-loop failure modes, dirty-flag patterns, subscription cleanup on row rebuild, notify guards, broad-observer antipatterns
+
+Both docs carry acceptance checklists; run the relevant checklist before marking a view or service as complete.
 
 ## Conventions worth knowing
 
