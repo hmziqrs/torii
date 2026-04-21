@@ -637,6 +637,15 @@ Storage rule by collection type:
 - for `Linked` collections, request/environment variable rows live in the file-backed collection format
 - workspace variables remain workspace-scoped SQLite data unless the product later introduces linked workspaces; do not prematurely move workspace-level state into collection folders
 
+Environment scope change:
+
+- Phase 4 changes environments from workspace-scoped to collection-scoped
+- the current domain model `Environment { workspace_id, ... }` changes to `Environment { collection_id, ... }`; `workspace_id` is removed from the `Environment` type and derived from the owning collection when workspace context is needed
+- this is required for linked collections because environments must live inside the collection folder on disk, but the model is unified for both storage types to avoid a split resolution path
+- the active environment selector in Slice 5 aggregates environments from all collections in the selected workspace, not from a single workspace-level environments table
+- migration strategy for existing rows: assign each environment to the first collection in its current workspace (ordered by `sort_order`, then `id`); if a workspace has no collections yet, the environment row is held unmigrated and assigned on first structural write; this is safe for demo data
+- do not introduce a workspace-level environment escape hatch — if a future product need arises, it should be modelled explicitly at that time
+
 Important security rule:
 
 - plain variables may persist inline in SQLite
@@ -771,13 +780,15 @@ Tasks:
   - `ALTER TABLE collections ADD COLUMN storage_config_json TEXT NOT NULL DEFAULT '{}'`
   - `ALTER TABLE workspaces ADD COLUMN variables_json TEXT NOT NULL DEFAULT '[]'`
   - `ALTER TABLE requests ADD COLUMN variable_overrides_json TEXT NOT NULL DEFAULT '[]'`
+  - add `collection_id TEXT` to `environments` and populate it from the first collection in each environment's current workspace (ordered by `sort_order`, then `id`); rebuild the `environments` table to replace `workspace_id` with `collection_id NOT NULL` (SQLite table-rebuild pattern: create new, copy, drop old, rename)
   - create `tab_session_workspace_state`
 - introduce `CollectionStorageKind` and collection storage config types in `src/domain/collection.rs`
 - introduce `VariableEntry` / `VariableValue` / `ResolvedRequest` domain types in `src/domain/variable.rs`
+- change `Environment` domain type: remove `workspace_id`, add `collection_id: CollectionId`; update all repo call sites and query paths
 - update repo mappings:
   - collection repo reads/writes storage kind + storage config
   - workspace repo reads/writes `variables_json`
-  - environment repo reads/writes row-array variables and accepts legacy map JSON
+  - environment repo queries by `collection_id`; reads/writes row-array variables and accepts legacy map JSON
   - request repo reads/writes `variable_overrides_json`
 - update `RequestItem` and request editor dirty detection to include variable overrides; unsaved-draft warnings and tab-close prompts depend on this being correct from the start
 - define the linked-collection reconcile event contract (`LinkedCollectionEvent`, `LinkedCollectionEventKind`) that later watcher and Git flows will feed into
@@ -948,7 +959,7 @@ Purpose: give the variable system an actual runtime selector.
 Tasks:
 
 - add an active-environment selector in the window-level chrome for the selected workspace
-- populate it from the selected workspace's environments
+- populate it by aggregating environments from all collections in the selected workspace, resolved through each collection's `CollectionStore`; environments are now collection-scoped so there is no single workspace-level environments table to query directly
 - persist selection in `WorkspaceScopeState`
 - if the active environment is deleted:
   - clear the active environment
@@ -1034,8 +1045,9 @@ Tasks:
   - rejected illegal drops
   - missing variable failures
   - async entity update drops
+  - `tree.catalog_reload` — incremented each time the workspace catalog is reloaded; used by the performance audit to verify no reloads occur during expand/collapse cycles
 - run a focused GPUI performance audit against the tree and variable editor flows with concrete pass/fail criteria:
-  - attach the GPUI frame profiler and confirm sidebar `render()` time stays under an acceptable budget with 200+ visible rows
+  - attach the GPUI frame profiler and confirm sidebar `render()` time stays under 2 ms per frame with 200+ visible rows
   - confirm zero catalog reloads occur during 10 rapid expand/collapse cycles (verify via `tree.catalog_reload` counter staying at zero)
   - confirm no idle CPU climb after 30 seconds of inactivity with the tree fully loaded
   - confirm variable row rebuild does not leak subscriptions (verify by comparing subscription count before and after 5 rebuild cycles)
@@ -1090,8 +1102,8 @@ Required manual validation:
 
 - create, rename, move, reorder, and delete all tree item kinds from the UI
 - create both managed and linked collections and confirm the correct storage authority is used
-- drag a request across folders and across collections and confirm stable order after restart
-- drag a folder with descendants across collections and confirm descendant request collection IDs remain correct
+- drag a request across folders and across collections (within the same storage kind) and confirm stable order after restart
+- drag a folder with descendants across collections (within the same storage kind) and confirm descendant request collection IDs remain correct
 - switch active environments and send the same request with different resolved values
 - rename a linked request file/folder through the UI and confirm tab identity/history identity remains stable
 - verify the planned reconcile path treats simulated branch-switch file changes the same as ordinary disk edits
