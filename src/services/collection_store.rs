@@ -5,10 +5,25 @@ use anyhow::{Result, anyhow};
 use crate::{
     domain::{
         collection::CollectionStorageKind,
-        ids::CollectionId,
+        environment::Environment,
+        ids::{CollectionId, FolderId},
+        request::RequestItem,
     },
-    repos::collection_repo::CollectionRepoRef,
+    infra::linked_collection_format::{
+        LinkedCollectionState, LinkedSiblingId, ensure_not_reserved_name, read_linked_collection,
+        write_linked_collection,
+    },
+    repos::{
+        collection_repo::CollectionRepoRef, environment_repo::EnvironmentRepoRef,
+        request_repo::RequestRepoRef,
+    },
 };
+
+#[derive(Clone)]
+pub struct CollectionStoreRepos {
+    pub requests: RequestRepoRef,
+    pub environments: EnvironmentRepoRef,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManagedCollectionStore {
@@ -67,4 +82,117 @@ impl CollectionStoreResolver {
             }
         }
     }
+}
+
+impl ResolvedCollectionStore {
+    pub fn list_requests(&self, repos: &CollectionStoreRepos) -> Result<Vec<RequestItem>> {
+        match self {
+            Self::Managed(store) => repos.requests.list_by_collection(store.collection_id),
+            Self::Linked(store) => {
+                let state = read_linked_collection(&store.root_path)?;
+                Ok(state.requests)
+            }
+        }
+    }
+
+    pub fn create_request(
+        &self,
+        repos: &CollectionStoreRepos,
+        parent_folder_id: Option<FolderId>,
+        name: &str,
+        method: &str,
+        url: &str,
+    ) -> Result<RequestItem> {
+        match self {
+            Self::Managed(store) => repos
+                .requests
+                .create(store.collection_id, parent_folder_id, name, method, url),
+            Self::Linked(store) => {
+                ensure_not_reserved_name(name)?;
+                let mut state = read_linked_collection(&store.root_path)?;
+                if state.collection.id != store.collection_id {
+                    return Err(anyhow!(
+                        "linked collection id mismatch: store={} file={}",
+                        store.collection_id,
+                        state.collection.id
+                    ));
+                }
+
+                let next_sort = next_request_sort(&state.requests, parent_folder_id);
+                let request =
+                    RequestItem::new(store.collection_id, parent_folder_id, name, method, url, next_sort);
+
+                if let Some(parent) = parent_folder_id {
+                    let parent_exists = state.folders.iter().any(|folder| folder.id == parent);
+                    if !parent_exists {
+                        return Err(anyhow!("target parent folder does not exist"));
+                    }
+                    state
+                        .folder_child_orders
+                        .entry(parent)
+                        .or_default()
+                        .push(LinkedSiblingId::Request {
+                            id: request.id.to_string(),
+                        });
+                } else {
+                    state.root_child_order.push(LinkedSiblingId::Request {
+                        id: request.id.to_string(),
+                    });
+                }
+                state.requests.push(request.clone());
+
+                write_linked_collection(&store.root_path, &state)?;
+                Ok(request)
+            }
+        }
+    }
+
+    pub fn list_environments(&self, repos: &CollectionStoreRepos) -> Result<Vec<Environment>> {
+        match self {
+            Self::Managed(store) => repos.environments.list_by_collection(store.collection_id),
+            Self::Linked(store) => {
+                let state = read_linked_collection(&store.root_path)?;
+                Ok(state.environments)
+            }
+        }
+    }
+
+    pub fn create_environment(
+        &self,
+        repos: &CollectionStoreRepos,
+        name: &str,
+    ) -> Result<Environment> {
+        match self {
+            Self::Managed(store) => repos.environments.create(store.collection_id, name),
+            Self::Linked(store) => {
+                let mut state = read_linked_collection(&store.root_path)?;
+                if state.collection.id != store.collection_id {
+                    return Err(anyhow!(
+                        "linked collection id mismatch: store={} file={}",
+                        store.collection_id,
+                        state.collection.id
+                    ));
+                }
+                let environment = Environment::new(store.collection_id, name.to_string());
+                state.environments.push(environment.clone());
+                write_linked_collection(&store.root_path, &state)?;
+                Ok(environment)
+            }
+        }
+    }
+}
+
+fn next_request_sort(requests: &[RequestItem], parent_folder_id: Option<FolderId>) -> i64 {
+    requests
+        .iter()
+        .filter(|request| request.parent_folder_id == parent_folder_id)
+        .map(|request| request.sort_order)
+        .max()
+        .unwrap_or(-1)
+        + 1
+}
+
+#[allow(dead_code)]
+fn _empty_linked_state(state: &LinkedCollectionState) -> bool {
+    state.folders.is_empty() && state.requests.is_empty() && state.environments.is_empty()
 }
