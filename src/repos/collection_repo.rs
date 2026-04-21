@@ -12,7 +12,21 @@ use crate::domain::{
 use super::{DbRef, RepoResult};
 
 pub trait CollectionRepository: Send + Sync {
-    fn create(&self, workspace_id: WorkspaceId, name: &str) -> RepoResult<Collection>;
+    fn create(&self, workspace_id: WorkspaceId, name: &str) -> RepoResult<Collection> {
+        self.create_with_storage(
+            workspace_id,
+            name,
+            CollectionStorageKind::Managed,
+            CollectionStorageConfig::default(),
+        )
+    }
+    fn create_with_storage(
+        &self,
+        workspace_id: WorkspaceId,
+        name: &str,
+        storage_kind: CollectionStorageKind,
+        storage_config: CollectionStorageConfig,
+    ) -> RepoResult<Collection>;
     fn get(&self, id: CollectionId) -> RepoResult<Option<Collection>>;
     fn list_by_workspace(&self, workspace_id: WorkspaceId) -> RepoResult<Vec<Collection>>;
     fn rename(&self, id: CollectionId, name: &str) -> RepoResult<()>;
@@ -38,6 +52,21 @@ impl SqliteCollectionRepository {
 
 impl CollectionRepository for SqliteCollectionRepository {
     fn create(&self, workspace_id: WorkspaceId, name: &str) -> RepoResult<Collection> {
+        self.create_with_storage(
+            workspace_id,
+            name,
+            CollectionStorageKind::Managed,
+            CollectionStorageConfig::default(),
+        )
+    }
+
+    fn create_with_storage(
+        &self,
+        workspace_id: WorkspaceId,
+        name: &str,
+        storage_kind: CollectionStorageKind,
+        storage_config: CollectionStorageConfig,
+    ) -> RepoResult<Collection> {
         let created_at = now_unix_ts();
         let collection = self.db.block_on(async {
             let mut tx = self.db.pool().begin().await?;
@@ -53,8 +82,8 @@ impl CollectionRepository for SqliteCollectionRepository {
                 workspace_id,
                 name: name.to_string(),
                 sort_order: next_order,
-                storage_kind: CollectionStorageKind::Managed,
-                storage_config: CollectionStorageConfig::default(),
+                storage_kind,
+                storage_config,
                 meta: RevisionMetadata {
                     created_at,
                     updated_at: created_at,

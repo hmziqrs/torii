@@ -1,4 +1,5 @@
 pub mod app_services;
+pub mod collection_store;
 pub mod error_classifier;
 pub mod linked_collection_reconcile;
 pub mod recovery;
