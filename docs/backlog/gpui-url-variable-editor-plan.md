@@ -89,11 +89,11 @@ Potential submodules later:
 
 Introduce a resolver that maps tokens to runtime meaning.
 
-Initial resolution sources:
+Resolution source:
 
-- request-scoped variables
-- workspace/environment variables
-- inferred path params from the URL template itself
+- the resolver reads from the warm variable snapshot already held in `WorkspaceScopeState` — it does not query the variable store or `VariableResolutionService` per keypress
+- the precedence order follows Phase 4: request-local overrides → active environment variables → workspace variables
+- full request resolution (producing `ResolvedRequest`) remains `VariableResolutionService`'s responsibility and only runs on explicit send; the URL editor resolver is a lightweight existence check against the in-memory snapshot, not a parallel resolution pipeline
 
 Output should be structured, not just strings.
 
@@ -124,6 +124,18 @@ The parser should not know whether a variable exists. The resolver should.
 
 ## Implementation Phases
 
+Phase 1 and Phase 2 are standalone and can proceed before Phase 4 infrastructure exists. Phases 3–5 have hard dependencies on Phase 4 slices:
+
+| This plan | Requires Phase 4 |
+|---|---|
+| Phase 1 — editor mode | none |
+| Phase 2 — URL parser | none |
+| Phase 3 — diagnostics | Slice 0 (`VariableEntry` domain) + Slice 2 (warm variable snapshot in session scope) |
+| Phase 4 — autocomplete | Slice 3 (CRUD surfaces) + Slice 5 (active environment in session) |
+| Phase 5 — hover | Slice 6 (`VariableResolutionService` exists) |
+
+Do not start Phases 3–5 before the corresponding Phase 4 slices land.
+
 ## Phase 1: Convert URL Input to Editor Mode
 
 Change request-tab URL input initialization in `src/views/item_tabs/request_tab/init.rs`.
@@ -134,9 +146,7 @@ Target shape:
 let url_input = cx.new(|cx| {
     let mut state = InputState::new(window, cx)
         .code_editor("plaintext")
-        .multi_line(false)
-        .line_number(false)
-        .soft_wrap(false);
+        .multi_line(false);
     state.set_value(initial.url.clone(), window, cx);
     state
 });
@@ -145,8 +155,8 @@ let url_input = cx.new(|cx| {
 Notes:
 
 - the exact language string may need adjustment depending on what the highlighter recognizes
-- syntax highlighting is not the main reason for phase 1
-- the main reason is to switch onto the editor code path
+- syntax highlighting is not the main reason for phase 1; the main reason is to switch onto the editor code path
+- do not call `.line_number(false)` or `.soft_wrap(false)` on a single-line editor: both have `debug_assert!(is_multi_line())` guards that will panic in debug builds when `multi_line` is false; line numbers already do not render in single-line mode and soft wrap is a no-op
 
 Success criteria:
 
@@ -315,10 +325,12 @@ Desired flow on URL change:
 1. user edits URL text
 2. request tab subscription receives `InputEvent::Change`
 3. draft URL is updated
-4. URL parser runs on current text
-5. resolver maps variable tokens to state
-6. diagnostics are updated
-7. completion and hover providers read the same parsed/resolved model
+4. URL parser runs on current text and produces `Vec<UrlToken>`
+5. resolver maps variable tokens against the warm variable snapshot in `WorkspaceScopeState`; no separate `cx.notify()` is emitted — this step runs synchronously inside the existing subscription handler before the handler's own `cx.notify()` fires
+6. diagnostics are pushed to `InputState::diagnostics_mut()`
+7. completion and hover providers read the same parsed/resolved model on demand
+
+The resolver must be integrated into the existing `InputEvent::Change` subscription handler, which already carries a reentrancy guard and KV-sync logic. Adding a second `cx.notify()` from the resolver would create a second render cycle and risk re-entrancy. Step 5 must complete before the handler returns.
 
 Avoid reparsing in multiple disconnected places.
 
@@ -333,6 +345,7 @@ Guidelines:
 - debounce only completion/hover fetches if needed
 - avoid rebuilding editor entities on every render
 - update diagnostics only when text or variable sources change
+- the completion and hover providers use `Rc<dyn CompletionProvider>` and `Rc<dyn HoverProvider>` — these are `Rc`, not `Arc`, which means they are single-threaded and must produce results synchronously or schedule through GPUI's async mechanisms; for the local variable source (warm in-memory snapshot) this is fine; do not design a provider that blocks on SQLite or makes a network call
 
 This should be far cheaper than body editor behavior because the URL field is short and single-line.
 
@@ -354,24 +367,27 @@ Do not block the first version on:
 
 ## Open Questions
 
-These need resolution during implementation:
+Resolved by Phase 4 — not open:
 
-- what is the authoritative source of environment/workspace variables in Torii
-- what exact variable syntax should Torii standardize on
-- whether `:id` should be purely visual or tied to request params state
-- whether URL autocomplete should also suggest stored base URLs or prior hosts
+- "What is the authoritative source of environment/workspace variables?" — `VariableResolutionService` (Phase 4 Slice 6), precedence: request-local → active environment → workspace variables, sourced from the collection store and `WorkspaceScopeState`. The URL editor resolver reads from the same warm snapshot.
+- "What exact variable syntax should Torii standardize on?" — `{{variable}}` is already standardized across the codebase (`check_unresolved_placeholders` in `request_execution.rs` checks for `{{` and `}}`).
+
+Genuinely open:
+
+- whether `:id` path params should be purely visual highlighting or tied to request params state; implement as visual-only until a path-params feature is explicitly added — do not connect `:id` tokens to params state in this plan
+- whether URL autocomplete should suggest stored base URLs or prior hosts
 
 ## Recommendation
 
-Proceed with the editor-based approach using `gpui-component` hooks, not a custom GPUI input from scratch.
+Proceed with the editor-based approach using `gpui-component` hooks, not a custom GPUI input from scratch. No existing completion or hover providers exist in Torii — this feature introduces the first ones.
 
 The implementation order should be:
 
-1. switch URL input to single-line code editor mode
-2. add Torii URL parser and resolver
-3. add diagnostics
-4. add completion provider
-5. add hover provider
+1. switch URL input to single-line code editor mode (standalone, no Phase 4 dependency)
+2. add Torii URL parser and resolver against warm variable snapshot (standalone)
+3. add diagnostics — requires Phase 4 Slice 0 + Slice 2
+4. add completion provider — requires Phase 4 Slice 3 + Slice 5
+5. add hover provider — requires Phase 4 Slice 6
 6. revisit richer token coloring only if needed
 
 This keeps scope controlled and matches how the major API clients solve the same problem: editor surface first, domain-specific parsing and completion on top.
