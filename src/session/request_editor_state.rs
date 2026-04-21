@@ -220,6 +220,7 @@ impl RequestEditorState {
                     || draft.body != baseline.body
                     || draft.scripts != baseline.scripts
                     || draft.settings != baseline.settings
+                    || draft.variable_overrides_json != baseline.variable_overrides_json
             }
         }
     }

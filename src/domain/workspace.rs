@@ -9,6 +9,7 @@ use super::{
 pub struct Workspace {
     pub id: WorkspaceId,
     pub name: String,
+    pub variables_json: String,
     pub meta: RevisionMetadata,
 }
 
@@ -17,6 +18,7 @@ impl Workspace {
         Self {
             id: WorkspaceId::new(),
             name: name.into(),
+            variables_json: "[]".to_string(),
             meta: RevisionMetadata::new_now(),
         }
     }

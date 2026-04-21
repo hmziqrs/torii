@@ -548,12 +548,14 @@ mod tests {
             workspaces: vec![Workspace {
                 id: workspace_id,
                 name: "Workspace A".into(),
+                variables_json: "[]".into(),
                 meta: RevisionMetadata::new_now(),
             }],
             selected_workspace: Some(WorkspaceTree {
                 workspace: Workspace {
                     id: workspace_id,
                     name: "Workspace A".into(),
+                    variables_json: "[]".into(),
                     meta: RevisionMetadata::new_now(),
                 },
                 collections: vec![CollectionTree {
@@ -562,6 +564,9 @@ mod tests {
                         workspace_id,
                         name: "Collection A".into(),
                         sort_order: 0,
+                        storage_kind: crate::domain::collection::CollectionStorageKind::Managed,
+                        storage_config: crate::domain::collection::CollectionStorageConfig::default(
+                        ),
                         meta: RevisionMetadata::new_now(),
                     },
                     children: vec![TreeItem::Folder(FolderTree {
@@ -589,9 +594,9 @@ mod tests {
                 }],
                 environments: vec![Environment {
                     id: environment_id,
-                    workspace_id,
+                    collection_id,
                     name: "Env A".into(),
-                    variables_json: "{}".into(),
+                    variables_json: "[]".into(),
                     meta: RevisionMetadata::new_now(),
                 }],
             }),

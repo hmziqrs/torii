@@ -36,11 +36,12 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         let id = workspace.id.to_string();
         self.db.block_on(async {
             sqlx::query(
-                "INSERT INTO workspaces (id, name, created_at, updated_at, revision)
-                 VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO workspaces (id, name, variables_json, created_at, updated_at, revision)
+                 VALUES (?, ?, ?, ?, ?, ?)",
             )
             .bind(&id)
             .bind(&workspace.name)
+            .bind(&workspace.variables_json)
             .bind(workspace.meta.created_at)
             .bind(workspace.meta.updated_at)
             .bind(workspace.meta.revision)
@@ -55,7 +56,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
     fn get(&self, id: WorkspaceId) -> RepoResult<Option<Workspace>> {
         self.db.block_on(async {
             let row = sqlx::query(
-                "SELECT id, name, created_at, updated_at, revision
+                "SELECT id, name, variables_json, created_at, updated_at, revision
                  FROM workspaces WHERE id = ?",
             )
             .bind(id.to_string())
@@ -70,7 +71,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
     fn list(&self) -> RepoResult<Vec<Workspace>> {
         self.db.block_on(async {
             let rows = sqlx::query(
-                "SELECT id, name, created_at, updated_at, revision
+                "SELECT id, name, variables_json, created_at, updated_at, revision
                  FROM workspaces
                  ORDER BY created_at ASC, id ASC",
             )
@@ -115,6 +116,9 @@ fn map_workspace_row(row: sqlx::sqlite::SqliteRow) -> RepoResult<Workspace> {
     Ok(Workspace {
         id: WorkspaceId::parse(row.get::<&str, _>("id"))?,
         name: row.get("name"),
+        variables_json: row
+            .try_get("variables_json")
+            .unwrap_or_else(|_| "[]".to_string()),
         meta: RevisionMetadata {
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),

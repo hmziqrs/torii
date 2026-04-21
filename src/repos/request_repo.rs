@@ -129,7 +129,8 @@ impl RequestRepository for SqliteRequestRepository {
             let row = sqlx::query(
                 "SELECT id, collection_id, parent_folder_id, name, method, url, body_blob_hash,
                         sort_order, created_at, updated_at, revision,
-                        params_json, headers_json, auth_json, body_json, scripts_json, settings_json
+                        params_json, headers_json, auth_json, body_json, scripts_json, settings_json,
+                        variable_overrides_json
                  FROM requests WHERE id = ?",
             )
             .bind(id.to_string())
@@ -145,7 +146,8 @@ impl RequestRepository for SqliteRequestRepository {
             let rows = sqlx::query(
                 "SELECT id, collection_id, parent_folder_id, name, method, url, body_blob_hash,
                         sort_order, created_at, updated_at, revision,
-                        params_json, headers_json, auth_json, body_json, scripts_json, settings_json
+                        params_json, headers_json, auth_json, body_json, scripts_json, settings_json,
+                        variable_overrides_json
                  FROM requests
                  WHERE collection_id = ?
                  ORDER BY parent_folder_id ASC, sort_order ASC, id ASC",
@@ -362,12 +364,13 @@ impl RequestRepository for SqliteRequestRepository {
                 .map_err(|e| RequestRepoError::Storage(e.into()))?;
             let settings_json = serde_json::to_string(&request.settings)
                 .map_err(|e| RequestRepoError::Storage(e.into()))?;
+            let variable_overrides_json = request.variable_overrides_json.clone();
 
             sqlx::query(
                 "UPDATE requests
                  SET name = ?, method = ?, url = ?, body_blob_hash = ?,
                      params_json = ?, headers_json = ?, auth_json = ?,
-                     body_json = ?, scripts_json = ?, settings_json = ?,
+                     body_json = ?, scripts_json = ?, settings_json = ?, variable_overrides_json = ?,
                      updated_at = ?, revision = revision + 1
                  WHERE id = ? AND revision = ?",
             )
@@ -381,6 +384,7 @@ impl RequestRepository for SqliteRequestRepository {
             .bind(body_json)
             .bind(scripts_json)
             .bind(settings_json)
+            .bind(variable_overrides_json)
             .bind(ts)
             .bind(request.id.to_string())
             .bind(expected_revision)
@@ -391,7 +395,8 @@ impl RequestRepository for SqliteRequestRepository {
             let row = sqlx::query(
                 "SELECT id, collection_id, parent_folder_id, name, method, url, body_blob_hash,
                         sort_order, created_at, updated_at, revision,
-                        params_json, headers_json, auth_json, body_json, scripts_json, settings_json
+                        params_json, headers_json, auth_json, body_json, scripts_json, settings_json,
+                        variable_overrides_json
                  FROM requests WHERE id = ?",
             )
             .bind(request.id.to_string())
@@ -412,7 +417,8 @@ impl RequestRepository for SqliteRequestRepository {
             let row = sqlx::query(
                 "SELECT id, collection_id, parent_folder_id, name, method, url, body_blob_hash,
                         sort_order, created_at, updated_at, revision,
-                        params_json, headers_json, auth_json, body_json, scripts_json, settings_json
+                        params_json, headers_json, auth_json, body_json, scripts_json, settings_json,
+                        variable_overrides_json
                  FROM requests WHERE id = ?",
             )
             .bind(source_id.to_string())
@@ -446,6 +452,7 @@ impl RequestRepository for SqliteRequestRepository {
             dup.body = source.body;
             dup.scripts = source.scripts;
             dup.settings = source.settings;
+            dup.variable_overrides_json = source.variable_overrides_json;
             dup.body_blob_hash = source.body_blob_hash;
 
             insert_request(&mut tx, &dup).await?;
@@ -474,8 +481,8 @@ async fn insert_request(
         "INSERT INTO requests
          (id, collection_id, parent_folder_id, name, method, url, body_blob_hash,
           sort_order, created_at, updated_at, revision,
-          params_json, headers_json, auth_json, body_json, scripts_json, settings_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          params_json, headers_json, auth_json, body_json, scripts_json, settings_json, variable_overrides_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(request.id.to_string())
     .bind(request.collection_id.to_string())
@@ -494,6 +501,7 @@ async fn insert_request(
     .bind(body_json)
     .bind(scripts_json)
     .bind(settings_json)
+    .bind(request.variable_overrides_json.clone())
     .execute(&mut **tx)
     .await?;
 
@@ -557,6 +565,9 @@ fn map_request_row(row: sqlx::sqlite::SqliteRow) -> RepoResult<RequestItem> {
     let settings_json: String = row
         .try_get("settings_json")
         .unwrap_or_else(|_| "{}".to_string());
+    let variable_overrides_json: String = row
+        .try_get("variable_overrides_json")
+        .unwrap_or_else(|_| "[]".to_string());
 
     Ok(RequestItem {
         id: RequestId::parse(row.get::<&str, _>("id"))?,
@@ -578,6 +589,7 @@ fn map_request_row(row: sqlx::sqlite::SqliteRow) -> RepoResult<RequestItem> {
         body: serde_json::from_str(&body_json).unwrap_or_default(),
         scripts: serde_json::from_str(&scripts_json).unwrap_or_default(),
         settings: serde_json::from_str(&settings_json).unwrap_or_default(),
+        variable_overrides_json,
     })
 }
 

@@ -29,6 +29,7 @@ fn migration_roundtrip_creates_and_reuses_schema() -> Result<()> {
         "startup_recovery_log",
         "tab_session_state",
         "tab_session_metadata",
+        "tab_session_workspace_state",
         "_sqlx_migrations",
     ] {
         assert!(
@@ -42,7 +43,7 @@ fn migration_roundtrip_creates_and_reuses_schema() -> Result<()> {
             .fetch_one(db.pool())
             .await
     })?;
-    assert_eq!(applied, 2);
+    assert_eq!(applied, 3);
 
     let journal_mode: String = db.block_on(async {
         sqlx::query_scalar("PRAGMA journal_mode;")
@@ -73,7 +74,7 @@ fn migration_roundtrip_creates_and_reuses_schema() -> Result<()> {
             .fetch_one(db2.pool())
             .await
     })?;
-    assert_eq!(applied2, 2);
+    assert_eq!(applied2, 3);
 
     Ok(())
 }

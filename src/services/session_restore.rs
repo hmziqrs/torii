@@ -154,10 +154,14 @@ impl SessionRestoreService {
                     .get(folder.collection_id)?
                     .map(|collection| collection.workspace_id)
             }
-            (ItemKind::Environment, Some(ItemId::Environment(id))) => self
-                .environments
-                .get(id)?
-                .map(|environment| environment.workspace_id),
+            (ItemKind::Environment, Some(ItemId::Environment(id))) => {
+                let Some(environment) = self.environments.get(id)? else {
+                    return Ok(None);
+                };
+                self.collections
+                    .get(environment.collection_id)?
+                    .map(|collection| collection.workspace_id)
+            }
             (ItemKind::Request, Some(ItemId::Request(id))) => {
                 let Some(request) = self.requests.get(id)? else {
                     return Ok(None);

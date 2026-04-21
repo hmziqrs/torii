@@ -187,6 +187,7 @@ pub struct RequestItem {
     pub body: BodyType,
     pub scripts: ScriptsContent,
     pub settings: RequestSettings,
+    pub variable_overrides_json: String,
 }
 
 impl RequestItem {
@@ -214,6 +215,7 @@ impl RequestItem {
             body: BodyType::none(),
             scripts: ScriptsContent::default(),
             settings: RequestSettings::default(),
+            variable_overrides_json: "[]".to_string(),
         }
     }
 

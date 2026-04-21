@@ -1,5 +1,6 @@
 pub mod app_services;
 pub mod error_classifier;
+pub mod linked_collection_reconcile;
 pub mod recovery;
 pub mod request_body_payload;
 pub mod request_execution;

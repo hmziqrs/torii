@@ -4,7 +4,7 @@ use anyhow::{Context as _, anyhow};
 use sqlx::Row as _;
 
 use crate::domain::{
-    collection::Collection,
+    collection::{Collection, CollectionStorageConfig, CollectionStorageKind},
     ids::{CollectionId, WorkspaceId},
     revision::{RevisionMetadata, now_unix_ts},
 };
@@ -53,6 +53,8 @@ impl CollectionRepository for SqliteCollectionRepository {
                 workspace_id,
                 name: name.to_string(),
                 sort_order: next_order,
+                storage_kind: CollectionStorageKind::Managed,
+                storage_config: CollectionStorageConfig::default(),
                 meta: RevisionMetadata {
                     created_at,
                     updated_at: created_at,
@@ -60,14 +62,18 @@ impl CollectionRepository for SqliteCollectionRepository {
                 },
             };
 
+            let storage_config_json = serde_json::to_string(&collection.storage_config)?;
             sqlx::query(
-                "INSERT INTO collections (id, workspace_id, name, sort_order, created_at, updated_at, revision)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO collections
+                 (id, workspace_id, name, sort_order, storage_kind, storage_config_json, created_at, updated_at, revision)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(collection.id.to_string())
             .bind(collection.workspace_id.to_string())
             .bind(&collection.name)
             .bind(collection.sort_order)
+            .bind(storage_kind_to_str(collection.storage_kind))
+            .bind(storage_config_json)
             .bind(collection.meta.created_at)
             .bind(collection.meta.updated_at)
             .bind(collection.meta.revision)
@@ -84,7 +90,7 @@ impl CollectionRepository for SqliteCollectionRepository {
     fn get(&self, id: CollectionId) -> RepoResult<Option<Collection>> {
         self.db.block_on(async {
             let row = sqlx::query(
-                "SELECT id, workspace_id, name, sort_order, created_at, updated_at, revision
+                "SELECT id, workspace_id, name, sort_order, storage_kind, storage_config_json, created_at, updated_at, revision
                  FROM collections WHERE id = ?",
             )
             .bind(id.to_string())
@@ -98,7 +104,7 @@ impl CollectionRepository for SqliteCollectionRepository {
     fn list_by_workspace(&self, workspace_id: WorkspaceId) -> RepoResult<Vec<Collection>> {
         self.db.block_on(async {
             let rows = sqlx::query(
-                "SELECT id, workspace_id, name, sort_order, created_at, updated_at, revision
+                "SELECT id, workspace_id, name, sort_order, storage_kind, storage_config_json, created_at, updated_at, revision
                  FROM collections
                  WHERE workspace_id = ?
                  ORDER BY sort_order ASC, id ASC",
@@ -270,17 +276,40 @@ async fn normalize_workspace_sort_orders(
 }
 
 fn map_collection_row(row: sqlx::sqlite::SqliteRow) -> RepoResult<Collection> {
+    let storage_kind = parse_storage_kind(row.get::<&str, _>("storage_kind"))?;
+    let storage_config_json: String = row
+        .try_get("storage_config_json")
+        .unwrap_or_else(|_| "{}".to_string());
+    let storage_config = serde_json::from_str(&storage_config_json).unwrap_or_default();
+
     Ok(Collection {
         id: CollectionId::parse(row.get::<&str, _>("id"))?,
         workspace_id: WorkspaceId::parse(row.get::<&str, _>("workspace_id"))?,
         name: row.get("name"),
         sort_order: row.get("sort_order"),
+        storage_kind,
+        storage_config,
         meta: RevisionMetadata {
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
             revision: row.get("revision"),
         },
     })
+}
+
+fn storage_kind_to_str(kind: CollectionStorageKind) -> &'static str {
+    match kind {
+        CollectionStorageKind::Managed => "managed",
+        CollectionStorageKind::Linked => "linked",
+    }
+}
+
+fn parse_storage_kind(value: &str) -> RepoResult<CollectionStorageKind> {
+    match value {
+        "managed" => Ok(CollectionStorageKind::Managed),
+        "linked" => Ok(CollectionStorageKind::Linked),
+        _ => Err(anyhow!("unknown collection storage kind: {value}")),
+    }
 }
 
 pub type CollectionRepoRef = Arc<dyn CollectionRepository>;

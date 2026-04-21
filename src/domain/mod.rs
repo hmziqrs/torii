@@ -9,4 +9,5 @@ pub mod request;
 pub mod response;
 pub mod revision;
 pub mod secret_ref;
+pub mod variable;
 pub mod workspace;
