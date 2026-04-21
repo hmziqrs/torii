@@ -14,6 +14,7 @@ use crate::{
 };
 
 use super::{
+    linked_collection_reconcile::LinkedCollectionMonitor,
     recovery::RecoveryCoordinator, request_execution::RequestExecutionService,
     secret_manager::SecretManager, session_restore::SessionRestoreService,
     tokio_runtime::TokioRuntime, ui_preferences::UiPreferencesStoreRef,
@@ -45,6 +46,7 @@ pub struct AppServices {
     pub ui_preferences: UiPreferencesStoreRef,
     pub recovery: RecoveryCoordinator,
     pub session_restore: SessionRestoreService,
+    pub linked_collection_monitor: Option<LinkedCollectionMonitor>,
 }
 
 #[derive(Clone)]

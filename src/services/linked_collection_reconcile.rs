@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    sync::{Arc, Mutex},
     path::{Path, PathBuf},
     sync::mpsc::{Receiver, Sender},
     time::{Duration, Instant},
@@ -8,7 +9,11 @@ use std::{
 use anyhow::Result;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
-use crate::domain::ids::CollectionId;
+use crate::{
+    domain::ids::CollectionId,
+    repos::{collection_repo::CollectionRepoRef, workspace_repo::WorkspaceRepoRef},
+    services::tokio_runtime::TokioRuntime,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinkedCollectionEvent {
@@ -220,6 +225,97 @@ fn map_event_kind(kind: &EventKind) -> Option<LinkedCollectionEventKind> {
         },
         _ => None,
     }
+}
+
+#[derive(Debug)]
+struct LinkedCollectionMonitorInner {
+    pending_events: Mutex<Vec<LinkedCollectionEvent>>,
+    cancel: tokio_util::sync::CancellationToken,
+}
+
+impl Drop for LinkedCollectionMonitorInner {
+    fn drop(&mut self) {
+        self.cancel.cancel();
+    }
+}
+
+#[derive(Clone)]
+pub struct LinkedCollectionMonitor {
+    inner: Arc<LinkedCollectionMonitorInner>,
+}
+
+impl LinkedCollectionMonitor {
+    pub fn start(
+        workspaces: WorkspaceRepoRef,
+        collections: CollectionRepoRef,
+        io_runtime: Arc<TokioRuntime>,
+    ) -> Result<Self> {
+        let mut watcher = LinkedCollectionWatcher::new()?;
+        for (collection_id, root_path) in discover_linked_roots(&workspaces, &collections)? {
+            if root_path.exists() {
+                watcher.watch_collection(collection_id, root_path)?;
+            } else {
+                tracing::warn!(
+                    collection_id = %collection_id,
+                    "linked collection root path is missing; watcher not attached"
+                );
+            }
+        }
+
+        let inner = Arc::new(LinkedCollectionMonitorInner {
+            pending_events: Mutex::new(Vec::new()),
+            cancel: tokio_util::sync::CancellationToken::new(),
+        });
+        let worker_inner = inner.clone();
+        io_runtime.spawn(async move {
+            let mut queue = LinkedCollectionReconcileQueue::new(Duration::from_millis(75), 50);
+            loop {
+                if worker_inner.cancel.is_cancelled() {
+                    break;
+                }
+                let now = Instant::now();
+                for event in watcher.poll_events() {
+                    queue.push(event, now);
+                }
+                let ready = queue.drain_ready(now);
+                if !ready.is_empty() {
+                    tracing::debug!(event_count = ready.len(), "linked_collection.reconcile");
+                    if let Ok(mut guard) = worker_inner.pending_events.lock() {
+                        guard.extend(ready);
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        });
+
+        Ok(Self { inner })
+    }
+
+    pub fn drain_events(&self) -> Vec<LinkedCollectionEvent> {
+        if let Ok(mut guard) = self.inner.pending_events.lock() {
+            std::mem::take(&mut *guard)
+        } else {
+            Vec::new()
+        }
+    }
+}
+
+fn discover_linked_roots(
+    workspaces: &WorkspaceRepoRef,
+    collections: &CollectionRepoRef,
+) -> Result<Vec<(CollectionId, PathBuf)>> {
+    let mut roots = Vec::new();
+    for workspace in workspaces.list()? {
+        for collection in collections.list_by_workspace(workspace.id)? {
+            if collection.storage_kind != crate::domain::collection::CollectionStorageKind::Linked {
+                continue;
+            }
+            if let Some(root_path) = collection.storage_config.linked_root_path {
+                roots.push((collection.id, root_path));
+            }
+        }
+    }
+    Ok(roots)
 }
 
 #[cfg(test)]
