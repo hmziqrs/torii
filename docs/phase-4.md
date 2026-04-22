@@ -3,7 +3,7 @@
 > Derived from `docs/plan.md` Phase 4
 > Constrained by `docs/gpui-performance.md`
 > Builds on `docs/completed/phase-3.5.md`
-> Date: 2026-04-21
+> Date: 2026-04-23
 
 ## 1. Objective
 
@@ -36,6 +36,25 @@ Important architecture rule:
 - the code should care about `Managed` vs `Linked`, not about "cloud" vs "git" as the primary branching axis
 - for `Linked` collections, treat Git operations as producers of filesystem change, not as a second source of truth
 
+## 1.1 Rolling Implementation Updates (As-Built)
+
+The following items were implemented on-the-fly during Phase 4 and are now the source of truth for current behavior:
+
+- linked metadata path is `.torii/collection.json` (hard cutover from root `.collection.json`)
+- linked file format uses:
+  - request files: `*.request.json`
+  - environment files: `*.env.json` at collection root
+  - no per-folder metadata file
+- linked metadata auto-initialization is enabled:
+  - when opening a linked root with missing `.torii/collection.json`, metadata is created automatically
+  - bootstrap reconstructs folder/order state from existing folders and `*.request.json` files before writing metadata
+- no legacy compatibility mode for old linked filenames/paths in this greenfield project
+- linked collection creation UI uses a native directory picker (not a plain text-only path flow)
+- linked collection monitor lifecycle is gated:
+  - monitor starts only when the selected workspace has at least one linked collection root
+  - monitor is not started globally by default
+- environment domain scope remains workspace-scoped in the current implementation (`Environment { workspace_id, ... }`)
+
 ## 2. Non-Negotiable GPUI Performance Rules
 
 `docs/gpui-performance.md` applies directly to this phase. The tree, drag/drop, and variable editors are exactly the kind of surfaces that create idle CPU regressions if they are implemented carelessly.
@@ -63,6 +82,8 @@ Phase-4-specific interpretation:
 
 ## 3. Current Repo Starting Point
 
+This section is the phase-start baseline snapshot. For implemented deltas, use §1.1 as the current source of truth.
+
 The repo already has useful low-level primitives, but the UI and state layers are still much thinner than the Phase 4 scope implies.
 
 What already exists:
@@ -84,8 +105,8 @@ What already exists:
 
 What is still missing:
 
-- collections are implicitly SQLite-only today; there is no collection storage type, linked root path, or provider boundary
-- there is no watcher/reconcile contract for linked collections yet, so future branch switches and pulls would otherwise require ad hoc UI reload logic
+- at phase start, collections were implicitly SQLite-only; remaining work is broader store-boundary adoption across all tree/tab flows
+- watcher/reconcile event mapping exists, but fine-grained reconcile application beyond catalog refresh is still pending
 - `src/root/sidebar.rs` renders a fully materialized recursive tree using `SidebarMenuItem::children`.
 - The current tree has no explicit expansion state model, no flat row model, no keyboard navigation contract, and no drag/drop support.
 - Child ordering is not Postman-like yet:
@@ -300,29 +321,27 @@ Hard decision locked for linked collections:
 
 For `Linked` collections, the file layout should mirror the request tree on disk.
 
-Recommended layout:
+As-built layout:
 
 ```text
 <collection-root>/
   .torii/
     collection.json
-    environments/
-      local.torii-env.json
   Auth/
-    .torii-folder.json
-    sign-in.torii-request.json
-    refresh-token.torii-request.json
+    sign-in.request.json
+    refresh-token.request.json
   Users/
-    .torii-folder.json
-    list-users.torii-request.json
+    list-users.request.json
+  local.env.json
 ```
 
 Format rules:
 
 - each request is one file
 - folder nesting mirrors the sidebar tree
-- collection-level metadata lives in a hidden control directory such as `.torii/`
-- environments live outside the request tree so they are not confused with request folders
+- collection-level metadata lives in `.torii/collection.json`
+- environments are stored as root-level `*.env.json` files
+- there is no per-folder metadata file in the current format
 
 Reserved name rule:
 
@@ -339,20 +358,14 @@ Stable identity rule:
 Locked metadata strategy:
 
 - `.torii/collection.json`
-  - collection ID
-  - display name
   - format version
-  - storage kind
   - ordered root child IDs
-  - ordered environment IDs if environment ordering becomes user-visible
-- `.torii-folder.json`
-  - folder ID
-  - display name
-  - ordered child IDs
-- `*.torii-request.json`
+  - `folders` array with stable folder IDs and parent links
+  - `folder_child_orders` map for nested ordering
+- `*.request.json`
   - request ID
   - request payload/editor fields
-- `.torii/environments/*.torii-env.json`
+- `*.env.json`
   - environment ID
   - name
   - variable rows
@@ -363,8 +376,17 @@ Ordering rule:
 - folder files do not own their own `sort_order`
 - ordering is owned by the parent metadata file:
   - collection root order lives in `.torii/collection.json`
-  - folder child order lives in that folder's `.torii-folder.json`
+  - folder child order also lives in `.torii/collection.json` (`folder_child_orders`)
 - drag/drop and reorder mutate the parent metadata atomically
+
+Bootstrap rule:
+
+- if `.torii/collection.json` is missing when opening a linked collection root, initialize it automatically
+- initialization bootstraps folder/order structure from the existing directory tree and `*.request.json` files
+
+Compatibility stance:
+
+- greenfield hard cutover: do not read or write legacy linked metadata/file names (`.collection.json`, `.torii-folder.json`, `*.torii-request.json`, `*.torii-env.json`)
 
 Why this strategy:
 
@@ -638,19 +660,15 @@ Persistence recommendation:
 
 Storage rule by collection type:
 
-- for `Managed` collections, request/environment variable rows live in SQLite as normal
-- for `Linked` collections, request/environment variable rows live in the file-backed collection format
-- workspace variables remain workspace-scoped SQLite data unless the product later introduces linked workspaces; do not prematurely move workspace-level state into collection folders
-- for linked collections, the UI should prefer a collection-local environment named `local` as the first-run default when none exists yet; seed it lazily on first explicit environment action (create/select/edit), not during background startup
+- for `Managed` collections, request variables and environment variables are persisted via SQLite-backed repos
+- for `Linked` collections, request and environment artifacts are persisted in the linked collection root (`*.request.json`, `*.env.json`) with ordering metadata in `.torii/collection.json`
+- workspace variables remain workspace-scoped SQLite data unless the product later introduces linked workspaces
 
-Environment scope change:
+Environment scope (current implementation):
 
-- Phase 4 changes environments from workspace-scoped to collection-scoped
-- the current domain model `Environment { workspace_id, ... }` changes to `Environment { collection_id, ... }`; `workspace_id` is removed from the `Environment` type and derived from the owning collection when workspace context is needed
-- this is required for linked collections because environments must live inside the collection folder on disk, but the model is unified for both storage types to avoid a split resolution path
-- the active environment selector in Slice 5 aggregates environments from all collections in the selected workspace, not from a single workspace-level environments table
-- migration strategy for existing rows: assign each environment to the first collection in its current workspace (ordered by `sort_order`, then `id`); if a workspace has no collections yet, the environment row is held unmigrated and assigned on first structural write; this is safe for demo data
-- do not introduce a workspace-level environment escape hatch — if a future product need arises, it should be modelled explicitly at that time
+- environments remain workspace-scoped in the domain model (`Environment { workspace_id, ... }`)
+- users can create/select environments without requiring a specific collection selection first
+- linked collections can still persist environment artifacts to disk while environment selection and session state stay workspace-scoped
 
 Important security rule:
 
@@ -786,15 +804,15 @@ Tasks:
   - `ALTER TABLE collections ADD COLUMN storage_config_json TEXT NOT NULL DEFAULT '{}'`
   - `ALTER TABLE workspaces ADD COLUMN variables_json TEXT NOT NULL DEFAULT '[]'`
   - `ALTER TABLE requests ADD COLUMN variable_overrides_json TEXT NOT NULL DEFAULT '[]'`
-  - add `collection_id TEXT` to `environments` and populate it from the first collection in each environment's current workspace (ordered by `sort_order`, then `id`); rebuild the `environments` table to replace `workspace_id` with `collection_id NOT NULL` (SQLite table-rebuild pattern: create new, copy, drop old, rename)
+  - keep environments workspace-scoped (`workspace_id`) and add any needed indexes/backfill for active-environment lookups
   - create `tab_session_workspace_state`
 - introduce `CollectionStorageKind` and collection storage config types in `src/domain/collection.rs`
 - introduce `VariableEntry` / `VariableValue` / `ResolvedRequest` domain types in `src/domain/variable.rs`
-- change `Environment` domain type: remove `workspace_id`, add `collection_id: CollectionId`; update all repo call sites and query paths
+- keep `Environment` domain type workspace-scoped (`Environment { workspace_id, ... }`)
 - update repo mappings:
   - collection repo reads/writes storage kind + storage config
   - workspace repo reads/writes `variables_json`
-  - environment repo queries by `collection_id`; reads/writes row-array variables and accepts legacy map JSON
+  - environment repo queries by `workspace_id`; reads/writes row-array variables and accepts legacy map JSON
   - request repo reads/writes `variable_overrides_json`
 - update `RequestItem` and request editor dirty detection to include variable overrides; unsaved-draft warnings and tab-close prompts depend on this being correct from the start
 - define the linked-collection reconcile event contract (`LinkedCollectionEvent`, `LinkedCollectionEventKind`) that later watcher and Git flows will feed into
@@ -819,12 +837,12 @@ Tasks:
 - implement `LinkedCollectionStore` over the file-backed collection format
 - add create/open flows for:
   - managed collection
-  - linked collection with chosen root path; expose root path as a text input field in this phase since GPUI does not provide a built-in OS file/directory picker — a dedicated picker integration can replace the text input in a later slice
+  - linked collection with chosen root path via native directory picker (with text path input still available)
 - define the on-disk layout writer/reader for collection, folder, request, and environment items
 - keep stable IDs in file metadata and never derive identity from paths
 - lock parent-owned ordering metadata:
   - `.torii/collection.json` owns root child order
-  - `.torii-folder.json` owns folder child order
+  - `.torii/collection.json` also owns folder child order (`folder_child_orders`)
 - enforce the `.torii` reserved name rule at the `LinkedCollectionStore` level
 - resolve collection-store calls without leaking Git concepts into the tree/request UI
 - allow app-local cache/index data, but make full rebuild from tracked files the correctness path
@@ -974,7 +992,7 @@ Purpose: give the variable system an actual runtime selector.
 Tasks:
 
 - add an active-environment selector in the window-level chrome for the selected workspace
-- populate it by aggregating environments from all collections in the selected workspace, resolved through each collection's `CollectionStore`; environments are now collection-scoped so there is no single workspace-level environments table to query directly
+- populate it from workspace-scoped environments for the selected workspace (including linked-backed artifacts resolved through collection-store paths where applicable)
 - persist selection in `WorkspaceScopeState`
 - if the active environment is deleted:
   - clear the active environment
@@ -1147,7 +1165,7 @@ Required GPUI performance audit:
 - [ ] Workspace variables, environment variables, and request-local overrides all exist
 - [ ] Linked collection rows display a right-aligned Git indicator without changing left-side primary icons
 - [ ] Hover/focus on the linked-collection Git indicator shows a popover/tooltip with root-path context and actions
-- [ ] Linked collections support collection-local `local` environment creation/selection flow from the UI
+- [ ] Linked collections support workspace-scoped environment creation/selection flow from the UI
 - [ ] Active environment is session-scoped per workspace and restored on reopen
 - [ ] Request send path resolves variables with deterministic precedence
 - [ ] Missing variables fail preflight with a clear user-facing state shown inline below the URL bar
