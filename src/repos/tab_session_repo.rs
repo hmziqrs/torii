@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
-use anyhow::Context as _;
+use anyhow::{Context as _, Result};
 use sqlx::Row as _;
 
 use crate::{
+    domain::ids::{EnvironmentId, WorkspaceId},
     domain::revision::now_unix_ts,
     session::{
         item_key::{ItemKey, TabKey},
@@ -33,6 +34,15 @@ pub struct TabSessionMetadata {
     pub updated_at: i64,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct TabSessionWorkspaceState {
+    pub workspace_id: WorkspaceId,
+    pub active_environment_id: Option<EnvironmentId>,
+    pub expanded_items_json: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 pub trait TabSessionRepository: Send + Sync {
     fn save_session(
         &self,
@@ -44,6 +54,15 @@ pub trait TabSessionRepository: Send + Sync {
     fn load_session(&self, session_id: SessionId) -> RepoResult<Option<TabSessionSnapshot>>;
     fn load_most_recent(&self) -> RepoResult<Option<TabSessionSnapshot>>;
     fn list_sessions(&self) -> RepoResult<Vec<TabSessionSnapshot>>;
+    fn save_workspace_states(
+        &self,
+        session_id: SessionId,
+        states: &[TabSessionWorkspaceState],
+    ) -> RepoResult<()>;
+    fn load_workspace_states(
+        &self,
+        session_id: SessionId,
+    ) -> RepoResult<Vec<TabSessionWorkspaceState>>;
     fn clear_session(&self, session_id: SessionId) -> RepoResult<()>;
     fn clear_all(&self) -> RepoResult<()>;
 }
@@ -170,6 +189,76 @@ impl TabSessionRepository for SqliteTabSessionRepository {
         Ok(snapshots)
     }
 
+    fn save_workspace_states(
+        &self,
+        session_id: SessionId,
+        states: &[TabSessionWorkspaceState],
+    ) -> RepoResult<()> {
+        self.db.block_on(async {
+            let mut tx = self.db.pool().begin().await?;
+            let ts = now_unix_ts();
+            sqlx::query("DELETE FROM tab_session_workspace_state WHERE session_id = ?")
+                .bind(session_id.0.to_string())
+                .execute(&mut *tx)
+                .await
+                .context("failed to clear previous workspace session rows")?;
+
+            for state in states {
+                sqlx::query(
+                    "INSERT INTO tab_session_workspace_state
+                     (session_id, workspace_id, active_environment_id, expanded_items_json, created_at, updated_at, revision)
+                     VALUES (?, ?, ?, ?, ?, ?, 1)",
+                )
+                .bind(session_id.0.to_string())
+                .bind(state.workspace_id.to_string())
+                .bind(state.active_environment_id.map(|id| id.to_string()))
+                .bind(state.expanded_items_json.as_str())
+                .bind(state.created_at)
+                .bind(ts)
+                .execute(&mut *tx)
+                .await
+                .context("failed to insert workspace session row")?;
+            }
+
+            tx.commit().await?;
+            Ok::<(), anyhow::Error>(())
+        })
+    }
+
+    fn load_workspace_states(
+        &self,
+        session_id: SessionId,
+    ) -> RepoResult<Vec<TabSessionWorkspaceState>> {
+        self.db.block_on(async {
+            let rows = sqlx::query(
+                "SELECT workspace_id, active_environment_id, expanded_items_json, created_at, updated_at
+                 FROM tab_session_workspace_state
+                 WHERE session_id = ?
+                 ORDER BY workspace_id ASC",
+            )
+            .bind(session_id.0.to_string())
+            .fetch_all(self.db.pool())
+            .await
+            .context("failed to load workspace session rows")?;
+
+            rows.into_iter()
+                .map(|row| {
+                    Ok::<TabSessionWorkspaceState, anyhow::Error>(TabSessionWorkspaceState {
+                        workspace_id: WorkspaceId::parse(row.get::<&str, _>("workspace_id"))?,
+                        active_environment_id: row
+                            .get::<Option<String>, _>("active_environment_id")
+                            .map(|id| EnvironmentId::parse(&id))
+                            .transpose()?,
+                        expanded_items_json: row.get("expanded_items_json"),
+                        created_at: row.get("created_at"),
+                        updated_at: row.get("updated_at"),
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(Into::into)
+        })
+    }
+
     fn clear_session(&self, session_id: SessionId) -> RepoResult<()> {
         self.db.block_on(async {
             sqlx::query("DELETE FROM tab_session_state WHERE session_id = ?")
@@ -177,6 +266,11 @@ impl TabSessionRepository for SqliteTabSessionRepository {
                 .execute(self.db.pool())
                 .await
                 .context("failed to clear tab session")?;
+            sqlx::query("DELETE FROM tab_session_workspace_state WHERE session_id = ?")
+                .bind(session_id.0.to_string())
+                .execute(self.db.pool())
+                .await
+                .context("failed to clear tab session workspace state")?;
             sqlx::query("DELETE FROM tab_session_metadata WHERE session_id = ?")
                 .bind(session_id.0.to_string())
                 .execute(self.db.pool())
@@ -192,6 +286,10 @@ impl TabSessionRepository for SqliteTabSessionRepository {
                 .execute(self.db.pool())
                 .await
                 .context("failed to clear all tab sessions")?;
+            sqlx::query("DELETE FROM tab_session_workspace_state")
+                .execute(self.db.pool())
+                .await
+                .context("failed to clear all tab session workspace state")?;
             sqlx::query("DELETE FROM tab_session_metadata")
                 .execute(self.db.pool())
                 .await

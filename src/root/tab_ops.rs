@@ -2,7 +2,7 @@ use super::{AppRoot, services};
 use crate::{
     domain::{
         collection::CollectionStorageKind,
-        ids::{CollectionId, FolderId, RequestId, WorkspaceId},
+        ids::{CollectionId, EnvironmentId, FolderId, RequestId, WorkspaceId},
         item_id::ItemId,
     },
     session::{
@@ -664,6 +664,13 @@ impl AppRoot {
 
         match result {
             Ok(()) => {
+                if let (ItemKind::Environment, Some(workspace_id)) =
+                    (item_key.kind, selected_workspace)
+                {
+                    if let Ok(mut shared) = services.active_environments_by_workspace.write() {
+                        shared.remove(&workspace_id);
+                    }
+                }
                 let fallback_workspace = services
                     .repos
                     .workspace
@@ -673,6 +680,11 @@ impl AppRoot {
 
                 self.session.update(cx, |session, cx| {
                     session.close_tabs(&close_keys, cx);
+                    if let (ItemKind::Environment, Some(workspace_id)) =
+                        (item_key.kind, selected_workspace)
+                    {
+                        session.set_active_environment_for_workspace(workspace_id, None, cx);
+                    }
                     if should_reset_selected_workspace_on_delete(
                         item_key,
                         session.selected_workspace_id,
@@ -690,6 +702,30 @@ impl AppRoot {
                 window.push_notification(es_fluent::localize("delete_failed", None), cx);
             }
         }
+    }
+
+    pub(crate) fn set_active_environment(
+        &mut self,
+        environment_id: EnvironmentId,
+        cx: &mut Context<Self>,
+    ) {
+        let services = services(cx);
+        let workspace_id = match services
+            .session_restore
+            .workspace_for_item(ItemKey::environment(environment_id))
+        {
+            Ok(Some(workspace_id)) => workspace_id,
+            _ => return,
+        };
+
+        self.session.update(cx, |session, cx| {
+            session.set_selected_workspace(Some(workspace_id), cx);
+            session.set_active_environment_for_workspace(workspace_id, Some(environment_id), cx);
+        });
+        if let Ok(mut shared) = services.active_environments_by_workspace.write() {
+            shared.insert(workspace_id, environment_id);
+        }
+        self.persist_session_state(cx);
     }
 }
 

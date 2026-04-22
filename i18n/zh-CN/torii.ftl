@@ -87,6 +87,7 @@ sidebar_new_collection = 新建集合
 sidebar_new_environment = 新建环境
 sidebar_collections = 集合
 sidebar_environments = 环境
+sidebar_environment_active_suffix = （已激活）
 sidebar_utilities = 工具
 
 ## Tabs
@@ -168,6 +169,7 @@ menu_delete = 删除
 menu_duplicate = 复制
 menu_new_request = 新建请求
 menu_new_folder = 新建文件夹
+menu_set_active_environment = 设为激活环境
 
 delete_success = 项目已删除。
 delete_failed = 删除失败。

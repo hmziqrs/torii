@@ -19,7 +19,7 @@ use crate::{
         ids::{RequestDraftId, RequestId, WorkspaceId},
         item_id::ItemId,
     },
-    repos::tab_session_repo::TabSessionMetadata,
+    repos::tab_session_repo::{TabSessionMetadata, TabSessionWorkspaceState},
     services::{
         app_services::{AppServices, AppServicesGlobal},
         linked_collection_reconcile::{LinkedCollectionEvent, LinkedCollectionMonitor},
@@ -99,6 +99,7 @@ impl AppRoot {
                     restored.tabs,
                     restored.active,
                     selected_workspace_id,
+                    restored.active_environments_by_workspace,
                     restored.sidebar_selection,
                     restored.window_layout,
                     cx,
@@ -107,6 +108,12 @@ impl AppRoot {
                 session.set_selected_workspace(selected_workspace_id, cx);
             }
         });
+        {
+            let active_map = session.read(cx).active_environments_by_workspace.clone();
+            if let Ok(mut shared) = services.active_environments_by_workspace.write() {
+                *shared = active_map;
+            }
+        }
 
         catalog = load_workspace_catalog(
             &services.repos.workspace,
@@ -154,6 +161,9 @@ impl AppRoot {
 
                 // cx.notify() must fire unconditionally — all session mutations (tab switch,
                 // sidebar toggle, reorder, etc.) need AppRoot to re-render.
+                if let Ok(mut shared) = services.active_environments_by_workspace.write() {
+                    *shared = session.read(cx).active_environments_by_workspace.clone();
+                }
                 cx.notify();
             }
         })];
@@ -305,6 +315,25 @@ impl AppRoot {
                 .save_session(snapshot.session_id, &tabs, active, &metadata)
         {
             tracing::error!("failed to persist tab session: {err}");
+        }
+
+        let workspace_states = snapshot
+            .active_environments_by_workspace
+            .iter()
+            .map(|(workspace_id, environment_id)| TabSessionWorkspaceState {
+                workspace_id: *workspace_id,
+                active_environment_id: Some(*environment_id),
+                expanded_items_json: "[]".to_string(),
+                created_at: now,
+                updated_at: now,
+            })
+            .collect::<Vec<_>>();
+        if let Err(err) = services
+            .repos
+            .tab_session
+            .save_workspace_states(snapshot.session_id, &workspace_states)
+        {
+            tracing::error!("failed to persist workspace session state: {err}");
         }
     }
 

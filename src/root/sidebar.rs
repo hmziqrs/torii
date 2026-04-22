@@ -20,10 +20,13 @@ impl AppRoot {
         active_key: Option<ItemKey>,
         cx: &mut gpui::Context<Self>,
     ) -> impl gpui::IntoElement {
-        let (selected_workspace_id, sidebar_section, sidebar_collapsed) = {
+        let (selected_workspace_id, active_environment_id, sidebar_section, sidebar_collapsed) = {
             let session = self.session.read(cx);
             (
                 session.selected_workspace_id,
+                session.selected_workspace_id.and_then(|workspace_id| {
+                    session.active_environment_for_workspace(workspace_id)
+                }),
                 session.window_layout.sidebar_section,
                 session.window_layout.sidebar_collapsed,
             )
@@ -242,53 +245,78 @@ impl AppRoot {
                                                 "sidebar_environments",
                                                 None,
                                             ))
-                                            .child(
-                                                SidebarMenu::new().children(
-                                                    workspace.environments.iter().map(
-                                                        |environment| {
-                                                            let item_key = ItemKey::environment(
-                                                                environment.id,
-                                                            );
-                                                            let weak_root = weak_root.clone();
-                                                            SidebarMenuItem::new(
-                                                                environment.name.clone(),
+                                            .child(SidebarMenu::new().children(
+                                                workspace.environments.iter().map(|environment| {
+                                                    let environment_id = environment.id;
+                                                    let item_key =
+                                                        ItemKey::environment(environment_id);
+                                                    let set_active_label = es_fluent::localize(
+                                                        "menu_set_active_environment",
+                                                        None,
+                                                    )
+                                                    .to_string();
+                                                    let is_active_environment =
+                                                        active_environment_id
+                                                            == Some(environment.id);
+                                                    let weak_root = weak_root.clone();
+                                                    SidebarMenuItem::new(if is_active_environment {
+                                                        format!(
+                                                            "{} {}",
+                                                            environment.name,
+                                                            es_fluent::localize(
+                                                                "sidebar_environment_active_suffix",
+                                                                None
                                                             )
-                                                            .icon(
-                                                                Icon::new(IconName::Globe).small(),
+                                                        )
+                                                    } else {
+                                                        environment.name.clone()
+                                                    })
+                                                    .icon(Icon::new(IconName::Globe).small())
+                                                    .active(active_key == Some(item_key))
+                                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                                        this.open_item(item_key, cx);
+                                                    }))
+                                                    .context_menu(move |menu, _, _| {
+                                                        let weak_root = weak_root.clone();
+                                                        let weak_root_set_active =
+                                                            weak_root.clone();
+                                                        menu.item(
+                                                            PopupMenuItem::new(
+                                                                set_active_label.clone(),
                                                             )
-                                                            .active(active_key == Some(item_key))
-                                                            .on_click(cx.listener(
-                                                                move |this, _, _, cx| {
-                                                                    this.open_item(item_key, cx);
-                                                                },
-                                                            ))
-                                                            .context_menu(move |menu, _, _| {
-                                                                let weak_root = weak_root.clone();
-                                                                menu.item(
-                                                                PopupMenuItem::new(
-                                                                    es_fluent::localize(
-                                                                        "menu_delete",
-                                                                        None,
-                                                                    ),
-                                                                )
-                                                                .icon(Icon::new(IconName::Close))
-                                                                .on_click(move |_, window, cx| {
-                                                                    let _ = weak_root.update(
-                                                                        cx,
-                                                                        |this, cx| {
-                                                                            this.delete_item(
-                                                                                item_key, window,
-                                                                                cx,
-                                                                            );
-                                                                        },
-                                                                    );
-                                                                }),
+                                                            .icon(Icon::new(IconName::Check))
+                                                            .on_click(move |_, _, cx| {
+                                                                let _ = weak_root_set_active
+                                                                    .update(cx, |this, cx| {
+                                                                        this.set_active_environment(
+                                                                                    environment_id,
+                                                                                    cx,
+                                                                                );
+                                                                    });
+                                                            }),
+                                                        )
+                                                        .item(
+                                                            PopupMenuItem::new(
+                                                                es_fluent::localize(
+                                                                    "menu_delete",
+                                                                    None,
+                                                                ),
                                                             )
-                                                            })
-                                                        },
-                                                    ),
-                                                ),
-                                            ),
+                                                            .icon(Icon::new(IconName::Close))
+                                                            .on_click(move |_, window, cx| {
+                                                                let _ = weak_root.update(
+                                                                    cx,
+                                                                    |this, cx| {
+                                                                        this.delete_item(
+                                                                            item_key, window, cx,
+                                                                        );
+                                                                    },
+                                                                );
+                                                            }),
+                                                        )
+                                                    })
+                                                }),
+                                            )),
                                         )
                                     })
                             }),

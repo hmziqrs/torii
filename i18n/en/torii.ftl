@@ -87,6 +87,7 @@ sidebar_new_collection = New Collection
 sidebar_new_environment = New Environment
 sidebar_collections = Collections
 sidebar_environments = Environments
+sidebar_environment_active_suffix = (Active)
 sidebar_utilities = Utilities
 
 ## Tabs
@@ -168,6 +169,7 @@ menu_delete = Delete
 menu_duplicate = Duplicate
 menu_new_request = New Request
 menu_new_folder = New Folder
+menu_set_active_environment = Set Active Environment
 
 delete_success = Item deleted.
 delete_failed = Delete failed.

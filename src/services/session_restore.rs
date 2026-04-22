@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     collections::HashSet,
     sync::{Arc, Mutex},
 };
@@ -6,7 +7,10 @@ use std::{
 use anyhow::Result;
 
 use crate::{
-    domain::{ids::WorkspaceId, item_id::ItemId},
+    domain::{
+        ids::{EnvironmentId, WorkspaceId},
+        item_id::ItemId,
+    },
     repos::{
         collection_repo::CollectionRepoRef,
         environment_repo::EnvironmentRepoRef,
@@ -37,6 +41,7 @@ pub struct RestoredSessionState {
     pub tabs: Vec<TabState>,
     pub active: Option<TabKey>,
     pub selected_workspace_id: Option<WorkspaceId>,
+    pub active_environments_by_workspace: HashMap<WorkspaceId, EnvironmentId>,
     pub sidebar_selection: Option<ItemKey>,
     pub window_layout: crate::session::window_layout::WindowLayoutState,
 }
@@ -110,10 +115,26 @@ impl SessionRestoreService {
             }
         }
 
+        let active_environments_by_workspace = self
+            .tab_sessions
+            .load_workspace_states(snapshot.session_id)?
+            .into_iter()
+            .filter_map(|state| {
+                let active_environment_id = state.active_environment_id?;
+                match self.environments.get(active_environment_id) {
+                    Ok(Some(environment)) if environment.workspace_id == state.workspace_id => {
+                        Some((state.workspace_id, active_environment_id))
+                    }
+                    _ => None,
+                }
+            })
+            .collect::<HashMap<_, _>>();
+
         Ok(Some(RestoredSessionState {
             tabs,
             active,
             selected_workspace_id,
+            active_environments_by_workspace,
             sidebar_selection: snapshot.metadata.sidebar_selection,
             window_layout: snapshot.metadata.window_layout,
         }))

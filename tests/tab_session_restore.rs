@@ -9,7 +9,10 @@ use torii::{
         environment_repo::{EnvironmentRepository, SqliteEnvironmentRepository},
         folder_repo::SqliteFolderRepository,
         request_repo::{RequestRepository, SqliteRequestRepository},
-        tab_session_repo::{SqliteTabSessionRepository, TabSessionMetadata, TabSessionRepository},
+        tab_session_repo::{
+            SqliteTabSessionRepository, TabSessionMetadata, TabSessionRepository,
+            TabSessionWorkspaceState,
+        },
         workspace_repo::{SqliteWorkspaceRepository, WorkspaceRepository},
     },
     services::session_restore::SessionRestoreService,
@@ -69,6 +72,16 @@ fn tab_session_repo_roundtrip_and_restore_skip_missing_items() -> Result<()> {
         Some(TabKey::from(ItemKey::environment(environment.id))),
         &metadata,
     )?;
+    tab_session_repo.save_workspace_states(
+        session_id,
+        &[TabSessionWorkspaceState {
+            workspace_id: workspace.id,
+            active_environment_id: Some(environment.id),
+            expanded_items_json: "[]".to_string(),
+            created_at: 1,
+            updated_at: 1,
+        }],
+    )?;
 
     let roundtrip = tab_session_repo
         .load_session(session_id)?
@@ -109,6 +122,13 @@ fn tab_session_repo_roundtrip_and_restore_skip_missing_items() -> Result<()> {
         Some(TabKey::from(ItemKey::environment(environment.id)))
     );
     assert_eq!(restore.selected_workspace_id, Some(workspace.id));
+    assert_eq!(
+        restore
+            .active_environments_by_workspace
+            .get(&workspace.id)
+            .copied(),
+        Some(environment.id)
+    );
     assert_eq!(restore.sidebar_selection, metadata.sidebar_selection);
     assert_eq!(restore.window_layout, metadata.window_layout);
 

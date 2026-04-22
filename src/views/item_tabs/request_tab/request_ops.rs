@@ -163,11 +163,10 @@ impl RequestTabView {
         // Create pending history row with secret-safe snapshot
         let draft = self.editor.draft().clone();
         let active_environment_id = services
-            .repos
-            .environment
-            .list_by_workspace(workspace_id)
+            .active_environments_by_workspace
+            .read()
             .ok()
-            .and_then(|environments| environments.first().map(|env| env.id));
+            .and_then(|map| map.get(&workspace_id).copied());
         let resolved_request = match services.variable_resolution.resolve_request(
             &draft,
             workspace_id,

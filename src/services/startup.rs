@@ -136,6 +136,9 @@ fn build_app_services() -> Result<AppServices> {
             tab_session: tab_session_repo,
         },
         variable_resolution,
+        active_environments_by_workspace: Arc::new(std::sync::RwLock::new(
+            std::collections::HashMap::new(),
+        )),
         ui_preferences,
         recovery,
         session_restore,
@@ -263,6 +266,9 @@ fn fallback_app_services() -> AppServices {
             tab_session: tab_session_repo,
         },
         variable_resolution,
+        active_environments_by_workspace: Arc::new(std::sync::RwLock::new(
+            std::collections::HashMap::new(),
+        )),
         ui_preferences,
         recovery,
         session_restore,

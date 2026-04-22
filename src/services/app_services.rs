@@ -3,6 +3,7 @@ use std::sync::Arc;
 use gpui::Global;
 
 use crate::{
+    domain::ids::{EnvironmentId, WorkspaceId},
     infra::{blobs::BlobStore, db::Database, paths::AppPaths, secrets::SecretStoreRef},
     repos::{
         collection_repo::CollectionRepoRef, environment_repo::EnvironmentRepoRef,
@@ -44,6 +45,8 @@ pub struct AppServices {
     pub secret_manager: SecretManager,
     pub repos: Repositories,
     pub variable_resolution: Arc<VariableResolutionService>,
+    pub active_environments_by_workspace:
+        Arc<std::sync::RwLock<std::collections::HashMap<WorkspaceId, EnvironmentId>>>,
     pub ui_preferences: UiPreferencesStoreRef,
     pub recovery: RecoveryCoordinator,
     pub session_restore: SessionRestoreService,

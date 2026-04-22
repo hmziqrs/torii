@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    domain::ids::WorkspaceId,
+    domain::ids::{EnvironmentId, WorkspaceId},
     session::{
         item_key::{ItemKey, TabKey},
         tab_manager::{CloseTabOutcome, OpenTabOutcome, TabManager, TabState},
@@ -30,6 +30,7 @@ impl Default for SessionId {
 pub struct WorkspaceSession {
     pub session_id: SessionId,
     pub selected_workspace_id: Option<WorkspaceId>,
+    pub active_environments_by_workspace: std::collections::HashMap<WorkspaceId, EnvironmentId>,
     pub sidebar_selection: Option<ItemKey>,
     pub tab_manager: TabManager,
     pub window_layout: WindowLayoutState,
@@ -40,6 +41,7 @@ impl WorkspaceSession {
         Self {
             session_id: SessionId::new(),
             selected_workspace_id: None,
+            active_environments_by_workspace: std::collections::HashMap::new(),
             sidebar_selection: None,
             tab_manager: TabManager::default(),
             window_layout: WindowLayoutState::default(),
@@ -99,11 +101,47 @@ impl WorkspaceSession {
         }
     }
 
+    pub fn active_environment_for_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Option<EnvironmentId> {
+        self.active_environments_by_workspace
+            .get(&workspace_id)
+            .copied()
+    }
+
+    pub fn set_active_environment_for_workspace(
+        &mut self,
+        workspace_id: WorkspaceId,
+        environment_id: Option<EnvironmentId>,
+        cx: &mut Context<Self>,
+    ) {
+        let changed = match environment_id {
+            Some(env_id) => {
+                if self.active_environments_by_workspace.get(&workspace_id) == Some(&env_id) {
+                    false
+                } else {
+                    self.active_environments_by_workspace
+                        .insert(workspace_id, env_id);
+                    true
+                }
+            }
+            None => self
+                .active_environments_by_workspace
+                .remove(&workspace_id)
+                .is_some(),
+        };
+        if changed {
+            cx.notify();
+        }
+    }
+
     pub fn restore_tabs(
         &mut self,
         tabs: Vec<TabState>,
         active: Option<TabKey>,
         selected_workspace_id: Option<WorkspaceId>,
+        active_environments_by_workspace: std::collections::HashMap<WorkspaceId, EnvironmentId>,
         sidebar_selection: Option<ItemKey>,
         window_layout: WindowLayoutState,
         cx: &mut Context<Self>,
@@ -112,6 +150,7 @@ impl WorkspaceSession {
         self.sidebar_selection =
             sidebar_selection.or_else(|| self.tab_manager.active().map(|tab| tab.item()));
         self.selected_workspace_id = selected_workspace_id;
+        self.active_environments_by_workspace = active_environments_by_workspace;
         self.window_layout = window_layout;
         cx.notify();
     }
