@@ -3,7 +3,7 @@ use gpui_component::IconName;
 
 use crate::{
     domain::{
-        collection::Collection,
+        collection::{Collection, CollectionStorageKind},
         environment::Environment,
         folder::Folder,
         ids::{CollectionId, FolderId, WorkspaceId},
@@ -11,6 +11,7 @@ use crate::{
         request::RequestItem,
         workspace::Workspace,
     },
+    infra::linked_collection_format::read_linked_collection,
     repos::{
         collection_repo::CollectionRepoRef, environment_repo::EnvironmentRepoRef,
         folder_repo::FolderRepoRef, request_repo::RequestRepoRef, workspace_repo::WorkspaceRepoRef,
@@ -89,8 +90,34 @@ fn build_workspace_tree(
 
     let mut collection_trees = Vec::with_capacity(collection_rows.len());
     for collection in collection_rows {
-        let folder_rows = folders.list_by_collection(collection.id)?;
-        let request_rows = requests.list_by_collection(collection.id)?;
+        let (folder_rows, request_rows) = match collection.storage_kind {
+            CollectionStorageKind::Managed => (
+                folders.list_by_collection(collection.id)?,
+                requests.list_by_collection(collection.id)?,
+            ),
+            CollectionStorageKind::Linked => {
+                match collection.storage_config.linked_root_path.clone() {
+                    Some(root) => match read_linked_collection(&root) {
+                        Ok(state) => (state.folders, state.requests),
+                        Err(err) => {
+                            tracing::warn!(
+                                collection_id = %collection.id,
+                                root = %root.display(),
+                                "failed to read linked collection tree: {err}"
+                            );
+                            (Vec::new(), Vec::new())
+                        }
+                    },
+                    None => {
+                        tracing::warn!(
+                            collection_id = %collection.id,
+                            "linked collection missing root path; rendering empty tree"
+                        );
+                        (Vec::new(), Vec::new())
+                    }
+                }
+            }
+        };
         collection_trees.push(CollectionTree {
             collection,
             children: build_tree_items(&folder_rows, &request_rows, None),

@@ -1,5 +1,12 @@
 use super::*;
 use crate::services::request_draft::persist_new_draft_request;
+use crate::{
+    domain::{collection::CollectionStorageKind, revision::now_unix_ts},
+    infra::linked_collection_format::{
+        LinkedCollectionState, LinkedSiblingId, read_linked_collection, write_linked_collection,
+    },
+};
+use anyhow::anyhow;
 
 impl RequestTabView {
     pub fn has_unsaved_changes(&self) -> bool {
@@ -25,10 +32,29 @@ impl RequestTabView {
         self.editor.begin_save();
         cx.notify();
 
-        let save_result = if is_draft_identity {
-            persist_new_draft_request(&services.repos.request, &request)
-        } else {
-            services.repos.request.save(&request, expected_revision)
+        let collection = services
+            .repos
+            .collection
+            .get(request.collection_id)
+            .map_err(|e| RequestRepoError::Storage(anyhow!("failed to load collection: {e}")))
+            .and_then(|collection| {
+                collection.ok_or(RequestRepoError::Storage(anyhow!(
+                    "collection no longer exists"
+                )))
+            });
+
+        let save_result = match collection {
+            Ok(collection) if collection.storage_kind == CollectionStorageKind::Linked => {
+                self.save_linked_request(&request, expected_revision, is_draft_identity, &services)
+            }
+            Ok(_) => {
+                if is_draft_identity {
+                    persist_new_draft_request(&services.repos.request, &request)
+                } else {
+                    services.repos.request.save(&request, expected_revision)
+                }
+            }
+            Err(err) => Err(err),
         };
 
         match save_result {
@@ -70,6 +96,95 @@ impl RequestTabView {
                 Err(msg)
             }
         }
+    }
+
+    fn save_linked_request(
+        &self,
+        request: &RequestItem,
+        expected_revision: i64,
+        is_draft_identity: bool,
+        services: &AppServices,
+    ) -> Result<RequestItem, RequestRepoError> {
+        let collection = services
+            .repos
+            .collection
+            .get(request.collection_id)
+            .map_err(|e| RequestRepoError::Storage(anyhow!("failed to load collection: {e}")))?
+            .ok_or_else(|| RequestRepoError::Storage(anyhow!("collection no longer exists")))?;
+        let root_path = collection
+            .storage_config
+            .linked_root_path
+            .clone()
+            .ok_or_else(|| {
+                RequestRepoError::Storage(anyhow!("linked collection missing root path"))
+            })?;
+
+        let mut state = read_linked_collection(&root_path).map_err(|e| {
+            RequestRepoError::Storage(anyhow!("failed to read linked collection: {e}"))
+        })?;
+        if state.collection.id != collection.id {
+            return Err(RequestRepoError::Storage(anyhow!(
+                "linked collection id mismatch: store={} file={}",
+                collection.id,
+                state.collection.id
+            )));
+        }
+
+        ensure_parent_exists(&state, request.parent_folder_id)?;
+
+        let saved = if is_draft_identity {
+            let mut saved = request.clone();
+            saved.id = crate::domain::ids::RequestId::new();
+            saved.collection_id = collection.id;
+            saved.sort_order =
+                next_linked_request_sort(&state.requests, saved.parent_folder_id, None);
+            saved.meta = crate::domain::revision::RevisionMetadata::new_now();
+            attach_request_order(&mut state, saved.id, saved.parent_folder_id);
+            state.requests.push(saved.clone());
+            saved
+        } else {
+            let Some(idx) = state
+                .requests
+                .iter()
+                .position(|candidate| candidate.id == request.id)
+            else {
+                return Err(RequestRepoError::NotFound(request.id));
+            };
+            let existing = state.requests[idx].clone();
+            if existing.meta.revision != expected_revision {
+                return Err(RequestRepoError::RevisionConflict {
+                    expected: expected_revision,
+                    actual: existing.meta.revision,
+                });
+            }
+            ensure_parent_exists(&state, request.parent_folder_id)?;
+
+            let mut saved = request.clone();
+            saved.collection_id = collection.id;
+            saved.meta.created_at = existing.meta.created_at;
+            saved.meta.updated_at = now_unix_ts();
+            saved.meta.revision = existing.meta.revision + 1;
+
+            if saved.parent_folder_id != existing.parent_folder_id {
+                detach_request_order(&mut state, existing.id, existing.parent_folder_id);
+                attach_request_order(&mut state, saved.id, saved.parent_folder_id);
+                saved.sort_order = next_linked_request_sort(
+                    &state.requests,
+                    saved.parent_folder_id,
+                    Some(saved.id),
+                );
+            } else {
+                saved.sort_order = existing.sort_order;
+            }
+
+            state.requests[idx] = saved.clone();
+            saved
+        };
+
+        write_linked_collection(&root_path, &state).map_err(|e| {
+            RequestRepoError::Storage(anyhow!("failed to write linked request state: {e}"))
+        })?;
+        Ok(saved)
     }
 
     // -----------------------------------------------------------------------
@@ -569,5 +684,77 @@ impl RequestTabView {
     pub fn mark_response_tables_dirty(&mut self) {
         self.response_tables_dirty = true;
         self.last_preview_html = None;
+    }
+}
+
+fn ensure_parent_exists(
+    state: &LinkedCollectionState,
+    parent_folder_id: Option<crate::domain::ids::FolderId>,
+) -> Result<(), RequestRepoError> {
+    if let Some(parent) = parent_folder_id {
+        let exists = state.folders.iter().any(|folder| folder.id == parent);
+        if !exists {
+            return Err(RequestRepoError::Storage(anyhow!(
+                "parent folder does not exist in linked collection"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn next_linked_request_sort(
+    requests: &[RequestItem],
+    parent_folder_id: Option<crate::domain::ids::FolderId>,
+    excluding: Option<crate::domain::ids::RequestId>,
+) -> i64 {
+    requests
+        .iter()
+        .filter(|request| {
+            request.parent_folder_id == parent_folder_id
+                && excluding.is_none_or(|excluded| excluded != request.id)
+        })
+        .map(|request| request.sort_order)
+        .max()
+        .unwrap_or(-1)
+        + 1
+}
+
+fn attach_request_order(
+    state: &mut LinkedCollectionState,
+    request_id: crate::domain::ids::RequestId,
+    parent_folder_id: Option<crate::domain::ids::FolderId>,
+) {
+    let sibling = LinkedSiblingId::Request {
+        id: request_id.to_string(),
+    };
+    if let Some(parent_id) = parent_folder_id {
+        state
+            .folder_child_orders
+            .entry(parent_id)
+            .or_default()
+            .push(sibling);
+    } else {
+        state.root_child_order.push(sibling);
+    }
+}
+
+fn detach_request_order(
+    state: &mut LinkedCollectionState,
+    request_id: crate::domain::ids::RequestId,
+    parent_folder_id: Option<crate::domain::ids::FolderId>,
+) {
+    let request_id = request_id.to_string();
+    if let Some(parent_id) = parent_folder_id {
+        if let Some(children) = state.folder_child_orders.get_mut(&parent_id) {
+            children.retain(|child| match child {
+                LinkedSiblingId::Request { id } => id != &request_id,
+                _ => true,
+            });
+        }
+    } else {
+        state.root_child_order.retain(|child| match child {
+            LinkedSiblingId::Request { id } => id != &request_id,
+            _ => true,
+        });
     }
 }

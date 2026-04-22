@@ -2,10 +2,13 @@ use super::{AppRoot, services};
 use crate::{
     domain::{
         collection::{CollectionStorageConfig, CollectionStorageKind},
+        folder::Folder,
         ids::{CollectionId, EnvironmentId, FolderId, RequestId, WorkspaceId},
         item_id::ItemId,
     },
-    infra::linked_collection_format::{LinkedCollectionState, write_linked_collection},
+    infra::linked_collection_format::{
+        LinkedCollectionState, LinkedSiblingId, read_linked_collection, write_linked_collection,
+    },
     session::{
         item_key::{ItemKey, ItemKind, TabKey},
         request_editor_state::EditorIdentity,
@@ -560,32 +563,85 @@ impl AppRoot {
             .get(collection_id)
             .map_err(|err| format!("failed to load collection: {err}"))?
             .ok_or_else(|| "collection no longer exists".to_string())?;
-        if collection.storage_kind == CollectionStorageKind::Linked {
-            return Err(es_fluent::localize(
-                "create_folder_linked_unsupported",
-                None,
-            ));
-        }
 
-        let folders = services
-            .repos
-            .folder
-            .list_by_collection(collection_id)
-            .map_err(|err| format!("failed to list folders: {err}"))?;
-        let sibling_names = folders
-            .iter()
-            .filter(|folder| folder.parent_folder_id == parent_folder_id)
-            .map(|folder| folder.name.clone())
-            .collect::<Vec<_>>();
-        let name = next_item_name(
-            es_fluent::localize("folder_default_name", None),
-            &sibling_names,
-        );
-        let folder = services
-            .repos
-            .folder
-            .create(collection_id, parent_folder_id, &name)
-            .map_err(|err| format!("failed to create folder: {err}"))?;
+        let folder = if collection.storage_kind == CollectionStorageKind::Linked {
+            let root_path = collection
+                .storage_config
+                .linked_root_path
+                .clone()
+                .ok_or_else(|| "linked collection is missing root path".to_string())?;
+            let mut state = read_linked_collection(&root_path)
+                .map_err(|err| format!("failed to load linked collection: {err}"))?;
+            if state.collection.id != collection_id {
+                return Err("linked collection id mismatch".to_string());
+            }
+
+            if let Some(parent_id) = parent_folder_id {
+                let parent_exists = state.folders.iter().any(|folder| folder.id == parent_id);
+                if !parent_exists {
+                    return Err("parent folder no longer exists".to_string());
+                }
+            }
+
+            let sibling_names = state
+                .folders
+                .iter()
+                .filter(|folder| folder.parent_folder_id == parent_folder_id)
+                .map(|folder| folder.name.clone())
+                .collect::<Vec<_>>();
+            let name = next_item_name(
+                es_fluent::localize("folder_default_name", None),
+                &sibling_names,
+            );
+            let next_sort = state
+                .folders
+                .iter()
+                .filter(|folder| folder.parent_folder_id == parent_folder_id)
+                .map(|folder| folder.sort_order)
+                .max()
+                .unwrap_or(-1)
+                + 1;
+            let folder = Folder::new(collection_id, parent_folder_id, name, next_sort);
+
+            if let Some(parent_id) = parent_folder_id {
+                state
+                    .folder_child_orders
+                    .entry(parent_id)
+                    .or_default()
+                    .push(LinkedSiblingId::Folder {
+                        id: folder.id.to_string(),
+                    });
+            } else {
+                state.root_child_order.push(LinkedSiblingId::Folder {
+                    id: folder.id.to_string(),
+                });
+            }
+            state.folder_child_orders.entry(folder.id).or_default();
+            state.folders.push(folder.clone());
+            write_linked_collection(&root_path, &state)
+                .map_err(|err| format!("failed to write linked collection: {err}"))?;
+            folder
+        } else {
+            let folders = services
+                .repos
+                .folder
+                .list_by_collection(collection_id)
+                .map_err(|err| format!("failed to list folders: {err}"))?;
+            let sibling_names = folders
+                .iter()
+                .filter(|folder| folder.parent_folder_id == parent_folder_id)
+                .map(|folder| folder.name.clone())
+                .collect::<Vec<_>>();
+            let name = next_item_name(
+                es_fluent::localize("folder_default_name", None),
+                &sibling_names,
+            );
+            services
+                .repos
+                .folder
+                .create(collection_id, parent_folder_id, &name)
+                .map_err(|err| format!("failed to create folder: {err}"))?
+        };
         drop(services);
 
         self.refresh_catalog(cx);
