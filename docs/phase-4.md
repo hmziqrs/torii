@@ -14,6 +14,7 @@ Complete the core Postman information architecture on top of the Phase 3.5 reque
 - a sidebar tree that is ready for virtualization rather than hard-coded recursive rendering
 - drag/drop that can safely move and reorder items across the workspace tree
 - an active-environment selector and a deterministic variable-resolution pipeline
+- linked-collection UX affordances in the sidebar (right-side Git indicator + hover details)
 - parent-delete semantics that clean up persisted tabs, draft tabs, stale selection, and active environment state
 
 Phase 4 is the point where the app stops being "a request editor with a sidebar" and becomes a real workspace model.
@@ -158,6 +159,9 @@ Phase 4 is complete only when all of the following exist:
   - request-local overrides
   - active environment variables
   - workspace variables
+- linked-collection affordances in the sidebar:
+  - right-aligned Git icon on collection rows when `storage_kind = Linked`
+  - hover popover/tooltip with linked-root details and related actions
 - delete semantics that:
   - close persisted descendant tabs
   - close draft request tabs whose owning collection/folder is deleted
@@ -177,6 +181,7 @@ Included in Phase 4:
 - transaction-safe tree mutations
 - session persistence for active environment and expansion state
 - keyboard navigation and context-menu parity for the workspace tree
+- linked-collection discoverability UX in the sidebar (Git badge + hover details)
 
 Explicitly deferred:
 
@@ -636,6 +641,7 @@ Storage rule by collection type:
 - for `Managed` collections, request/environment variable rows live in SQLite as normal
 - for `Linked` collections, request/environment variable rows live in the file-backed collection format
 - workspace variables remain workspace-scoped SQLite data unless the product later introduces linked workspaces; do not prematurely move workspace-level state into collection folders
+- for linked collections, the UI should prefer a collection-local environment named `local` as the first-run default when none exists yet; seed it lazily on first explicit environment action (create/select/edit), not during background startup
 
 Environment scope change:
 
@@ -875,6 +881,13 @@ Tasks:
 - when creating a collection, require choosing the collection type:
   - `Managed`
   - `Linked` (root path via text input; see Slice 1 note on file picker)
+- in the sidebar collection row UI:
+  - keep the existing collection icon on the left
+  - add a right-aligned Git icon for linked collections only
+  - on hover/focus of the Git icon, show a popover/tooltip with:
+    - storage type (`Linked`)
+    - linked root path
+    - quick actions (`copy path`, `open in finder` if supported, `manage local environments`)
 - add delete confirmations where destructive behavior is ambiguous
 - upgrade item tabs:
   - workspace tab:
@@ -900,6 +913,8 @@ Definition of done:
 
 - every Phase 4 item can be created and renamed from the UI
 - collection creation exposes the storage-type choice clearly
+- linked collections are visually distinguishable in the tree via a right-side Git icon
+- hover/focus on the Git icon reveals linked-collection metadata/actions without causing row reflow
 - variable editing is structured, not raw JSON
 - all new copy goes through Fluent in `i18n/en/torii.ftl` and `i18n/zh-CN/torii.ftl`
 
@@ -1130,6 +1145,9 @@ Required GPUI performance audit:
 - [ ] CRUD exists for workspace, collection, folder, request, and environment items
 - [ ] Drag/drop mutations are transactional and reject illegal targets
 - [ ] Workspace variables, environment variables, and request-local overrides all exist
+- [ ] Linked collection rows display a right-aligned Git indicator without changing left-side primary icons
+- [ ] Hover/focus on the linked-collection Git indicator shows a popover/tooltip with root-path context and actions
+- [ ] Linked collections support collection-local `local` environment creation/selection flow from the UI
 - [ ] Active environment is session-scoped per workspace and restored on reopen
 - [ ] Request send path resolves variables with deterministic precedence
 - [ ] Missing variables fail preflight with a clear user-facing state shown inline below the URL bar
