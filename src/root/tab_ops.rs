@@ -127,6 +127,48 @@ impl AppRoot {
                                 .on_click(move |_, window, cx| window.close_dialog(cx)),
                         )
                         .child(
+                            Button::new("create-collection-linked-browse")
+                                .label(es_fluent::localize("create_collection_dialog_browse", None))
+                                .on_click({
+                                    let linked_root_input = linked_root_input.clone();
+                                    move |_, window, cx| {
+                                        let receiver =
+                                            cx.prompt_for_paths(gpui::PathPromptOptions {
+                                                files: false,
+                                                directories: true,
+                                                multiple: false,
+                                                prompt: Some(
+                                                    es_fluent::localize(
+                                                        "create_collection_dialog_browse_prompt",
+                                                        None,
+                                                    )
+                                                    .to_string()
+                                                    .into(),
+                                                ),
+                                            });
+                                        let window_handle = window.window_handle();
+                                        let linked_root_input = linked_root_input.clone();
+                                        cx.spawn(async move |cx| {
+                                            let picked_path = match receiver.await {
+                                                Ok(Ok(Some(paths))) => paths.into_iter().next(),
+                                                _ => None,
+                                            };
+                                            let Some(path) = picked_path else {
+                                                return;
+                                            };
+                                            let value = path.display().to_string();
+                                            let _ = window_handle.update(cx, |_, window, cx| {
+                                                let _ =
+                                                    linked_root_input.update(cx, |state, cx| {
+                                                        state.set_value(value, window, cx);
+                                                    });
+                                            });
+                                        })
+                                        .detach();
+                                    }
+                                }),
+                        )
+                        .child(
                             Button::new("create-collection-managed")
                                 .label(es_fluent::localize(
                                     "create_collection_dialog_create_managed",
