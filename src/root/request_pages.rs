@@ -17,6 +17,7 @@ use crate::{
 };
 use gpui::prelude::*;
 use gpui::{Context, Entity, Window};
+use gpui_component::WindowExt as _;
 
 impl AppRoot {
     pub(super) fn request_page(
@@ -180,7 +181,7 @@ impl AppRoot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_draft_request_with_parent(collection_id, None, window, cx);
+        self.open_draft_request_with_parent(collection_id, None, false, window, cx);
     }
 
     /// Open a new draft request tab under the given folder.
@@ -191,13 +192,47 @@ impl AppRoot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_draft_request_with_parent(collection_id, Some(parent_folder_id), window, cx);
+        self.open_draft_request_with_parent(
+            collection_id,
+            Some(parent_folder_id),
+            false,
+            window,
+            cx,
+        );
+    }
+
+    /// Open a new request and persist it immediately with default values.
+    pub fn open_auto_saved_request(
+        &mut self,
+        collection_id: CollectionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_draft_request_with_parent(collection_id, None, true, window, cx);
+    }
+
+    /// Open a new request in folder and persist it immediately with default values.
+    pub fn open_auto_saved_request_in_folder(
+        &mut self,
+        collection_id: CollectionId,
+        parent_folder_id: FolderId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_draft_request_with_parent(
+            collection_id,
+            Some(parent_folder_id),
+            true,
+            window,
+            cx,
+        );
     }
 
     fn open_draft_request_with_parent(
         &mut self,
         collection_id: CollectionId,
         parent_folder_id: Option<FolderId>,
+        persist_immediately: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -274,7 +309,7 @@ impl AppRoot {
         });
         self._subscriptions.push(subscription);
 
-        self.request_draft_pages.insert(draft_id, page);
+        self.request_draft_pages.insert(draft_id, page.clone());
 
         // Register with TabManager so the tab appears in the tab bar
         let item_key = ItemKey::request_draft(draft_id);
@@ -283,5 +318,13 @@ impl AppRoot {
         });
 
         self.persist_session_state(cx);
+
+        if persist_immediately {
+            let save_result = page.update(cx, |tab, cx| tab.save(cx));
+            if let Err(err) = save_result {
+                window.push_notification(err.clone(), cx);
+                tracing::error!("failed to auto-save new request: {err}");
+            }
+        }
     }
 }

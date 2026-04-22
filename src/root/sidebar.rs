@@ -323,7 +323,7 @@ pub(super) fn render_collection_menu_item(
                     .icon(Icon::new(IconName::Plus))
                     .on_click(move |_, window, cx| {
                         let _ = weak_root_new.update(cx, |this, cx| {
-                            this.open_draft_request(collection_id_for_new, window, cx);
+                            this.open_auto_saved_request(collection_id_for_new, window, cx);
                         });
                     }),
             )
@@ -433,7 +433,7 @@ fn render_folder_menu_item(
                     .icon(Icon::new(IconName::Plus))
                     .on_click(move |_, window, cx| {
                         let _ = weak_root_new_request.update(cx, |this, cx| {
-                            this.open_draft_request_in_folder(
+                            this.open_auto_saved_request_in_folder(
                                 collection_id_for_new,
                                 parent_folder_id_for_new,
                                 window,
