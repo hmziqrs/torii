@@ -1,9 +1,11 @@
 use std::{
     collections::{HashMap, HashSet},
+    fs,
     path::PathBuf,
 };
 
 use anyhow::Result;
+use serde_json::json;
 use torii::{
     domain::{
         collection::{Collection, CollectionStorageConfig, CollectionStorageKind},
@@ -13,8 +15,8 @@ use torii::{
         request::RequestItem,
     },
     infra::linked_collection_format::{
-        LinkedCollectionState, LinkedSiblingId, ensure_not_reserved_name, read_linked_collection,
-        write_linked_collection,
+        COLLECTION_META_FILE, LinkedCollectionState, LinkedSiblingId, ensure_not_reserved_name,
+        read_linked_collection, write_linked_collection,
     },
 };
 
@@ -104,7 +106,7 @@ fn linked_collection_roundtrip_preserves_ids_and_order() -> Result<()> {
     };
 
     write_linked_collection(&root, &state)?;
-    let roundtrip = read_linked_collection(&root)?;
+    let roundtrip = read_linked_collection(&root, &collection)?;
 
     assert_eq!(roundtrip.collection.id, collection.id);
     assert_eq!(
@@ -143,4 +145,80 @@ fn linked_collection_roundtrip_preserves_ids_and_order() -> Result<()> {
 fn linked_collection_rejects_reserved_name() {
     let err = ensure_not_reserved_name("   ").expect_err("expected empty-name rejection");
     assert!(err.to_string().contains("empty"));
+}
+
+#[test]
+fn linked_collection_auto_initializes_missing_collection_meta() -> Result<()> {
+    let root = std::env::temp_dir().join(format!(
+        "torii-linked-missing-meta-{}",
+        uuid::Uuid::now_v7()
+    ));
+    std::fs::create_dir_all(&root)?;
+
+    let workspace_id = torii::domain::ids::WorkspaceId::new();
+    let mut collection = Collection::new(workspace_id, "Linked Collection", 0);
+    collection.storage_kind = CollectionStorageKind::Linked;
+    collection.storage_config = CollectionStorageConfig {
+        linked_root_path: Some(PathBuf::from(&root)),
+    };
+
+    let state = read_linked_collection(&root, &collection)?;
+    assert_eq!(state.collection.id, collection.id);
+    assert!(state.folders.is_empty());
+    assert!(state.requests.is_empty());
+    assert!(state.environments.is_empty());
+    assert!(root.join(COLLECTION_META_FILE).exists());
+
+    Ok(())
+}
+
+#[test]
+fn linked_collection_auto_init_bootstraps_existing_folder_layout() -> Result<()> {
+    let root =
+        std::env::temp_dir().join(format!("torii-linked-bootstrap-{}", uuid::Uuid::now_v7()));
+    fs::create_dir_all(root.join("users"))?;
+
+    let workspace_id = torii::domain::ids::WorkspaceId::new();
+    let mut collection = Collection::new(workspace_id, "Linked Collection", 0);
+    collection.storage_kind = CollectionStorageKind::Linked;
+    collection.storage_config = CollectionStorageConfig {
+        linked_root_path: Some(PathBuf::from(&root)),
+    };
+
+    let root_request = RequestItem::new(collection.id, None, "Health", "GET", "/health", 0);
+    let nested_request = RequestItem::new(collection.id, None, "List Users", "GET", "/users", 0);
+    let root_request_id = root_request.id;
+    let nested_request_id = nested_request.id;
+    fs::write(
+        root.join("health.request.json"),
+        serde_json::to_vec_pretty(&json!({ "request": root_request }))?,
+    )?;
+    fs::write(
+        root.join("users").join("list-users.request.json"),
+        serde_json::to_vec_pretty(&json!({ "request": nested_request }))?,
+    )?;
+
+    let state = read_linked_collection(&root, &collection)?;
+    assert!(root.join(COLLECTION_META_FILE).exists());
+    assert_eq!(state.folders.len(), 1);
+    let folder = &state.folders[0];
+    assert_eq!(folder.name, "users");
+    assert_eq!(folder.parent_folder_id, None);
+    assert_eq!(state.requests.len(), 2);
+
+    let nested = state
+        .requests
+        .iter()
+        .find(|request| request.id == nested_request_id)
+        .expect("nested request must be loaded");
+    assert_eq!(nested.parent_folder_id, Some(folder.id));
+
+    let root_loaded = state
+        .requests
+        .iter()
+        .find(|request| request.id == root_request_id)
+        .expect("root request must be loaded");
+    assert_eq!(root_loaded.parent_folder_id, None);
+
+    Ok(())
 }

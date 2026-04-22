@@ -119,16 +119,9 @@ impl RequestTabView {
                 RequestRepoError::Storage(anyhow!("linked collection missing root path"))
             })?;
 
-        let mut state = read_linked_collection(&root_path).map_err(|e| {
+        let mut state = read_linked_collection(&root_path, &collection).map_err(|e| {
             RequestRepoError::Storage(anyhow!("failed to read linked collection: {e}"))
         })?;
-        if state.collection.id != collection.id {
-            return Err(RequestRepoError::Storage(anyhow!(
-                "linked collection id mismatch: store={} file={}",
-                collection.id,
-                state.collection.id
-            )));
-        }
 
         ensure_parent_exists(&state, request.parent_folder_id)?;
 

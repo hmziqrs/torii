@@ -11,13 +11,11 @@ use crate::domain::{
     collection::{Collection, CollectionStorageKind},
     environment::Environment,
     folder::Folder,
-    ids::{EnvironmentId, FolderId, WorkspaceId},
+    ids::{FolderId, WorkspaceId},
     request::RequestItem,
-    revision::RevisionMetadata,
 };
 
 pub const COLLECTION_META_FILE: &str = ".collection.json";
-pub const FOLDER_META_FILE: &str = ".folder.json";
 pub const REQUEST_FILE_EXT: &str = ".request.json";
 pub const ENV_FILE_EXT: &str = ".env.json";
 pub const FORMAT_VERSION: u32 = 1;
@@ -42,13 +40,14 @@ pub struct LinkedCollectionState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct CollectionMetaFile {
     format_version: u32,
-    collection: Collection,
     ordered_root_child_ids: Vec<LinkedSiblingId>,
+    folders: Vec<Folder>,
+    folder_child_orders: Vec<FolderOrderFile>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct FolderMetaFile {
-    folder: Folder,
+struct FolderOrderFile {
+    folder_id: FolderId,
     ordered_child_ids: Vec<LinkedSiblingId>,
 }
 
@@ -60,23 +59,6 @@ struct RequestFile {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct EnvironmentFile {
     environment: Environment,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct EnvironmentFileCompat {
-    environment: EnvironmentCompat,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct EnvironmentCompat {
-    id: EnvironmentId,
-    #[serde(default)]
-    workspace_id: Option<WorkspaceId>,
-    #[serde(default)]
-    collection_id: Option<String>,
-    name: String,
-    variables_json: String,
-    meta: RevisionMetadata,
 }
 
 pub fn write_linked_collection(root: &Path, state: &LinkedCollectionState) -> Result<()> {
@@ -98,37 +80,31 @@ pub fn write_linked_collection(root: &Path, state: &LinkedCollectionState) -> Re
             .with_context(|| format!("failed to create folder path {}", path.display()))?;
     }
 
-    // Remove existing managed request files before rewriting so rename/migration
-    // does not leave stale duplicates behind.
-    clear_request_and_folder_artifacts_recursive(root)?;
+    clear_request_files_recursive(root)?;
     clear_environment_files(root)?;
-
-    let collection_meta = CollectionMetaFile {
-        format_version: FORMAT_VERSION,
-        collection: state.collection.clone(),
-        ordered_root_child_ids: if state.root_child_order.is_empty() {
-            derive_root_order(state)
-        } else {
-            state.root_child_order.clone()
-        },
-    };
-    write_json_file(&root.join(COLLECTION_META_FILE), &collection_meta)?;
 
     let folder_orders = if state.folder_child_orders.is_empty() {
         derive_folder_orders(state)
     } else {
         state.folder_child_orders.clone()
     };
-    for folder in &state.folders {
-        let path = folder_paths
-            .get(&folder.id)
-            .ok_or_else(|| anyhow!("missing computed path for folder {}", folder.id))?;
-        let meta = FolderMetaFile {
-            folder: folder.clone(),
-            ordered_child_ids: folder_orders.get(&folder.id).cloned().unwrap_or_default(),
-        };
-        write_json_file(&path.join(FOLDER_META_FILE), &meta)?;
-    }
+    let collection_meta = CollectionMetaFile {
+        format_version: FORMAT_VERSION,
+        ordered_root_child_ids: if state.root_child_order.is_empty() {
+            derive_root_order(state)
+        } else {
+            state.root_child_order.clone()
+        },
+        folders: state.folders.clone(),
+        folder_child_orders: folder_orders
+            .iter()
+            .map(|(folder_id, ordered_child_ids)| FolderOrderFile {
+                folder_id: *folder_id,
+                ordered_child_ids: ordered_child_ids.clone(),
+            })
+            .collect(),
+    };
+    write_json_file(&root.join(COLLECTION_META_FILE), &collection_meta)?;
 
     for request in &state.requests {
         ensure_not_reserved_name(&request.name)?;
@@ -162,7 +138,11 @@ pub fn write_linked_collection(root: &Path, state: &LinkedCollectionState) -> Re
     Ok(())
 }
 
-pub fn read_linked_collection(root: &Path) -> Result<LinkedCollectionState> {
+pub fn read_linked_collection(
+    root: &Path,
+    collection: &Collection,
+) -> Result<LinkedCollectionState> {
+    ensure_collection_meta_exists(root, collection)?;
     let collection_meta_path = root.join(COLLECTION_META_FILE);
     let collection_meta: CollectionMetaFile = read_json_file(&collection_meta_path)?;
     if collection_meta.format_version != FORMAT_VERSION {
@@ -172,21 +152,28 @@ pub fn read_linked_collection(root: &Path) -> Result<LinkedCollectionState> {
         ));
     }
 
-    let mut folders = Vec::new();
-    let mut requests = Vec::new();
-    let mut folder_child_orders: HashMap<FolderId, Vec<LinkedSiblingId>> = HashMap::new();
-    read_dir_recursive(
-        root,
-        root,
-        &collection_meta.collection,
-        None,
-        &mut folders,
-        &mut requests,
-        &mut folder_child_orders,
-    )?;
+    let mut folders = collection_meta.folders.clone();
+    for folder in &mut folders {
+        folder.collection_id = collection.id;
+    }
+    let mut folder_child_orders = collection_meta
+        .folder_child_orders
+        .into_iter()
+        .map(|row| (row.folder_id, row.ordered_child_ids))
+        .collect::<HashMap<_, _>>();
+    for folder in &folders {
+        folder_child_orders.entry(folder.id).or_default();
+    }
 
-    let environments =
-        read_environment_files_in_dir(root, collection_meta.collection.workspace_id)?;
+    let folder_paths = build_folder_paths(root, &folders)?;
+    let mut folder_by_path = HashMap::new();
+    for (folder_id, path) in &folder_paths {
+        folder_by_path.insert(path.clone(), *folder_id);
+    }
+    let mut requests = Vec::new();
+    read_requests_recursive(root, root, collection.id, &folder_by_path, &mut requests)?;
+
+    let environments = read_environment_files_in_dir(root, collection.workspace_id)?;
 
     apply_sibling_order(
         &collection_meta.ordered_root_child_ids,
@@ -199,7 +186,7 @@ pub fn read_linked_collection(root: &Path) -> Result<LinkedCollectionState> {
     }
 
     Ok(LinkedCollectionState {
-        collection: collection_meta.collection,
+        collection: collection.clone(),
         folders,
         requests,
         environments,
@@ -215,14 +202,12 @@ pub fn ensure_not_reserved_name(name: &str) -> Result<()> {
     Ok(())
 }
 
-fn read_dir_recursive(
+fn read_requests_recursive(
     root: &Path,
     path: &Path,
-    collection: &Collection,
-    parent_folder_id: Option<FolderId>,
-    folders: &mut Vec<Folder>,
+    collection_id: crate::domain::ids::CollectionId,
+    folder_by_path: &HashMap<PathBuf, FolderId>,
     requests: &mut Vec<RequestItem>,
-    folder_child_orders: &mut HashMap<FolderId, Vec<LinkedSiblingId>>,
 ) -> Result<()> {
     for entry in fs::read_dir(path).with_context(|| format!("failed to read {}", path.display()))? {
         let entry = entry?;
@@ -234,43 +219,16 @@ fn read_dir_recursive(
             if name.starts_with('.') {
                 continue;
             }
-            let folder_meta_path = child_path.join(FOLDER_META_FILE);
-            let (folder, ordered_child_ids) = if folder_meta_path.exists() {
-                let mut folder_meta: FolderMetaFile = read_json_file(&folder_meta_path)?;
-                folder_meta.folder.collection_id = collection.id;
-                folder_meta.folder.parent_folder_id = parent_folder_id;
-                (folder_meta.folder, folder_meta.ordered_child_ids)
-            } else {
-                let relative = child_path
-                    .strip_prefix(root)
-                    .unwrap_or(child_path.as_path());
-                let mut folder = Folder::new(collection.id, parent_folder_id, name.to_string(), 0);
-                folder.id = FolderId::from(uuid::Uuid::new_v5(
-                    &uuid::Uuid::NAMESPACE_URL,
-                    format!("torii-folder:{}", relative.display()).as_bytes(),
-                ));
-                (folder, Vec::new())
-            };
-            let folder_id = folder.id;
-            folder_child_orders.insert(folder_id, ordered_child_ids);
-            folders.push(folder);
-            read_dir_recursive(
-                root,
-                &child_path,
-                collection,
-                Some(folder_id),
-                folders,
-                requests,
-                folder_child_orders,
-            )?;
+            read_requests_recursive(root, &child_path, collection_id, folder_by_path, requests)?;
             continue;
         }
         if !is_request_file_name(name) {
             continue;
         }
         let mut request_file: RequestFile = read_json_file(&child_path)?;
-        request_file.request.collection_id = collection.id;
-        request_file.request.parent_folder_id = parent_folder_id;
+        request_file.request.collection_id = collection_id;
+        let parent_dir = child_path.parent().unwrap_or(root);
+        request_file.request.parent_folder_id = folder_by_path.get(parent_dir).copied();
         requests.push(request_file.request);
     }
     Ok(())
@@ -470,11 +428,7 @@ fn write_json_file<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     Ok(())
 }
 
-fn is_folder_meta_file_name(name: &str) -> bool {
-    name == FOLDER_META_FILE
-}
-
-fn clear_request_and_folder_artifacts_recursive(dir: &Path) -> Result<()> {
+fn clear_request_files_recursive(dir: &Path) -> Result<()> {
     if !dir.exists() {
         return Ok(());
     }
@@ -491,7 +445,7 @@ fn clear_request_and_folder_artifacts_recursive(dir: &Path) -> Result<()> {
             {
                 continue;
             }
-            clear_request_and_folder_artifacts_recursive(&path)?;
+            clear_request_files_recursive(&path)?;
             continue;
         }
         if !path.is_file() {
@@ -500,7 +454,7 @@ fn clear_request_and_folder_artifacts_recursive(dir: &Path) -> Result<()> {
         let Some(name) = path.file_name().and_then(|it| it.to_str()) else {
             continue;
         };
-        if is_request_file_name(name) || is_folder_meta_file_name(name) {
+        if is_request_file_name(name) {
             fs::remove_file(&path).with_context(|| {
                 format!("failed to remove stale linked artifact {}", path.display())
             })?;
@@ -556,16 +510,118 @@ fn read_environment_files_in_dir(
         {
             continue;
         }
-        let file: EnvironmentFileCompat = read_json_file(&path)?;
-        environments.push(Environment {
-            id: file.environment.id,
-            workspace_id: file.environment.workspace_id.unwrap_or(workspace_id),
-            name: file.environment.name,
-            variables_json: file.environment.variables_json,
-            meta: file.environment.meta,
-        });
+        let file: EnvironmentFile = read_json_file(&path)?;
+        let mut environment = file.environment;
+        environment.workspace_id = workspace_id;
+        environments.push(environment);
     }
     Ok(environments)
+}
+
+fn ensure_collection_meta_exists(root: &Path, collection: &Collection) -> Result<()> {
+    let meta_path = root.join(COLLECTION_META_FILE);
+    if meta_path.exists() {
+        return Ok(());
+    }
+    fs::create_dir_all(root)
+        .with_context(|| format!("failed to create linked root {}", root.display()))?;
+    let initial = bootstrap_collection_meta_from_fs(root, collection)?;
+    write_json_file(&meta_path, &initial)
+}
+
+fn bootstrap_collection_meta_from_fs(
+    root: &Path,
+    collection: &Collection,
+) -> Result<CollectionMetaFile> {
+    let mut folders = Vec::new();
+    let mut folder_child_orders = Vec::new();
+    let ordered_root_child_ids = bootstrap_dir_order(
+        root,
+        root,
+        collection,
+        None,
+        &mut folders,
+        &mut folder_child_orders,
+    )?;
+    Ok(CollectionMetaFile {
+        format_version: FORMAT_VERSION,
+        ordered_root_child_ids,
+        folders,
+        folder_child_orders,
+    })
+}
+
+fn bootstrap_dir_order(
+    root: &Path,
+    dir: &Path,
+    collection: &Collection,
+    parent_folder_id: Option<FolderId>,
+    folders: &mut Vec<Folder>,
+    folder_child_orders: &mut Vec<FolderOrderFile>,
+) -> Result<Vec<LinkedSiblingId>> {
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(dir).with_context(|| format!("failed to read {}", dir.display()))? {
+        entries.push(entry?);
+    }
+    entries.sort_by(|a, b| {
+        let left = a.file_name();
+        let right = b.file_name();
+        left.cmp(&right)
+    });
+
+    let mut ordered = Vec::new();
+    let mut next_sort = 0_i64;
+    for entry in entries {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|it| it.to_str()) else {
+            continue;
+        };
+        if name.starts_with('.') {
+            continue;
+        }
+        if path.is_dir() {
+            let relative = path
+                .strip_prefix(root)
+                .unwrap_or(path.as_path())
+                .to_string_lossy()
+                .replace('\\', "/");
+            let folder_id = FolderId::from(uuid::Uuid::new_v5(
+                &uuid::Uuid::NAMESPACE_URL,
+                format!("torii-folder:{relative}").as_bytes(),
+            ));
+            let mut folder =
+                Folder::new(collection.id, parent_folder_id, name.to_string(), next_sort);
+            folder.id = folder_id;
+            folders.push(folder);
+
+            let child_order = bootstrap_dir_order(
+                root,
+                &path,
+                collection,
+                Some(folder_id),
+                folders,
+                folder_child_orders,
+            )?;
+            folder_child_orders.push(FolderOrderFile {
+                folder_id,
+                ordered_child_ids: child_order,
+            });
+            ordered.push(LinkedSiblingId::Folder {
+                id: folder_id.to_string(),
+            });
+            next_sort += 1;
+            continue;
+        }
+        if !is_request_file_name(name) {
+            continue;
+        }
+        let request_file: RequestFile = read_json_file(&path)?;
+        ordered.push(LinkedSiblingId::Request {
+            id: request_file.request.id.to_string(),
+        });
+        next_sort += 1;
+    }
+    Ok(ordered)
 }
 
 fn read_json_file<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {

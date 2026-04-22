@@ -570,11 +570,8 @@ impl AppRoot {
                 .linked_root_path
                 .clone()
                 .ok_or_else(|| "linked collection is missing root path".to_string())?;
-            let mut state = read_linked_collection(&root_path)
+            let mut state = read_linked_collection(&root_path, &collection)
                 .map_err(|err| format!("failed to load linked collection: {err}"))?;
-            if state.collection.id != collection_id {
-                return Err("linked collection id mismatch".to_string());
-            }
 
             if let Some(parent_id) = parent_folder_id {
                 let parent_exists = state.folders.iter().any(|folder| folder.id == parent_id);

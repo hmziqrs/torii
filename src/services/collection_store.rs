@@ -4,7 +4,7 @@ use anyhow::{Result, anyhow};
 
 use crate::{
     domain::{
-        collection::CollectionStorageKind,
+        collection::{Collection, CollectionStorageConfig, CollectionStorageKind},
         environment::Environment,
         ids::{CollectionId, FolderId, WorkspaceId},
         request::RequestItem,
@@ -93,7 +93,8 @@ impl ResolvedCollectionStore {
         match self {
             Self::Managed(store) => repos.requests.list_by_collection(store.collection_id),
             Self::Linked(store) => {
-                let state = read_linked_collection(&store.root_path)?;
+                let state =
+                    read_linked_collection(&store.root_path, &linked_collection_stub(store))?;
                 Ok(state.requests)
             }
         }
@@ -115,14 +116,8 @@ impl ResolvedCollectionStore {
             }
             Self::Linked(store) => {
                 ensure_not_reserved_name(name)?;
-                let mut state = read_linked_collection(&store.root_path)?;
-                if state.collection.id != store.collection_id {
-                    return Err(anyhow!(
-                        "linked collection id mismatch: store={} file={}",
-                        store.collection_id,
-                        state.collection.id
-                    ));
-                }
+                let mut state =
+                    read_linked_collection(&store.root_path, &linked_collection_stub(store))?;
 
                 let next_sort = next_request_sort(&state.requests, parent_folder_id);
                 let request = RequestItem::new(
@@ -161,7 +156,8 @@ impl ResolvedCollectionStore {
         match self {
             Self::Managed(store) => repos.environments.list_by_workspace(store.workspace_id),
             Self::Linked(store) => {
-                let state = read_linked_collection(&store.root_path)?;
+                let state =
+                    read_linked_collection(&store.root_path, &linked_collection_stub(store))?;
                 Ok(state
                     .environments
                     .into_iter()
@@ -182,14 +178,8 @@ impl ResolvedCollectionStore {
         match self {
             Self::Managed(store) => repos.environments.create(store.workspace_id, name),
             Self::Linked(store) => {
-                let mut state = read_linked_collection(&store.root_path)?;
-                if state.collection.id != store.collection_id {
-                    return Err(anyhow!(
-                        "linked collection id mismatch: store={} file={}",
-                        store.collection_id,
-                        state.collection.id
-                    ));
-                }
+                let mut state =
+                    read_linked_collection(&store.root_path, &linked_collection_stub(store))?;
                 let environment = Environment::new(store.workspace_id, name.to_string());
                 state.environments.push(environment.clone());
                 write_linked_collection(&store.root_path, &state)?;
@@ -207,6 +197,16 @@ fn next_request_sort(requests: &[RequestItem], parent_folder_id: Option<FolderId
         .max()
         .unwrap_or(-1)
         + 1
+}
+
+fn linked_collection_stub(store: &LinkedCollectionStore) -> Collection {
+    let mut collection = Collection::new(store.workspace_id, "Linked Collection", 0);
+    collection.id = store.collection_id;
+    collection.storage_kind = CollectionStorageKind::Linked;
+    collection.storage_config = CollectionStorageConfig {
+        linked_root_path: Some(store.root_path.clone()),
+    };
+    collection
 }
 
 #[allow(dead_code)]

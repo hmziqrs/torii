@@ -97,7 +97,7 @@ fn build_workspace_tree(
             ),
             CollectionStorageKind::Linked => {
                 match collection.storage_config.linked_root_path.clone() {
-                    Some(root) => match read_linked_collection(&root) {
+                    Some(root) => match read_linked_collection(&root, &collection) {
                         Ok(state) => (state.folders, state.requests),
                         Err(err) => {
                             tracing::warn!(
