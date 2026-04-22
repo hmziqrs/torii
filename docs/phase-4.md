@@ -793,6 +793,26 @@ Notes:
 
 ## 9. Execution Slices
 
+### Current Status (2026-04-23)
+
+- Slice 0 — `Done` (with workspace-scoped environments restored by `0004_workspace_scoped_environments.sql`)
+- Slice 1 — `Mostly Done`
+  - done: store boundary, linked format, `.torii/collection.json`, monitor wiring, native directory picker
+  - pending: explicit degraded/offline linked-root UX state
+- Slice 2 — `Pending` (flat row model + expansion keyboard model not fully landed)
+- Slice 3 — `Partially Done`
+  - done: core create flows (workspace/collection/environment/folder/request), linked Git badge tooltip, folder-level request creation
+  - pending: full rename/edit parity and richer linked badge actions
+- Slice 4 — `Pending` (tree drag/drop mutation engine)
+- Slice 5 — `Done` (active environment selection + session persistence + clear-on-delete)
+- Slice 6 — `Mostly Done`
+  - done: variable resolution pipeline and send-path integration
+  - pending: full missing-variable preflight UX parity for every field/scope case
+- Slice 7 — `Partially Done`
+  - done: delete cleanup for active environment/session state and persisted closures
+  - pending: full draft-descendant closure parity in all delete paths
+- Slice 8 — `Pending`
+
 ## Slice 0: Persistence and Domain Contracts
 
 Purpose: add the minimum state model required for the rest of the phase.
@@ -1154,22 +1174,22 @@ Required GPUI performance audit:
 ## 11. Acceptance Checklist
 
 - [ ] Tree rendering uses a flat row model with explicit expansion state
-- [ ] Collections support both `Managed` and `Linked` storage authority
-- [ ] Linked collections round-trip through a stable on-disk file format with stable IDs
-- [ ] Linked collection order is owned by Git-visible parent metadata, not hidden SQLite state
-- [ ] Linked collections can rebuild fully from tracked files without relying on cache
-- [ ] Linked collections define one watcher/reconcile contract for normal disk edits and future Git-driven edits
+- [x] Collections support both `Managed` and `Linked` storage authority
+- [x] Linked collections round-trip through a stable on-disk file format with stable IDs
+- [x] Linked collection order is owned by Git-visible parent metadata, not hidden SQLite state
+- [x] Linked collections can rebuild fully from tracked files without relying on cache
+- [x] Linked collections define one watcher/reconcile contract for normal disk edits and future Git-driven edits
 - [ ] Folders and requests can be interleaved and reordered under the same parent
 - [ ] CRUD exists for workspace, collection, folder, request, and environment items
 - [ ] Drag/drop mutations are transactional and reject illegal targets
 - [ ] Workspace variables, environment variables, and request-local overrides all exist
-- [ ] Linked collection rows display a right-aligned Git indicator without changing left-side primary icons
+- [x] Linked collection rows display a right-aligned Git indicator without changing left-side primary icons
 - [ ] Hover/focus on the linked-collection Git indicator shows a popover/tooltip with root-path context and actions
-- [ ] Linked collections support workspace-scoped environment creation/selection flow from the UI
-- [ ] Active environment is session-scoped per workspace and restored on reopen
-- [ ] Request send path resolves variables with deterministic precedence
+- [x] Linked collections support workspace-scoped environment creation/selection flow from the UI
+- [x] Active environment is session-scoped per workspace and restored on reopen
+- [x] Request send path resolves variables with deterministic precedence
 - [ ] Missing variables fail preflight with a clear user-facing state shown inline below the URL bar
 - [ ] Parent deletion closes persisted and draft descendant tabs
-- [ ] Deleting the active environment clears stale session state cleanly
+- [x] Deleting the active environment clears stale session state cleanly
 - [ ] All new strings are Fluent-based in both supported locales (`i18n/en/torii.ftl` and `i18n/zh-CN/torii.ftl`)
 - [ ] Phase 4 passes the `docs/gpui-performance.md` render-loop checklist
