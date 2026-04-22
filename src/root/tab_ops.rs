@@ -1,10 +1,14 @@
 use super::{AppRoot, services};
 use crate::{
-    domain::{ids::RequestId, item_id::ItemId},
+    domain::{
+        ids::{CollectionId, RequestId},
+        item_id::ItemId,
+    },
     session::{
         item_key::{ItemKey, ItemKind, TabKey},
         request_editor_state::EditorIdentity,
     },
+    services::collection_store::{CollectionStoreRepos, CollectionStoreResolver},
     views::item_tabs::request_tab,
 };
 use gpui::prelude::*;
@@ -38,6 +42,82 @@ impl AppRoot {
 
         self.refresh_catalog(cx);
         self.open_item(ItemKey::workspace(workspace.id), cx);
+        Ok(())
+    }
+
+    pub(crate) fn create_collection(&mut self, cx: &mut Context<Self>) -> Result<(), String> {
+        let workspace_id = self
+            .session
+            .read(cx)
+            .selected_workspace_id
+            .or_else(|| self.catalog.first_workspace_id())
+            .ok_or_else(|| es_fluent::localize("create_collection_no_workspace", None))?;
+
+        let services = services(cx);
+        let collections = services
+            .repos
+            .collection
+            .list_by_workspace(workspace_id)
+            .map_err(|err| format!("failed to list collections: {err}"))?;
+        let name = next_item_name(
+            es_fluent::localize("collection_default_name", None),
+            &collections
+                .iter()
+                .map(|collection| collection.name.clone())
+                .collect::<Vec<_>>(),
+        );
+        let collection = services
+            .repos
+            .collection
+            .create(workspace_id, &name)
+            .map_err(|err| format!("failed to create collection: {err}"))?;
+        drop(services);
+
+        self.refresh_catalog(cx);
+        self.open_item(ItemKey::collection(collection.id), cx);
+        Ok(())
+    }
+
+    pub(crate) fn create_environment(&mut self, cx: &mut Context<Self>) -> Result<(), String> {
+        let selected_workspace = self
+            .catalog
+            .selected_workspace()
+            .ok_or_else(|| es_fluent::localize("create_environment_no_workspace", None))?;
+        let selected_item = {
+            let session = self.session.read(cx);
+            session
+                .sidebar_selection
+                .or_else(|| session.tab_manager.active().map(|tab| tab.item()))
+        };
+        let collection_id = resolve_environment_collection_id(selected_workspace, selected_item)
+            .ok_or_else(|| es_fluent::localize("create_environment_no_collection", None))?;
+
+        let services = services(cx);
+        let resolver = CollectionStoreResolver::new(services.repos.collection.clone());
+        let store = resolver
+            .resolve(collection_id)
+            .map_err(|err| format!("failed to resolve collection store: {err}"))?;
+        let store_repos = CollectionStoreRepos {
+            requests: services.repos.request.clone(),
+            environments: services.repos.environment.clone(),
+        };
+        let environments = store
+            .list_environments(&store_repos)
+            .map_err(|err| format!("failed to list environments: {err}"))?;
+        let name = next_item_name(
+            es_fluent::localize("environment_default_name", None),
+            &environments
+                .iter()
+                .map(|environment| environment.name.clone())
+                .collect::<Vec<_>>(),
+        );
+        let environment = store
+            .create_environment(&store_repos, &name)
+            .map_err(|err| format!("failed to create environment: {err}"))?;
+        drop(services);
+
+        self.refresh_catalog(cx);
+        self.open_item(ItemKey::environment(environment.id), cx);
         Ok(())
     }
 
@@ -386,9 +466,15 @@ impl AppRoot {
 }
 
 fn next_workspace_name(existing_names: &[String]) -> String {
-    let base = es_fluent::localize("workspace_default_name", None);
+    next_item_name(
+        es_fluent::localize("workspace_default_name", None),
+        existing_names,
+    )
+}
+
+fn next_item_name(base: String, existing_names: &[String]) -> String {
     if !existing_names.iter().any(|name| name == &base) {
-        return base.to_string();
+        return base;
     }
 
     let mut index = 2;
@@ -399,4 +485,41 @@ fn next_workspace_name(existing_names: &[String]) -> String {
         }
         index += 1;
     }
+}
+
+fn resolve_environment_collection_id(
+    workspace: &crate::services::workspace_tree::WorkspaceTree,
+    selected_item: Option<ItemKey>,
+) -> Option<CollectionId> {
+    if let Some(item) = selected_item {
+        match item.id {
+            Some(ItemId::Collection(id)) => return Some(id),
+            Some(ItemId::Environment(id)) => {
+                if let Some(environment) = workspace.environments.iter().find(|env| env.id == id) {
+                    return Some(environment.collection_id);
+                }
+            }
+            Some(ItemId::Folder(id)) => {
+                if let Some(collection) = workspace
+                    .collections
+                    .iter()
+                    .find(|collection| collection.find_folder_tree(id).is_some())
+                {
+                    return Some(collection.collection.id);
+                }
+            }
+            Some(ItemId::Request(id)) => {
+                if let Some(collection) = workspace
+                    .collections
+                    .iter()
+                    .find(|collection| collection.find_request(id).is_some())
+                {
+                    return Some(collection.collection.id);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    workspace.collections.first().map(|c| c.collection.id)
 }

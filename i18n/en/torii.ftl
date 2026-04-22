@@ -83,6 +83,8 @@ root_navigation = Navigation
 
 sidebar_workspaces = Workspaces
 sidebar_new_workspace = New Workspace
+sidebar_new_collection = New Collection
+sidebar_new_environment = New Environment
 sidebar_collections = Collections
 sidebar_environments = Environments
 sidebar_utilities = Utilities
@@ -107,10 +109,16 @@ empty_state_no_tab_body = Choose an item from the sidebar to open it in a tab.
 
 workspace_tab_subtitle = Workspace overview
 workspace_default_name = Workspace
+collection_default_name = Collection
+environment_default_name = Environment
 workspace_tab_collections = Collections
 workspace_tab_requests = Requests
 workspace_tab_environments = Environments
 workspace_tab_collections_heading = Available collections
+
+create_collection_no_workspace = Select or create a workspace first.
+create_environment_no_workspace = Select or create a workspace first.
+create_environment_no_collection = Create a collection first.
 
 ## Collection Tab
 

@@ -1,4 +1,5 @@
 use super::*;
+use crate::services::request_draft::persist_new_draft_request;
 
 impl RequestTabView {
     pub fn has_unsaved_changes(&self) -> bool {
@@ -15,6 +16,7 @@ impl RequestTabView {
     pub fn save(&mut self, cx: &mut Context<Self>) -> Result<(), String> {
         let services = cx.global::<AppServicesGlobal>().0.clone();
         let mut request = self.editor.draft().clone();
+        let is_draft_identity = matches!(self.editor.identity(), EditorIdentity::Draft(_));
         let expected_revision = self.editor.baseline().map(|b| b.meta.revision).unwrap_or(0);
 
         self.persist_request_body_blob(&mut request, &services)?;
@@ -23,11 +25,17 @@ impl RequestTabView {
         self.editor.begin_save();
         cx.notify();
 
-        match services.repos.request.save(&request, expected_revision) {
+        let save_result = if is_draft_identity {
+            persist_new_draft_request(&services.repos.request, &request)
+        } else {
+            services.repos.request.save(&request, expected_revision)
+        };
+
+        match save_result {
             Ok(saved) => {
                 self.editor.complete_save(&saved);
 
-                if matches!(self.editor.identity(), EditorIdentity::Draft(_)) {
+                if is_draft_identity {
                     self.editor.transition_to_persisted(saved.id, &saved);
                 }
 

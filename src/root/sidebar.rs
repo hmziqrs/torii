@@ -6,6 +6,7 @@ use crate::{
 use gpui::{div, prelude::*, px, relative};
 use gpui_component::{
     ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _,
+    WindowExt as _,
     button::{Button, ButtonRounded, ButtonVariants as _},
     h_flex,
     menu::PopupMenuItem,
@@ -130,14 +131,45 @@ impl AppRoot {
                                                     None,
                                                 ))
                                                 .icon(Icon::new(IconName::Plus).small())
-                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                .on_click(cx.listener(|this, _, window, cx| {
                                                     if let Err(err) = this.create_workspace(cx) {
+                                                        window.push_notification(err.clone(), cx);
                                                         tracing::error!(
                                                             "failed to create workspace: {err}"
                                                         );
                                                     }
                                                 })),
                                             )
+                                            .chain(std::iter::once(
+                                                SidebarMenuItem::new(es_fluent::localize(
+                                                    "sidebar_new_collection",
+                                                    None,
+                                                ))
+                                                .icon(Icon::new(IconName::Plus).small())
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    if let Err(err) = this.create_collection(cx) {
+                                                        window.push_notification(err.clone(), cx);
+                                                        tracing::error!(
+                                                            "failed to create collection: {err}"
+                                                        );
+                                                    }
+                                                })),
+                                            ))
+                                            .chain(std::iter::once(
+                                                SidebarMenuItem::new(es_fluent::localize(
+                                                    "sidebar_new_environment",
+                                                    None,
+                                                ))
+                                                .icon(Icon::new(IconName::Plus).small())
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    if let Err(err) = this.create_environment(cx) {
+                                                        window.push_notification(err.clone(), cx);
+                                                        tracing::error!(
+                                                            "failed to create environment: {err}"
+                                                        );
+                                                    }
+                                                })),
+                                            ))
                                             .chain(self.catalog.workspaces.iter().map(
                                                 |workspace| {
                                                     let item_key = ItemKey::workspace(workspace.id);

@@ -83,6 +83,8 @@ root_navigation = 导航
 
 sidebar_workspaces = 工作区
 sidebar_new_workspace = 新建工作区
+sidebar_new_collection = 新建集合
+sidebar_new_environment = 新建环境
 sidebar_collections = 集合
 sidebar_environments = 环境
 sidebar_utilities = 工具
@@ -107,10 +109,16 @@ empty_state_no_tab_body = 从侧边栏选择一个项目以在标签页中打开
 
 workspace_tab_subtitle = 工作区概览
 workspace_default_name = 工作区
+collection_default_name = 集合
+environment_default_name = 环境
 workspace_tab_collections = 集合
 workspace_tab_requests = 请求
 workspace_tab_environments = 环境
 workspace_tab_collections_heading = 可用集合
+
+create_collection_no_workspace = 请先选择或创建工作区。
+create_environment_no_workspace = 请先选择或创建工作区。
+create_environment_no_collection = 请先创建一个集合。
 
 ## Collection Tab
 
