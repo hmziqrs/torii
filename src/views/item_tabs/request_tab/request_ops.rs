@@ -162,11 +162,35 @@ impl RequestTabView {
 
         // Create pending history row with secret-safe snapshot
         let draft = self.editor.draft().clone();
-        tracing::debug!(method = %draft.method, url = %draft.url, "send");
+        let active_environment_id = services
+            .repos
+            .environment
+            .list_by_workspace(workspace_id)
+            .ok()
+            .and_then(|environments| environments.first().map(|env| env.id));
+        let resolved_request = match services.variable_resolution.resolve_request(
+            &draft,
+            workspace_id,
+            active_environment_id,
+        ) {
+            Ok(resolved) => resolved,
+            Err(e) => {
+                tracing::warn!(error = %e, "preflight rejected: variable resolution failed");
+                self.editor
+                    .set_preflight_error(format!("variable resolution failed: {e}"));
+                cx.notify();
+                return;
+            }
+        };
+        tracing::debug!(
+            method = %resolved_request.method,
+            url = %resolved_request.url,
+            "send"
+        );
         let history_entry = match services.request_execution.create_pending_history(
             workspace_id,
             self.editor.request_id(),
-            &draft,
+            &resolved_request,
         ) {
             Ok(entry) => entry,
             Err(e) => {
@@ -222,7 +246,7 @@ impl RequestTabView {
         .detach();
 
         cx.spawn(async move |this, cx| {
-            let request = draft.clone();
+            let request = resolved_request.clone();
             let exec_service_for_task = exec_service.clone();
             let handle = io_runtime.spawn(async move {
                 exec_service_for_task

@@ -1,9 +1,10 @@
-use gpui::{AnyElement, IntoElement, ParentElement, Styled as _, div, px};
-use gpui_component::{h_flex, v_flex};
+use gpui::{AnyElement, IntoElement, ParentElement, Styled as _, WeakEntity, div, px};
+use gpui_component::{button::Button, h_flex, v_flex};
 
+use crate::root::AppRoot;
 use crate::services::workspace_tree::WorkspaceTree;
 
-pub fn render(workspace: &WorkspaceTree) -> AnyElement {
+pub fn render(workspace: &WorkspaceTree, root: WeakEntity<AppRoot>) -> AnyElement {
     let collection_count = workspace.collections.len();
     let environment_count = workspace.environments.len();
     let request_count = workspace
@@ -11,6 +12,7 @@ pub fn render(workspace: &WorkspaceTree) -> AnyElement {
         .iter()
         .map(|collection| collection.request_count())
         .sum::<usize>();
+    let workspace_id = workspace.workspace.id;
 
     v_flex()
         .size_full()
@@ -48,7 +50,16 @@ pub fn render(workspace: &WorkspaceTree) -> AnyElement {
                     "{}: {}",
                     es_fluent::localize("workspace_tab_environments", None),
                     environment_count
-                ))),
+                )))
+                .child(
+                    Button::new("workspace-vars-edit")
+                        .label("Edit Variables")
+                        .on_click(move |_, window, cx| {
+                            let _ = root.update(cx, |this, cx| {
+                                this.open_workspace_variables_dialog(workspace_id, window, cx);
+                            });
+                        }),
+                ),
         )
         .child(
             v_flex()

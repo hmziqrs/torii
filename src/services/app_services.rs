@@ -17,6 +17,7 @@ use super::{
     recovery::RecoveryCoordinator, request_execution::RequestExecutionService,
     secret_manager::SecretManager, session_restore::SessionRestoreService,
     tokio_runtime::TokioRuntime, ui_preferences::UiPreferencesStoreRef,
+    variable_resolution::VariableResolutionService,
 };
 
 #[derive(Clone)]
@@ -42,6 +43,7 @@ pub struct AppServices {
     pub secret_store: SecretStoreRef,
     pub secret_manager: SecretManager,
     pub repos: Repositories,
+    pub variable_resolution: Arc<VariableResolutionService>,
     pub ui_preferences: UiPreferencesStoreRef,
     pub recovery: RecoveryCoordinator,
     pub session_restore: SessionRestoreService,

@@ -33,6 +33,7 @@ use super::{
         InMemoryUiPreferencesStore, SqliteUiPreferencesStore, UiPreferencesSnapshot,
         UiPreferencesStoreRef,
     },
+    variable_resolution::VariableResolutionService,
 };
 
 pub fn bootstrap_app_services() -> Arc<AppServices> {
@@ -89,6 +90,11 @@ fn build_app_services() -> Result<AppServices> {
         blob_store.clone(),
         secret_store.clone(),
     ));
+    let variable_resolution = Arc::new(VariableResolutionService::new(
+        workspace_repo.clone(),
+        environment_repo.clone(),
+        secret_store.clone(),
+    ));
 
     let recovery = RecoveryCoordinator::new(db.clone(), history_repo.clone(), blob_store.clone());
     recovery
@@ -129,6 +135,7 @@ fn build_app_services() -> Result<AppServices> {
             secret_refs: secret_ref_repo,
             tab_session: tab_session_repo,
         },
+        variable_resolution,
         ui_preferences,
         recovery,
         session_restore,
@@ -212,6 +219,11 @@ fn fallback_app_services() -> AppServices {
         blob_store.clone(),
         secret_store.clone(),
     ));
+    let variable_resolution = Arc::new(VariableResolutionService::new(
+        workspace_repo.clone(),
+        environment_repo.clone(),
+        secret_store.clone(),
+    ));
 
     let recovery = RecoveryCoordinator::new(db.clone(), history_repo.clone(), blob_store.clone());
     let _ = recovery.run_startup_recovery();
@@ -250,6 +262,7 @@ fn fallback_app_services() -> AppServices {
             secret_refs: secret_ref_repo,
             tab_session: tab_session_repo,
         },
+        variable_resolution,
         ui_preferences,
         recovery,
         session_restore,

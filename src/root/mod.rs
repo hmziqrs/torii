@@ -369,7 +369,7 @@ impl AppRoot {
                 .catalog
                 .selected_workspace()
                 .filter(|workspace| workspace.workspace.id == id)
-                .map(workspace_tab::render)
+                .map(|workspace| workspace_tab::render(workspace, cx.entity().downgrade()))
                 .unwrap_or_else(|| {
                     render_empty_state(
                         es_fluent::localize("tab_missing_title", None).into(),
@@ -405,7 +405,7 @@ impl AppRoot {
             (ItemKind::Environment, Some(ItemId::Environment(id))) => self
                 .catalog
                 .find_environment(id)
-                .map(environment_tab::render)
+                .map(|environment| environment_tab::render(environment, cx.entity().downgrade()))
                 .unwrap_or_else(|| {
                     render_empty_state(
                         es_fluent::localize("tab_missing_title", None).into(),

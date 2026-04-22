@@ -2,7 +2,7 @@ use super::{AppRoot, services};
 use crate::{
     domain::{
         collection::CollectionStorageKind,
-        ids::{CollectionId, FolderId, RequestId},
+        ids::{CollectionId, FolderId, RequestId, WorkspaceId},
         item_id::ItemId,
     },
     session::{
@@ -17,6 +17,8 @@ use gpui_component::{
     WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
+    input::{Input, InputState},
+    v_flex,
 };
 
 impl AppRoot {
@@ -109,6 +111,192 @@ impl AppRoot {
         self.refresh_catalog(cx);
         self.open_item(ItemKey::environment(environment.id), cx);
         Ok(())
+    }
+
+    pub(crate) fn open_workspace_variables_dialog(
+        &mut self,
+        workspace_id: crate::domain::ids::WorkspaceId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let services_ref = services(cx);
+        let Some(workspace) = services_ref
+            .repos
+            .workspace
+            .get(workspace_id)
+            .map_err(|err| format!("failed to load workspace: {err}"))
+            .ok()
+            .flatten()
+        else {
+            window.push_notification("workspace no longer exists", cx);
+            return;
+        };
+
+        let input = cx.new(|cx| InputState::new(window, cx));
+        input.update(cx, |state, cx| {
+            state.set_value(workspace.variables_json.clone(), window, cx);
+        });
+        let weak_root = cx.entity().downgrade();
+
+        window.open_dialog(cx, move |dialog, _, _cx| {
+            let weak_root_save = weak_root.clone();
+            let input_for_save = input.clone();
+            dialog
+                .title("Workspace Variables (JSON)")
+                .overlay_closable(true)
+                .keyboard(true)
+                .child(
+                    v_flex()
+                        .gap_2()
+                        .child(Input::new(&input).h(gpui::px(260.)).w_full()),
+                )
+                .footer(
+                    h_flex()
+                        .justify_end()
+                        .gap_2()
+                        .child(
+                            Button::new("workspace-vars-cancel")
+                                .label("Cancel")
+                                .on_click(move |_, window, cx| window.close_dialog(cx)),
+                        )
+                        .child(
+                            Button::new("workspace-vars-save")
+                                .primary()
+                                .label("Save")
+                                .on_click(move |_, window, cx| {
+                                    let payload = input_for_save.read(cx).value().to_string();
+                                    let parsed =
+                                        serde_json::from_str::<serde_json::Value>(&payload);
+                                    let is_valid = matches!(
+                                        parsed,
+                                        Ok(serde_json::Value::Array(_))
+                                            | Ok(serde_json::Value::Object(_))
+                                    );
+                                    if !is_valid {
+                                        window.push_notification(
+                                            "Variables JSON must be an array or object",
+                                            cx,
+                                        );
+                                        return;
+                                    }
+                                    let _ = weak_root_save.update(cx, |this, cx| {
+                                        let services = services(cx);
+                                        match services
+                                            .repos
+                                            .workspace
+                                            .update_variables(workspace_id, &payload)
+                                        {
+                                            Ok(()) => {
+                                                this.refresh_catalog(cx);
+                                                cx.notify();
+                                            }
+                                            Err(err) => {
+                                                window.push_notification(
+                                                    format!(
+                                                        "failed to save workspace variables: {err}"
+                                                    ),
+                                                    cx,
+                                                );
+                                            }
+                                        }
+                                    });
+                                    window.close_dialog(cx);
+                                }),
+                        ),
+                )
+        });
+    }
+
+    pub(crate) fn open_environment_variables_dialog(
+        &mut self,
+        environment_id: crate::domain::ids::EnvironmentId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let services_ref = services(cx);
+        let Some(environment) = services_ref
+            .repos
+            .environment
+            .get(environment_id)
+            .map_err(|err| format!("failed to load environment: {err}"))
+            .ok()
+            .flatten()
+        else {
+            window.push_notification("environment no longer exists", cx);
+            return;
+        };
+
+        let input = cx.new(|cx| InputState::new(window, cx));
+        input.update(cx, |state, cx| {
+            state.set_value(environment.variables_json.clone(), window, cx);
+        });
+        let weak_root = cx.entity().downgrade();
+
+        window.open_dialog(cx, move |dialog, _, _cx| {
+            let weak_root_save = weak_root.clone();
+            let input_for_save = input.clone();
+            dialog
+                .title("Environment Variables (JSON)")
+                .overlay_closable(true)
+                .keyboard(true)
+                .child(
+                    v_flex()
+                        .gap_2()
+                        .child(Input::new(&input).h(gpui::px(260.)).w_full()),
+                )
+                .footer(
+                    h_flex()
+                        .justify_end()
+                        .gap_2()
+                        .child(
+                            Button::new("environment-vars-cancel")
+                                .label("Cancel")
+                                .on_click(move |_, window, cx| window.close_dialog(cx)),
+                        )
+                        .child(
+                            Button::new("environment-vars-save")
+                                .primary()
+                                .label("Save")
+                                .on_click(move |_, window, cx| {
+                                    let payload =
+                                        input_for_save.read(cx).value().to_string();
+                                    let parsed =
+                                        serde_json::from_str::<serde_json::Value>(&payload);
+                                    let is_valid =
+                                        matches!(parsed, Ok(serde_json::Value::Array(_)) | Ok(serde_json::Value::Object(_)));
+                                    if !is_valid {
+                                        window.push_notification(
+                                            "Variables JSON must be an array or object",
+                                            cx,
+                                        );
+                                        return;
+                                    }
+                                    let _ = weak_root_save.update(cx, |this, cx| {
+                                        let services = services(cx);
+                                        match services
+                                            .repos
+                                            .environment
+                                            .update_variables(environment_id, &payload)
+                                        {
+                                            Ok(()) => {
+                                                this.refresh_catalog(cx);
+                                                cx.notify();
+                                            }
+                                            Err(err) => {
+                                                window.push_notification(
+                                                    format!(
+                                                        "failed to save environment variables: {err}"
+                                                    ),
+                                                    cx,
+                                                );
+                                            }
+                                        }
+                                    });
+                                    window.close_dialog(cx);
+                                }),
+                        ),
+                )
+        });
     }
 
     pub(crate) fn create_folder(
@@ -485,7 +673,11 @@ impl AppRoot {
 
                 self.session.update(cx, |session, cx| {
                     session.close_tabs(&close_keys, cx);
-                    if session.selected_workspace_id == selected_workspace {
+                    if should_reset_selected_workspace_on_delete(
+                        item_key,
+                        session.selected_workspace_id,
+                        selected_workspace,
+                    ) {
                         session.set_selected_workspace(fallback_workspace, cx);
                     }
                 });
@@ -499,6 +691,14 @@ impl AppRoot {
             }
         }
     }
+}
+
+fn should_reset_selected_workspace_on_delete(
+    item_key: ItemKey,
+    selected_workspace_id: Option<WorkspaceId>,
+    deleted_item_workspace: Option<WorkspaceId>,
+) -> bool {
+    matches!(item_key.kind, ItemKind::Workspace) && selected_workspace_id == deleted_item_workspace
 }
 
 fn next_workspace_name(existing_names: &[String]) -> String {
@@ -520,5 +720,46 @@ fn next_item_name(base: String, existing_names: &[String]) -> String {
             return candidate;
         }
         index += 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_reset_selected_workspace_on_delete;
+    use crate::{
+        domain::ids::{CollectionId, WorkspaceId},
+        session::item_key::ItemKey,
+    };
+
+    #[test]
+    fn workspace_delete_resets_when_selected_workspace_is_deleted() {
+        let workspace_id = WorkspaceId::new();
+        assert!(should_reset_selected_workspace_on_delete(
+            ItemKey::workspace(workspace_id),
+            Some(workspace_id),
+            Some(workspace_id),
+        ));
+    }
+
+    #[test]
+    fn non_workspace_delete_does_not_reset_selected_workspace() {
+        let workspace_id = WorkspaceId::new();
+        let collection_key = ItemKey::collection(CollectionId::new());
+        assert!(!should_reset_selected_workspace_on_delete(
+            collection_key,
+            Some(workspace_id),
+            Some(workspace_id),
+        ));
+    }
+
+    #[test]
+    fn deleting_other_workspace_does_not_reset_selection() {
+        let selected_workspace_id = WorkspaceId::new();
+        let deleted_workspace_id = WorkspaceId::new();
+        assert!(!should_reset_selected_workspace_on_delete(
+            ItemKey::workspace(deleted_workspace_id),
+            Some(selected_workspace_id),
+            Some(deleted_workspace_id),
+        ));
     }
 }
