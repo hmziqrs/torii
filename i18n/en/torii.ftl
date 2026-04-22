@@ -122,6 +122,16 @@ workspace_tab_environments = Environments
 workspace_tab_collections_heading = Available collections
 
 create_collection_no_workspace = Select or create a workspace first.
+create_collection_dialog_title = New Collection
+create_collection_dialog_name = Name
+create_collection_dialog_name_required = Collection name is required.
+create_collection_dialog_linked_root = Linked Root Path (for Git-backed collections)
+create_collection_dialog_linked_root_placeholder = /path/to/collection/root
+create_collection_dialog_create_managed = Create Managed
+create_collection_dialog_create_linked = Create Linked
+create_collection_linked_root_required = Linked root path is required.
+create_collection_linked_root_not_directory = Linked root path must be a directory path.
+create_collection_linked_init_failed = Failed to initialize linked collection on disk
 create_environment_no_workspace = Select or create a workspace first.
 create_folder_linked_unsupported = Folder creation for linked collections is not supported yet.
 

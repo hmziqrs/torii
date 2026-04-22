@@ -122,6 +122,16 @@ workspace_tab_environments = 环境
 workspace_tab_collections_heading = 可用集合
 
 create_collection_no_workspace = 请先选择或创建工作区。
+create_collection_dialog_title = 新建集合
+create_collection_dialog_name = 名称
+create_collection_dialog_name_required = 集合名称不能为空。
+create_collection_dialog_linked_root = 已链接根目录（Git 集合）
+create_collection_dialog_linked_root_placeholder = /path/to/collection/root
+create_collection_dialog_create_managed = 创建托管集合
+create_collection_dialog_create_linked = 创建已链接集合
+create_collection_linked_root_required = 已链接集合必须填写根目录路径。
+create_collection_linked_root_not_directory = 已链接根目录必须是目录路径。
+create_collection_linked_init_failed = 初始化已链接集合磁盘结构失败
 create_environment_no_workspace = 请先选择或创建工作区。
 create_folder_linked_unsupported = 暂不支持在已链接集合中创建文件夹。
 

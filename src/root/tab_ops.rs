@@ -1,18 +1,21 @@
 use super::{AppRoot, services};
 use crate::{
     domain::{
-        collection::CollectionStorageKind,
+        collection::{CollectionStorageConfig, CollectionStorageKind},
         ids::{CollectionId, EnvironmentId, FolderId, RequestId, WorkspaceId},
         item_id::ItemId,
     },
+    infra::linked_collection_format::{LinkedCollectionState, write_linked_collection},
     session::{
         item_key::{ItemKey, ItemKind, TabKey},
         request_editor_state::EditorIdentity,
     },
     views::item_tabs::request_tab,
 };
+use std::collections::HashMap;
+
 use gpui::prelude::*;
-use gpui::{Context, Entity, Window};
+use gpui::{Context, Entity, Window, div};
 use gpui_component::{
     WindowExt as _,
     button::{Button, ButtonVariants as _},
@@ -47,7 +50,11 @@ impl AppRoot {
         Ok(())
     }
 
-    pub(crate) fn create_collection(&mut self, cx: &mut Context<Self>) -> Result<(), String> {
+    pub(crate) fn create_collection(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
         let workspace_id = self
             .session
             .read(cx)
@@ -68,11 +75,210 @@ impl AppRoot {
                 .map(|collection| collection.name.clone())
                 .collect::<Vec<_>>(),
         );
+
+        let name_input = cx.new(|cx| InputState::new(window, cx));
+        name_input.update(cx, |state, cx| {
+            state.set_value(name, window, cx);
+        });
+        let linked_root_input = cx.new(|cx| InputState::new(window, cx));
+        let weak_root = cx.entity().downgrade();
+
+        window.open_dialog(cx, move |dialog, _, _cx| {
+            let weak_root_managed = weak_root.clone();
+            let weak_root_linked = weak_root.clone();
+            let name_input_managed = name_input.clone();
+            let name_input_linked = name_input.clone();
+            let linked_root_input = linked_root_input.clone();
+            dialog
+                .title(es_fluent::localize("create_collection_dialog_title", None))
+                .overlay_closable(true)
+                .keyboard(true)
+                .child(
+                    v_flex()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_sm()
+                                .child(es_fluent::localize("create_collection_dialog_name", None)),
+                        )
+                        .child(Input::new(&name_input).w_full())
+                        .child(div().text_sm().child(es_fluent::localize(
+                            "create_collection_dialog_linked_root",
+                            None,
+                        )))
+                        .child(Input::new(&linked_root_input).w_full())
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(gpui::hsla(0.0, 0.0, 0.5, 1.0))
+                                .child(es_fluent::localize(
+                                    "create_collection_dialog_linked_root_placeholder",
+                                    None,
+                                )),
+                        ),
+                )
+                .footer(
+                    h_flex()
+                        .justify_end()
+                        .gap_2()
+                        .child(
+                            Button::new("create-collection-cancel")
+                                .label(es_fluent::localize("dialog_cancel", None))
+                                .on_click(move |_, window, cx| window.close_dialog(cx)),
+                        )
+                        .child(
+                            Button::new("create-collection-managed")
+                                .label(es_fluent::localize(
+                                    "create_collection_dialog_create_managed",
+                                    None,
+                                ))
+                                .on_click(move |_, window, cx| {
+                                    let name =
+                                        name_input_managed.read(cx).value().trim().to_string();
+                                    if name.is_empty() {
+                                        window.push_notification(
+                                            es_fluent::localize(
+                                                "create_collection_dialog_name_required",
+                                                None,
+                                            ),
+                                            cx,
+                                        );
+                                        return;
+                                    }
+                                    let result = weak_root_managed.update(cx, |this, cx| {
+                                        this.create_collection_with_storage(
+                                            workspace_id,
+                                            name.clone(),
+                                            CollectionStorageKind::Managed,
+                                            None,
+                                            cx,
+                                        )
+                                    });
+                                    match result {
+                                        Ok(Ok(())) => window.close_dialog(cx),
+                                        Ok(Err(err)) => window.push_notification(err, cx),
+                                        Err(err) => window.push_notification(
+                                            format!("failed to create collection: {err}"),
+                                            cx,
+                                        ),
+                                    }
+                                }),
+                        )
+                        .child(
+                            Button::new("create-collection-linked")
+                                .primary()
+                                .label(es_fluent::localize(
+                                    "create_collection_dialog_create_linked",
+                                    None,
+                                ))
+                                .on_click(move |_, window, cx| {
+                                    let name =
+                                        name_input_linked.read(cx).value().trim().to_string();
+                                    if name.is_empty() {
+                                        window.push_notification(
+                                            es_fluent::localize(
+                                                "create_collection_dialog_name_required",
+                                                None,
+                                            ),
+                                            cx,
+                                        );
+                                        return;
+                                    }
+                                    let raw_path =
+                                        linked_root_input.read(cx).value().trim().to_string();
+                                    if raw_path.is_empty() {
+                                        window.push_notification(
+                                            es_fluent::localize(
+                                                "create_collection_linked_root_required",
+                                                None,
+                                            ),
+                                            cx,
+                                        );
+                                        return;
+                                    }
+
+                                    let mut root_path = std::path::PathBuf::from(raw_path);
+                                    if root_path.is_relative() {
+                                        if let Ok(cwd) = std::env::current_dir() {
+                                            root_path = cwd.join(root_path);
+                                        }
+                                    }
+                                    if root_path.exists() && root_path.is_file() {
+                                        window.push_notification(
+                                            es_fluent::localize(
+                                                "create_collection_linked_root_not_directory",
+                                                None,
+                                            ),
+                                            cx,
+                                        );
+                                        return;
+                                    }
+
+                                    let result = weak_root_linked.update(cx, |this, cx| {
+                                        this.create_collection_with_storage(
+                                            workspace_id,
+                                            name.clone(),
+                                            CollectionStorageKind::Linked,
+                                            Some(root_path.clone()),
+                                            cx,
+                                        )
+                                    });
+                                    match result {
+                                        Ok(Ok(())) => window.close_dialog(cx),
+                                        Ok(Err(err)) => window.push_notification(err, cx),
+                                        Err(err) => window.push_notification(
+                                            format!("failed to create collection: {err}"),
+                                            cx,
+                                        ),
+                                    }
+                                }),
+                        ),
+                )
+        });
+        Ok(())
+    }
+
+    fn create_collection_with_storage(
+        &mut self,
+        workspace_id: WorkspaceId,
+        name: String,
+        storage_kind: CollectionStorageKind,
+        linked_root_path: Option<std::path::PathBuf>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let services = services(cx);
+        let storage_config = CollectionStorageConfig {
+            linked_root_path: linked_root_path.clone(),
+        };
         let collection = services
             .repos
             .collection
-            .create(workspace_id, &name)
+            .create_with_storage(workspace_id, &name, storage_kind, storage_config)
             .map_err(|err| format!("failed to create collection: {err}"))?;
+
+        if storage_kind == CollectionStorageKind::Linked {
+            let Some(root_path) = linked_root_path else {
+                return Err(es_fluent::localize(
+                    "create_collection_linked_root_required",
+                    None,
+                ));
+            };
+            let state = LinkedCollectionState {
+                collection: collection.clone(),
+                folders: Vec::new(),
+                requests: Vec::new(),
+                environments: Vec::new(),
+                root_child_order: Vec::new(),
+                folder_child_orders: HashMap::new(),
+            };
+            if let Err(err) = write_linked_collection(&root_path, &state) {
+                let _ = services.repos.collection.delete(collection.id);
+                return Err(format!(
+                    "{}: {err}",
+                    es_fluent::localize("create_collection_linked_init_failed", None)
+                ));
+            }
+        }
         drop(services);
 
         self.refresh_catalog(cx);

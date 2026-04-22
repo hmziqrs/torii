@@ -151,7 +151,9 @@ impl AppRoot {
                                                 ))
                                                 .icon(Icon::new(IconName::Plus).small())
                                                 .on_click(cx.listener(|this, _, window, cx| {
-                                                    if let Err(err) = this.create_collection(cx) {
+                                                    if let Err(err) =
+                                                        this.create_collection(window, cx)
+                                                    {
                                                         window.push_notification(err.clone(), cx);
                                                         tracing::error!(
                                                             "failed to create collection: {err}"
