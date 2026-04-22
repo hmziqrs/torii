@@ -88,6 +88,9 @@ sidebar_new_environment = 新建环境
 sidebar_collections = 集合
 sidebar_environments = 环境
 sidebar_environment_active_suffix = （已激活）
+sidebar_linked_collection_badge_tooltip = 已链接集合（Git）
+sidebar_linked_collection_badge_root = 根目录：
+sidebar_linked_collection_badge_root_missing = 根目录：不可用
 sidebar_utilities = 工具
 
 ## Tabs

@@ -1,5 +1,6 @@
 use super::AppRoot;
 use crate::{
+    domain::collection::CollectionStorageKind,
     services::workspace_tree::{CollectionTree, FolderTree, TreeItem},
     session::{item_key::ItemKey, window_layout::SidebarSection},
 };
@@ -11,6 +12,7 @@ use gpui_component::{
     menu::PopupMenuItem,
     scroll::ScrollableElement as _,
     sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem},
+    tooltip::Tooltip,
     v_flex,
 };
 
@@ -334,11 +336,45 @@ pub(super) fn render_collection_menu_item(
     let collection_key = ItemKey::collection(collection.collection.id);
     let collection_id_for_new = collection.collection.id;
     let weak_root = cx.entity().downgrade();
+    let is_linked = collection.collection.storage_kind == CollectionStorageKind::Linked;
+    let linked_root_path = collection
+        .collection
+        .storage_config
+        .linked_root_path
+        .as_ref()
+        .map(|path| path.display().to_string());
     SidebarMenuItem::new(collection.collection.name.clone())
         .icon(Icon::new(IconName::BookOpen).small())
         .active(active_key == Some(collection_key))
         .default_open(true)
         .click_to_open(true)
+        .when(is_linked, |item| {
+            let tooltip = match linked_root_path.clone() {
+                Some(path) => format!(
+                    "{}\n{}",
+                    es_fluent::localize("sidebar_linked_collection_badge_tooltip", None),
+                    format!(
+                        "{} {path}",
+                        es_fluent::localize("sidebar_linked_collection_badge_root", None),
+                    ),
+                ),
+                None => format!(
+                    "{}\n{}",
+                    es_fluent::localize("sidebar_linked_collection_badge_tooltip", None),
+                    es_fluent::localize("sidebar_linked_collection_badge_root_missing", None),
+                ),
+            };
+            let collection_id = collection.collection.id;
+            item.suffix(move |_, _| {
+                div()
+                    .id(format!("linked-collection-badge-{}", collection_id))
+                    .child(Icon::new(IconName::Github).small())
+                    .tooltip({
+                        let tooltip = tooltip.clone();
+                        move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx)
+                    })
+            })
+        })
         .on_click(cx.listener(move |this, _, _, cx| {
             this.open_item(collection_key, cx);
         }))

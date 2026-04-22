@@ -88,6 +88,9 @@ sidebar_new_environment = New Environment
 sidebar_collections = Collections
 sidebar_environments = Environments
 sidebar_environment_active_suffix = (Active)
+sidebar_linked_collection_badge_tooltip = Linked collection (Git-backed)
+sidebar_linked_collection_badge_root = Root:
+sidebar_linked_collection_badge_root_missing = Root: unavailable
 sidebar_utilities = Utilities
 
 ## Tabs
