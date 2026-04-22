@@ -16,12 +16,10 @@ use crate::domain::{
     revision::RevisionMetadata,
 };
 
-pub const LINKED_CONTROL_DIR: &str = ".torii";
-pub const LINKED_ENV_DIR: &str = "environments";
-pub const COLLECTION_META_FILE: &str = "collection.json";
-pub const FOLDER_META_FILE: &str = ".torii-folder.json";
-pub const REQUEST_FILE_EXT: &str = ".torii-request.json";
-pub const ENV_FILE_EXT: &str = ".torii-env.json";
+pub const COLLECTION_META_FILE: &str = ".collection.json";
+pub const FOLDER_META_FILE: &str = ".folder.json";
+pub const REQUEST_FILE_EXT: &str = ".request.json";
+pub const ENV_FILE_EXT: &str = ".env.json";
 pub const FORMAT_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -100,10 +98,10 @@ pub fn write_linked_collection(root: &Path, state: &LinkedCollectionState) -> Re
             .with_context(|| format!("failed to create folder path {}", path.display()))?;
     }
 
-    let control_dir = root.join(LINKED_CONTROL_DIR);
-    let env_dir = control_dir.join(LINKED_ENV_DIR);
-    fs::create_dir_all(&env_dir)
-        .with_context(|| format!("failed to create linked env dir {}", env_dir.display()))?;
+    // Remove existing managed request files before rewriting so rename/migration
+    // does not leave stale duplicates behind.
+    clear_request_and_folder_artifacts_recursive(root)?;
+    clear_environment_files(root)?;
 
     let collection_meta = CollectionMetaFile {
         format_version: FORMAT_VERSION,
@@ -114,7 +112,7 @@ pub fn write_linked_collection(root: &Path, state: &LinkedCollectionState) -> Re
             state.root_child_order.clone()
         },
     };
-    write_json_file(&control_dir.join(COLLECTION_META_FILE), &collection_meta)?;
+    write_json_file(&root.join(COLLECTION_META_FILE), &collection_meta)?;
 
     let folder_orders = if state.folder_child_orders.is_empty() {
         derive_folder_orders(state)
@@ -142,12 +140,7 @@ pub fn write_linked_collection(root: &Path, state: &LinkedCollectionState) -> Re
         } else {
             root.to_path_buf()
         };
-        let file_name = format!(
-            "{}--{}{}",
-            sanitize_name(&request.name),
-            request.id,
-            REQUEST_FILE_EXT
-        );
+        let file_name = format!("{}{}", sanitize_name(&request.name), REQUEST_FILE_EXT);
         write_json_file(
             &parent_dir.join(file_name),
             &RequestFile {
@@ -157,14 +150,9 @@ pub fn write_linked_collection(root: &Path, state: &LinkedCollectionState) -> Re
     }
 
     for environment in &state.environments {
-        let file_name = format!(
-            "{}--{}{}",
-            sanitize_name(&environment.name),
-            environment.id,
-            ENV_FILE_EXT
-        );
+        let file_name = format!("{}{}", sanitize_name(&environment.name), ENV_FILE_EXT);
         write_json_file(
-            &env_dir.join(file_name),
+            &root.join(file_name),
             &EnvironmentFile {
                 environment: environment.clone(),
             },
@@ -175,8 +163,8 @@ pub fn write_linked_collection(root: &Path, state: &LinkedCollectionState) -> Re
 }
 
 pub fn read_linked_collection(root: &Path) -> Result<LinkedCollectionState> {
-    let control_path = root.join(LINKED_CONTROL_DIR).join(COLLECTION_META_FILE);
-    let collection_meta: CollectionMetaFile = read_json_file(&control_path)?;
+    let collection_meta_path = root.join(COLLECTION_META_FILE);
+    let collection_meta: CollectionMetaFile = read_json_file(&collection_meta_path)?;
     if collection_meta.format_version != FORMAT_VERSION {
         return Err(anyhow!(
             "unsupported linked format version {}",
@@ -189,6 +177,7 @@ pub fn read_linked_collection(root: &Path) -> Result<LinkedCollectionState> {
     let mut folder_child_orders: HashMap<FolderId, Vec<LinkedSiblingId>> = HashMap::new();
     read_dir_recursive(
         root,
+        root,
         &collection_meta.collection,
         None,
         &mut folders,
@@ -196,38 +185,8 @@ pub fn read_linked_collection(root: &Path) -> Result<LinkedCollectionState> {
         &mut folder_child_orders,
     )?;
 
-    let mut environments = Vec::new();
-    let env_dir = root.join(LINKED_CONTROL_DIR).join(LINKED_ENV_DIR);
-    if env_dir.exists() {
-        for entry in fs::read_dir(&env_dir)
-            .with_context(|| format!("failed to read env dir {}", env_dir.display()))?
-        {
-            let entry = entry?;
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-            if !path
-                .file_name()
-                .and_then(|it| it.to_str())
-                .is_some_and(|name| name.ends_with(ENV_FILE_EXT))
-            {
-                continue;
-            }
-            let file: EnvironmentFileCompat = read_json_file(&path)?;
-            let environment = Environment {
-                id: file.environment.id,
-                workspace_id: file
-                    .environment
-                    .workspace_id
-                    .unwrap_or(collection_meta.collection.workspace_id),
-                name: file.environment.name,
-                variables_json: file.environment.variables_json,
-                meta: file.environment.meta,
-            };
-            environments.push(environment);
-        }
-    }
+    let environments =
+        read_environment_files_in_dir(root, collection_meta.collection.workspace_id)?;
 
     apply_sibling_order(
         &collection_meta.ordered_root_child_ids,
@@ -250,16 +209,14 @@ pub fn read_linked_collection(root: &Path) -> Result<LinkedCollectionState> {
 }
 
 pub fn ensure_not_reserved_name(name: &str) -> Result<()> {
-    if name.trim() == LINKED_CONTROL_DIR {
-        return Err(anyhow!(
-            "reserved name '{}' cannot be used in linked collections",
-            LINKED_CONTROL_DIR
-        ));
+    if name.trim().is_empty() {
+        return Err(anyhow!("name cannot be empty"));
     }
     Ok(())
 }
 
 fn read_dir_recursive(
+    root: &Path,
     path: &Path,
     collection: &Collection,
     parent_folder_id: Option<FolderId>,
@@ -274,20 +231,31 @@ fn read_dir_recursive(
             continue;
         };
         if child_path.is_dir() {
-            if name == LINKED_CONTROL_DIR {
+            if name.starts_with('.') {
                 continue;
             }
             let folder_meta_path = child_path.join(FOLDER_META_FILE);
-            if !folder_meta_path.exists() {
-                continue;
-            }
-            let mut folder_meta: FolderMetaFile = read_json_file(&folder_meta_path)?;
-            folder_meta.folder.collection_id = collection.id;
-            folder_meta.folder.parent_folder_id = parent_folder_id;
-            let folder_id = folder_meta.folder.id;
-            folder_child_orders.insert(folder_id, folder_meta.ordered_child_ids);
-            folders.push(folder_meta.folder.clone());
+            let (folder, ordered_child_ids) = if folder_meta_path.exists() {
+                let mut folder_meta: FolderMetaFile = read_json_file(&folder_meta_path)?;
+                folder_meta.folder.collection_id = collection.id;
+                folder_meta.folder.parent_folder_id = parent_folder_id;
+                (folder_meta.folder, folder_meta.ordered_child_ids)
+            } else {
+                let relative = child_path
+                    .strip_prefix(root)
+                    .unwrap_or(child_path.as_path());
+                let mut folder = Folder::new(collection.id, parent_folder_id, name.to_string(), 0);
+                folder.id = FolderId::from(uuid::Uuid::new_v5(
+                    &uuid::Uuid::NAMESPACE_URL,
+                    format!("torii-folder:{}", relative.display()).as_bytes(),
+                ));
+                (folder, Vec::new())
+            };
+            let folder_id = folder.id;
+            folder_child_orders.insert(folder_id, ordered_child_ids);
+            folders.push(folder);
             read_dir_recursive(
+                root,
                 &child_path,
                 collection,
                 Some(folder_id),
@@ -297,7 +265,7 @@ fn read_dir_recursive(
             )?;
             continue;
         }
-        if !name.ends_with(REQUEST_FILE_EXT) {
+        if !is_request_file_name(name) {
             continue;
         }
         let mut request_file: RequestFile = read_json_file(&child_path)?;
@@ -453,7 +421,13 @@ fn build_folder_paths(root: &Path, folders: &[Folder]) -> Result<HashMap<FolderI
         } else {
             root.to_path_buf()
         };
-        let path = base.join(format!("{}--{}", sanitize_name(&folder.name), folder.id));
+        let path = base.join(sanitize_name(&folder.name));
+        if map.values().any(|existing| existing == &path) {
+            return Err(anyhow!(
+                "duplicate folder path '{}' generated from folder names",
+                path.display()
+            ));
+        }
         map.insert(folder.id, path.clone());
         visiting.remove(&folder.id);
         Ok(path)
@@ -482,10 +456,116 @@ fn sanitize_name(name: &str) -> String {
     }
 }
 
+fn is_request_file_name(name: &str) -> bool {
+    name.ends_with(REQUEST_FILE_EXT)
+}
+
+fn is_environment_file_name(name: &str) -> bool {
+    name.ends_with(ENV_FILE_EXT)
+}
+
 fn write_json_file<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     let bytes = serde_json::to_vec_pretty(value)?;
     fs::write(path, bytes).with_context(|| format!("failed to write {}", path.display()))?;
     Ok(())
+}
+
+fn is_folder_meta_file_name(name: &str) -> bool {
+    name == FOLDER_META_FILE
+}
+
+fn clear_request_and_folder_artifacts_recursive(dir: &Path) -> Result<()> {
+    if !dir.exists() {
+        return Ok(());
+    }
+    for entry in
+        fs::read_dir(dir).with_context(|| format!("failed to read dir {}", dir.display()))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            if path
+                .file_name()
+                .and_then(|it| it.to_str())
+                .is_some_and(|name| name.starts_with('.'))
+            {
+                continue;
+            }
+            clear_request_and_folder_artifacts_recursive(&path)?;
+            continue;
+        }
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|it| it.to_str()) else {
+            continue;
+        };
+        if is_request_file_name(name) || is_folder_meta_file_name(name) {
+            fs::remove_file(&path).with_context(|| {
+                format!("failed to remove stale linked artifact {}", path.display())
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn clear_environment_files(dir: &Path) -> Result<()> {
+    if !dir.exists() {
+        return Ok(());
+    }
+    for entry in
+        fs::read_dir(dir).with_context(|| format!("failed to read dir {}", dir.display()))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|it| it.to_str()) else {
+            continue;
+        };
+        if is_environment_file_name(name) {
+            fs::remove_file(&path).with_context(|| {
+                format!("failed to remove stale environment file {}", path.display())
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn read_environment_files_in_dir(
+    dir: &Path,
+    workspace_id: WorkspaceId,
+) -> Result<Vec<Environment>> {
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut environments = Vec::new();
+    for entry in
+        fs::read_dir(dir).with_context(|| format!("failed to read env dir {}", dir.display()))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        if !path
+            .file_name()
+            .and_then(|it| it.to_str())
+            .is_some_and(is_environment_file_name)
+        {
+            continue;
+        }
+        let file: EnvironmentFileCompat = read_json_file(&path)?;
+        environments.push(Environment {
+            id: file.environment.id,
+            workspace_id: file.environment.workspace_id.unwrap_or(workspace_id),
+            name: file.environment.name,
+            variables_json: file.environment.variables_json,
+            meta: file.environment.meta,
+        });
+    }
+    Ok(environments)
 }
 
 fn read_json_file<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {

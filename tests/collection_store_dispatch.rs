@@ -125,7 +125,7 @@ fn collection_store_resolves_managed_and_linked_by_collection_id() -> Result<()>
     assert_eq!(linked_env_count, 0);
 
     // Linked collection writes should be persisted on disk.
-    let control_path = linked_root.join(".torii").join("collection.json");
+    let control_path = linked_root.join(".collection.json");
     assert!(control_path.exists());
     let linked_request_files = std::fs::read_dir(&linked_root)?
         .filter_map(|entry| entry.ok())
@@ -134,19 +134,18 @@ fn collection_store_resolves_managed_and_linked_by_collection_id() -> Result<()>
                 .path()
                 .file_name()
                 .and_then(|it| it.to_str())
-                .is_some_and(|name| name.ends_with(".torii-request.json"))
+                .is_some_and(|name| name.ends_with(".request.json"))
         })
         .count();
     assert_eq!(linked_request_files, 1);
-    let env_dir = linked_root.join(".torii").join("environments");
-    let linked_env_files = std::fs::read_dir(env_dir)?
+    let linked_env_files = std::fs::read_dir(&linked_root)?
         .filter_map(|entry| entry.ok())
         .filter(|entry| {
             entry
                 .path()
                 .file_name()
                 .and_then(|it| it.to_str())
-                .is_some_and(|name| name.ends_with(".torii-env.json"))
+                .is_some_and(|name| name.ends_with(".env.json"))
         })
         .count();
     assert_eq!(linked_env_files, 1);

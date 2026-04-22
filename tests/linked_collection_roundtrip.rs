@@ -141,6 +141,6 @@ fn linked_collection_roundtrip_preserves_ids_and_order() -> Result<()> {
 
 #[test]
 fn linked_collection_rejects_reserved_name() {
-    let err = ensure_not_reserved_name(".torii").expect_err("expected reserved-name rejection");
-    assert!(err.to_string().contains("reserved name"));
+    let err = ensure_not_reserved_name("   ").expect_err("expected empty-name rejection");
+    assert!(err.to_string().contains("empty"));
 }
