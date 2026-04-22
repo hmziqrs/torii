@@ -26,7 +26,7 @@ fn get_by_id_returns_correct_item_or_none() -> Result<()> {
     let collection = collection_repo.create(workspace.id, "C")?;
     let folder = folder_repo.create(collection.id, None, "F")?;
     let request = request_repo.create(collection.id, None, "R", "GET", "https://r.test")?;
-    let environment = environment_repo.create(collection.id, "Env")?;
+    let environment = environment_repo.create(workspace.id, "Env")?;
 
     assert_eq!(
         collection_repo.get(collection.id)?.map(|c| c.id),

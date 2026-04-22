@@ -5,16 +5,15 @@ use sqlx::Row as _;
 
 use crate::domain::{
     environment::Environment,
-    ids::{CollectionId, EnvironmentId, WorkspaceId},
+    ids::{EnvironmentId, WorkspaceId},
     revision::{RevisionMetadata, now_unix_ts},
 };
 
 use super::{DbRef, RepoResult};
 
 pub trait EnvironmentRepository: Send + Sync {
-    fn create(&self, collection_id: CollectionId, name: &str) -> RepoResult<Environment>;
+    fn create(&self, workspace_id: WorkspaceId, name: &str) -> RepoResult<Environment>;
     fn get(&self, id: EnvironmentId) -> RepoResult<Option<Environment>>;
-    fn list_by_collection(&self, collection_id: CollectionId) -> RepoResult<Vec<Environment>>;
     fn list_by_workspace(&self, workspace_id: WorkspaceId) -> RepoResult<Vec<Environment>>;
     fn update_variables(&self, id: EnvironmentId, variables_json: &str) -> RepoResult<()>;
     fn rename(&self, id: EnvironmentId, name: &str) -> RepoResult<()>;
@@ -33,16 +32,16 @@ impl SqliteEnvironmentRepository {
 }
 
 impl EnvironmentRepository for SqliteEnvironmentRepository {
-    fn create(&self, collection_id: CollectionId, name: &str) -> RepoResult<Environment> {
-        let environment = Environment::new(collection_id, name.to_string());
+    fn create(&self, workspace_id: WorkspaceId, name: &str) -> RepoResult<Environment> {
+        let environment = Environment::new(workspace_id, name.to_string());
         self.db.block_on(async {
             sqlx::query(
                 "INSERT INTO environments
-                 (id, collection_id, name, variables_json, created_at, updated_at, revision)
+                 (id, workspace_id, name, variables_json, created_at, updated_at, revision)
                  VALUES (?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(environment.id.to_string())
-            .bind(environment.collection_id.to_string())
+            .bind(environment.workspace_id.to_string())
             .bind(&environment.name)
             .bind(&environment.variables_json)
             .bind(environment.meta.created_at)
@@ -59,7 +58,7 @@ impl EnvironmentRepository for SqliteEnvironmentRepository {
     fn get(&self, id: EnvironmentId) -> RepoResult<Option<Environment>> {
         self.db.block_on(async {
             let row = sqlx::query(
-                "SELECT id, collection_id, name, variables_json, created_at, updated_at, revision
+                "SELECT id, workspace_id, name, variables_json, created_at, updated_at, revision
                  FROM environments WHERE id = ?",
             )
             .bind(id.to_string())
@@ -70,31 +69,13 @@ impl EnvironmentRepository for SqliteEnvironmentRepository {
         })
     }
 
-    fn list_by_collection(&self, collection_id: CollectionId) -> RepoResult<Vec<Environment>> {
-        self.db.block_on(async {
-            let rows = sqlx::query(
-                "SELECT id, collection_id, name, variables_json, created_at, updated_at, revision
-                 FROM environments
-                 WHERE collection_id = ?
-                 ORDER BY created_at ASC, id ASC",
-            )
-            .bind(collection_id.to_string())
-            .fetch_all(self.db.pool())
-            .await
-            .context("failed to list collection environments")?;
-
-            rows.into_iter().map(map_environment_row).collect()
-        })
-    }
-
     fn list_by_workspace(&self, workspace_id: WorkspaceId) -> RepoResult<Vec<Environment>> {
         self.db.block_on(async {
             let rows = sqlx::query(
-                "SELECT e.id, e.collection_id, e.name, e.variables_json, e.created_at, e.updated_at, e.revision
-                 FROM environments e
-                 INNER JOIN collections c ON c.id = e.collection_id
-                 WHERE c.workspace_id = ?
-                 ORDER BY e.created_at ASC, e.id ASC",
+                "SELECT id, workspace_id, name, variables_json, created_at, updated_at, revision
+                 FROM environments
+                 WHERE workspace_id = ?
+                 ORDER BY created_at ASC, id ASC",
             )
             .bind(workspace_id.to_string())
             .fetch_all(self.db.pool())
@@ -156,7 +137,7 @@ fn map_environment_row(row: sqlx::sqlite::SqliteRow) -> RepoResult<Environment> 
     let raw_variables_json: String = row.get("variables_json");
     Ok(Environment {
         id: EnvironmentId::parse(row.get::<&str, _>("id"))?,
-        collection_id: CollectionId::parse(row.get::<&str, _>("collection_id"))?,
+        workspace_id: WorkspaceId::parse(row.get::<&str, _>("workspace_id"))?,
         name: row.get("name"),
         variables_json: normalize_variables_json(&raw_variables_json),
         meta: RevisionMetadata {

@@ -158,9 +158,7 @@ impl SessionRestoreService {
                 let Some(environment) = self.environments.get(id)? else {
                     return Ok(None);
                 };
-                self.collections
-                    .get(environment.collection_id)?
-                    .map(|collection| collection.workspace_id)
+                Some(environment.workspace_id)
             }
             (ItemKind::Request, Some(ItemId::Request(id))) => {
                 let Some(request) = self.requests.get(id)? else {

@@ -46,7 +46,7 @@ fn deleting_collection_closes_collection_and_descendant_tabs() -> Result<()> {
         "GET",
         "https://example.test",
     )?;
-    let environment = environment_repo_impl.create(collection.id, "Env")?;
+    let environment = environment_repo_impl.create(workspace.id, "Env")?;
 
     let catalog = load_workspace_catalog(
         &workspace_repo,
@@ -103,7 +103,7 @@ fn deleting_workspace_closes_all_workspace_descendant_tabs() -> Result<()> {
         "GET",
         "https://example.test",
     )?;
-    let environment = environment_repo_impl.create(collection.id, "Env")?;
+    let environment = environment_repo_impl.create(workspace.id, "Env")?;
 
     let catalog = load_workspace_catalog(
         &workspace_repo,

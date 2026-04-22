@@ -42,7 +42,7 @@ fn tab_session_repo_roundtrip_and_restore_skip_missing_items() -> Result<()> {
         "GET",
         "https://example.test",
     )?;
-    let environment = environment_repo.create(collection.id, "Env")?;
+    let environment = environment_repo.create(workspace.id, "Env")?;
 
     let session_id = SessionId::new();
     let tabs = vec![

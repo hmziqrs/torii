@@ -43,7 +43,7 @@ fn migration_roundtrip_creates_and_reuses_schema() -> Result<()> {
             .fetch_one(db.pool())
             .await
     })?;
-    assert_eq!(applied, 3);
+    assert_eq!(applied, 4);
 
     let journal_mode: String = db.block_on(async {
         sqlx::query_scalar("PRAGMA journal_mode;")
@@ -66,6 +66,28 @@ fn migration_roundtrip_creates_and_reuses_schema() -> Result<()> {
     })?;
     assert!(busy_timeout >= 5000);
 
+    let environment_columns = db.block_on(async {
+        sqlx::query("PRAGMA table_info(environments);")
+            .fetch_all(db.pool())
+            .await
+    })?;
+    let environment_column_names = environment_columns
+        .into_iter()
+        .map(|row| row.get::<String, _>("name"))
+        .collect::<Vec<_>>();
+    assert!(
+        environment_column_names
+            .iter()
+            .any(|name| name == "workspace_id"),
+        "environments table must contain workspace_id"
+    );
+    assert!(
+        environment_column_names
+            .iter()
+            .all(|name| name != "collection_id"),
+        "environments table must not contain collection_id"
+    );
+
     drop(db);
 
     let db2 = torii::infra::db::Database::connect(&paths)?;
@@ -74,7 +96,7 @@ fn migration_roundtrip_creates_and_reuses_schema() -> Result<()> {
             .fetch_one(db2.pool())
             .await
     })?;
-    assert_eq!(applied2, 3);
+    assert_eq!(applied2, 4);
 
     Ok(())
 }

@@ -1,24 +1,24 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ids::{CollectionId, EnvironmentId},
+    ids::{EnvironmentId, WorkspaceId},
     revision::RevisionMetadata,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Environment {
     pub id: EnvironmentId,
-    pub collection_id: CollectionId,
+    pub workspace_id: WorkspaceId,
     pub name: String,
     pub variables_json: String,
     pub meta: RevisionMetadata,
 }
 
 impl Environment {
-    pub fn new(collection_id: CollectionId, name: impl Into<String>) -> Self {
+    pub fn new(workspace_id: WorkspaceId, name: impl Into<String>) -> Self {
         Self {
             id: EnvironmentId::new(),
-            collection_id,
+            workspace_id,
             name: name.into(),
             variables_json: "[]".to_string(),
             meta: RevisionMetadata::new_now(),

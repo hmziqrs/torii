@@ -5,8 +5,7 @@ use crate::{
 };
 use gpui::{div, prelude::*, px, relative};
 use gpui_component::{
-    ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _,
-    WindowExt as _,
+    ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _, WindowExt as _,
     button::{Button, ButtonRounded, ButtonVariants as _},
     h_flex,
     menu::PopupMenuItem,
@@ -170,8 +169,8 @@ impl AppRoot {
                                                     }
                                                 })),
                                             ))
-                                            .chain(self.catalog.workspaces.iter().map(
-                                                |workspace| {
+                                            .chain(
+                                                self.catalog.workspaces.iter().map(|workspace| {
                                                     let item_key = ItemKey::workspace(workspace.id);
                                                     let weak_root = weak_root.clone();
                                                     SidebarMenuItem::new(workspace.name.clone())
@@ -209,8 +208,8 @@ impl AppRoot {
                                                                 }),
                                                             )
                                                         })
-                                                },
-                                            )),
+                                                }),
+                                            ),
                                         ),
                                     ),
                             )

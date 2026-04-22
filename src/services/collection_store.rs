@@ -6,7 +6,7 @@ use crate::{
     domain::{
         collection::CollectionStorageKind,
         environment::Environment,
-        ids::{CollectionId, FolderId},
+        ids::{CollectionId, FolderId, WorkspaceId},
         request::RequestItem,
     },
     infra::linked_collection_format::{
@@ -28,11 +28,13 @@ pub struct CollectionStoreRepos {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManagedCollectionStore {
     pub collection_id: CollectionId,
+    pub workspace_id: WorkspaceId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinkedCollectionStore {
     pub collection_id: CollectionId,
+    pub workspace_id: WorkspaceId,
     pub root_path: PathBuf,
 }
 
@@ -62,6 +64,7 @@ impl CollectionStoreResolver {
             CollectionStorageKind::Managed => {
                 Ok(ResolvedCollectionStore::Managed(ManagedCollectionStore {
                     collection_id: collection.id,
+                    workspace_id: collection.workspace_id,
                 }))
             }
             CollectionStorageKind::Linked => {
@@ -77,6 +80,7 @@ impl CollectionStoreResolver {
                     })?;
                 Ok(ResolvedCollectionStore::Linked(LinkedCollectionStore {
                     collection_id: collection.id,
+                    workspace_id: collection.workspace_id,
                     root_path,
                 }))
             }
@@ -104,9 +108,11 @@ impl ResolvedCollectionStore {
         url: &str,
     ) -> Result<RequestItem> {
         match self {
-            Self::Managed(store) => repos
-                .requests
-                .create(store.collection_id, parent_folder_id, name, method, url),
+            Self::Managed(store) => {
+                repos
+                    .requests
+                    .create(store.collection_id, parent_folder_id, name, method, url)
+            }
             Self::Linked(store) => {
                 ensure_not_reserved_name(name)?;
                 let mut state = read_linked_collection(&store.root_path)?;
@@ -119,21 +125,25 @@ impl ResolvedCollectionStore {
                 }
 
                 let next_sort = next_request_sort(&state.requests, parent_folder_id);
-                let request =
-                    RequestItem::new(store.collection_id, parent_folder_id, name, method, url, next_sort);
+                let request = RequestItem::new(
+                    store.collection_id,
+                    parent_folder_id,
+                    name,
+                    method,
+                    url,
+                    next_sort,
+                );
 
                 if let Some(parent) = parent_folder_id {
                     let parent_exists = state.folders.iter().any(|folder| folder.id == parent);
                     if !parent_exists {
                         return Err(anyhow!("target parent folder does not exist"));
                     }
-                    state
-                        .folder_child_orders
-                        .entry(parent)
-                        .or_default()
-                        .push(LinkedSiblingId::Request {
+                    state.folder_child_orders.entry(parent).or_default().push(
+                        LinkedSiblingId::Request {
                             id: request.id.to_string(),
-                        });
+                        },
+                    );
                 } else {
                     state.root_child_order.push(LinkedSiblingId::Request {
                         id: request.id.to_string(),
@@ -149,10 +159,17 @@ impl ResolvedCollectionStore {
 
     pub fn list_environments(&self, repos: &CollectionStoreRepos) -> Result<Vec<Environment>> {
         match self {
-            Self::Managed(store) => repos.environments.list_by_collection(store.collection_id),
+            Self::Managed(store) => repos.environments.list_by_workspace(store.workspace_id),
             Self::Linked(store) => {
                 let state = read_linked_collection(&store.root_path)?;
-                Ok(state.environments)
+                Ok(state
+                    .environments
+                    .into_iter()
+                    .map(|mut environment| {
+                        environment.workspace_id = store.workspace_id;
+                        environment
+                    })
+                    .collect())
             }
         }
     }
@@ -163,7 +180,7 @@ impl ResolvedCollectionStore {
         name: &str,
     ) -> Result<Environment> {
         match self {
-            Self::Managed(store) => repos.environments.create(store.collection_id, name),
+            Self::Managed(store) => repos.environments.create(store.workspace_id, name),
             Self::Linked(store) => {
                 let mut state = read_linked_collection(&store.root_path)?;
                 if state.collection.id != store.collection_id {
@@ -173,7 +190,7 @@ impl ResolvedCollectionStore {
                         state.collection.id
                     ));
                 }
-                let environment = Environment::new(store.collection_id, name.to_string());
+                let environment = Environment::new(store.workspace_id, name.to_string());
                 state.environments.push(environment.clone());
                 write_linked_collection(&store.root_path, &state)?;
                 Ok(environment)

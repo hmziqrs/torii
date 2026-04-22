@@ -118,7 +118,6 @@ workspace_tab_collections_heading = 可用集合
 
 create_collection_no_workspace = 请先选择或创建工作区。
 create_environment_no_workspace = 请先选择或创建工作区。
-create_environment_no_collection = 请先创建一个集合。
 
 ## Collection Tab
 

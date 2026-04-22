@@ -66,9 +66,7 @@ impl LinkedCollectionMonitor {
                 }
             };
 
-            let mut debouncer =
-                match new_debouncer(Duration::from_millis(75), None, callback)
-            {
+            let mut debouncer = match new_debouncer(Duration::from_millis(75), None, callback) {
                 Ok(debouncer) => debouncer,
                 Err(err) => {
                     tracing::error!("failed to initialize linked collection debouncer: {err}");
@@ -158,16 +156,23 @@ fn map_debounced_events(
         for event in collection_events.drain(..) {
             by_path.insert(event.path, event.kind);
         }
-        out.extend(by_path.into_iter().map(|(path, kind)| LinkedCollectionEvent {
-            collection_id,
-            kind,
-            path,
-        }));
+        out.extend(
+            by_path
+                .into_iter()
+                .map(|(path, kind)| LinkedCollectionEvent {
+                    collection_id,
+                    kind,
+                    path,
+                }),
+        );
     }
     out
 }
 
-fn find_collection_for_path(path: &Path, roots: &HashMap<PathBuf, CollectionId>) -> Option<CollectionId> {
+fn find_collection_for_path(
+    path: &Path,
+    roots: &HashMap<PathBuf, CollectionId>,
+) -> Option<CollectionId> {
     let mut best: Option<(usize, CollectionId)> = None;
     for (root, collection_id) in roots {
         if path.starts_with(root) {
@@ -217,12 +222,20 @@ mod tests {
         let root = PathBuf::from("/tmp/root");
         let roots = HashMap::from([(root.clone(), collection_id)]);
         let events = (0..60)
-            .map(|i| ev(&format!("/tmp/root/f{i}.json"), EventKind::Modify(ModifyKind::Any)))
+            .map(|i| {
+                ev(
+                    &format!("/tmp/root/f{i}.json"),
+                    EventKind::Modify(ModifyKind::Any),
+                )
+            })
             .collect::<Vec<_>>();
 
         let mapped = map_debounced_events(events, &roots, 50);
         assert_eq!(mapped.len(), 1);
-        assert_eq!(mapped[0].kind, LinkedCollectionEventKind::FullRescanRequested);
+        assert_eq!(
+            mapped[0].kind,
+            LinkedCollectionEventKind::FullRescanRequested
+        );
         assert_eq!(mapped[0].collection_id, collection_id);
     }
 

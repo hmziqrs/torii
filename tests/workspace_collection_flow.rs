@@ -26,7 +26,7 @@ fn create_workspace_collection_environment_and_save_new_draft_request() -> Resul
 
     let workspace = workspace_repo.create("Workspace A")?;
     let collection = collection_repo.create(workspace.id, "Collection A")?;
-    let environment = environment_repo.create(collection.id, "Local")?;
+    let environment = environment_repo.create(workspace.id, "Local")?;
 
     let mut draft = RequestItem::new(
         collection.id,
@@ -49,7 +49,7 @@ fn create_workspace_collection_environment_and_save_new_draft_request() -> Resul
 
     assert_eq!(workspace.name, "Workspace A");
     assert_eq!(collection.name, "Collection A");
-    assert_eq!(environment.collection_id, collection.id);
+    assert_eq!(environment.workspace_id, workspace.id);
     assert_eq!(loaded.collection_id, collection.id);
     assert_eq!(loaded.name, "Draft Request");
     assert_eq!(loaded.method, "POST");
@@ -85,6 +85,53 @@ fn draft_save_targets_the_intended_collection() -> Result<()> {
     assert_eq!(loaded.collection_id, second.id);
     assert_eq!(loaded.name, "Second Draft");
     assert_eq!(loaded.url, "/v1/second");
+
+    Ok(())
+}
+
+#[test]
+fn environment_can_be_created_without_any_collection() -> Result<()> {
+    let (_paths, db) = common::test_database("workspace-env-without-collection")?;
+    let db = Arc::new(db);
+
+    let workspace_repo = SqliteWorkspaceRepository::new(db.clone());
+    let environment_repo = SqliteEnvironmentRepository::new(db.clone());
+
+    let workspace = workspace_repo.create("Workspace Empty")?;
+    let env = environment_repo.create(workspace.id, "Local")?;
+    let listed = environment_repo.list_by_workspace(workspace.id)?;
+
+    assert_eq!(env.workspace_id, workspace.id);
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, env.id);
+    assert_eq!(listed[0].name, "Local");
+
+    Ok(())
+}
+
+#[test]
+fn environments_are_isolated_by_workspace() -> Result<()> {
+    let (_paths, db) = common::test_database("workspace-env-isolation")?;
+    let db = Arc::new(db);
+
+    let workspace_repo = SqliteWorkspaceRepository::new(db.clone());
+    let environment_repo = SqliteEnvironmentRepository::new(db.clone());
+
+    let ws_a = workspace_repo.create("Workspace A")?;
+    let ws_b = workspace_repo.create("Workspace B")?;
+
+    let _env_a = environment_repo.create(ws_a.id, "Env A")?;
+    let _env_b = environment_repo.create(ws_b.id, "Env B")?;
+
+    let a_envs = environment_repo.list_by_workspace(ws_a.id)?;
+    let b_envs = environment_repo.list_by_workspace(ws_b.id)?;
+
+    assert_eq!(a_envs.len(), 1);
+    assert_eq!(b_envs.len(), 1);
+    assert_eq!(a_envs[0].workspace_id, ws_a.id);
+    assert_eq!(b_envs[0].workspace_id, ws_b.id);
+    assert_eq!(a_envs[0].name, "Env A");
+    assert_eq!(b_envs[0].name, "Env B");
 
     Ok(())
 }

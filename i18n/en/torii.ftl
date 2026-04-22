@@ -118,7 +118,6 @@ workspace_tab_collections_heading = Available collections
 
 create_collection_no_workspace = Select or create a workspace first.
 create_environment_no_workspace = Select or create a workspace first.
-create_environment_no_collection = Create a collection first.
 
 ## Collection Tab
 

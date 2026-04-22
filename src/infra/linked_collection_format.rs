@@ -11,8 +11,9 @@ use crate::domain::{
     collection::{Collection, CollectionStorageKind},
     environment::Environment,
     folder::Folder,
-    ids::FolderId,
+    ids::{EnvironmentId, FolderId, WorkspaceId},
     request::RequestItem,
+    revision::RevisionMetadata,
 };
 
 pub const LINKED_CONTROL_DIR: &str = ".torii";
@@ -63,9 +64,28 @@ struct EnvironmentFile {
     environment: Environment,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct EnvironmentFileCompat {
+    environment: EnvironmentCompat,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct EnvironmentCompat {
+    id: EnvironmentId,
+    #[serde(default)]
+    workspace_id: Option<WorkspaceId>,
+    #[serde(default)]
+    collection_id: Option<String>,
+    name: String,
+    variables_json: String,
+    meta: RevisionMetadata,
+}
+
 pub fn write_linked_collection(root: &Path, state: &LinkedCollectionState) -> Result<()> {
     if state.collection.storage_kind != CollectionStorageKind::Linked {
-        return Err(anyhow!("linked writer requires linked collection storage kind"));
+        return Err(anyhow!(
+            "linked writer requires linked collection storage kind"
+        ));
     }
     fs::create_dir_all(root)
         .with_context(|| format!("failed to create linked root {}", root.display()))?;
@@ -122,7 +142,12 @@ pub fn write_linked_collection(root: &Path, state: &LinkedCollectionState) -> Re
         } else {
             root.to_path_buf()
         };
-        let file_name = format!("{}--{}{}", sanitize_name(&request.name), request.id, REQUEST_FILE_EXT);
+        let file_name = format!(
+            "{}--{}{}",
+            sanitize_name(&request.name),
+            request.id,
+            REQUEST_FILE_EXT
+        );
         write_json_file(
             &parent_dir.join(file_name),
             &RequestFile {
@@ -189,9 +214,18 @@ pub fn read_linked_collection(root: &Path) -> Result<LinkedCollectionState> {
             {
                 continue;
             }
-            let mut file: EnvironmentFile = read_json_file(&path)?;
-            file.environment.collection_id = collection_meta.collection.id;
-            environments.push(file.environment);
+            let file: EnvironmentFileCompat = read_json_file(&path)?;
+            let environment = Environment {
+                id: file.environment.id,
+                workspace_id: file
+                    .environment
+                    .workspace_id
+                    .unwrap_or(collection_meta.collection.workspace_id),
+                name: file.environment.name,
+                variables_json: file.environment.variables_json,
+                meta: file.environment.meta,
+            };
+            environments.push(environment);
         }
     }
 
@@ -331,10 +365,18 @@ fn apply_sibling_order(
 
 fn derive_root_order(state: &LinkedCollectionState) -> Vec<LinkedSiblingId> {
     let mut rows = Vec::new();
-    for folder in state.folders.iter().filter(|f| f.parent_folder_id.is_none()) {
+    for folder in state
+        .folders
+        .iter()
+        .filter(|f| f.parent_folder_id.is_none())
+    {
         rows.push((folder.sort_order, folder.id.to_string(), true));
     }
-    for request in state.requests.iter().filter(|r| r.parent_folder_id.is_none()) {
+    for request in state
+        .requests
+        .iter()
+        .filter(|r| r.parent_folder_id.is_none())
+    {
         rows.push((request.sort_order, request.id.to_string(), false));
     }
     rows.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));

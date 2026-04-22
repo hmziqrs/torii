@@ -594,7 +594,7 @@ mod tests {
                 }],
                 environments: vec![Environment {
                     id: environment_id,
-                    collection_id,
+                    workspace_id,
                     name: "Env A".into(),
                     variables_json: "[]".into(),
                     meta: RevisionMetadata::new_now(),

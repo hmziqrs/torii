@@ -311,7 +311,7 @@ fn ensure_sample_workspace(
         "https://admin.example.test/health",
     )?;
 
-    let environment = environment_repo.create(api_collection.id, "Local")?;
+    let environment = environment_repo.create(workspace.id, "Local")?;
     environment_repo.update_variables(
         environment.id,
         r#"{"baseUrl":"https://api.example.test","token":"demo-token"}"#,
