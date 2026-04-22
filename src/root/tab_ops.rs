@@ -16,6 +16,31 @@ use gpui_component::{
 };
 
 impl AppRoot {
+    pub(crate) fn create_workspace(&mut self, cx: &mut Context<Self>) -> Result<(), String> {
+        let services = services(cx);
+        let workspaces = services
+            .repos
+            .workspace
+            .list()
+            .map_err(|err| format!("failed to list workspaces: {err}"))?;
+        let name = next_workspace_name(
+            &workspaces
+                .iter()
+                .map(|workspace| workspace.name.clone())
+                .collect::<Vec<_>>(),
+        );
+        let workspace = services
+            .repos
+            .workspace
+            .create(&name)
+            .map_err(|err| format!("failed to create workspace: {err}"))?;
+        drop(services);
+
+        self.refresh_catalog(cx);
+        self.open_item(ItemKey::workspace(workspace.id), cx);
+        Ok(())
+    }
+
     fn set_selected_workspace_for_item(&mut self, item_key: ItemKey, cx: &mut Context<Self>) {
         let services = services(cx);
         match services.session_restore.workspace_for_item(item_key) {
@@ -357,5 +382,21 @@ impl AppRoot {
                 window.push_notification(es_fluent::localize("delete_failed", None), cx);
             }
         }
+    }
+}
+
+fn next_workspace_name(existing_names: &[String]) -> String {
+    let base = es_fluent::localize("workspace_default_name", None);
+    if !existing_names.iter().any(|name| name == &base) {
+        return base.to_string();
+    }
+
+    let mut index = 2;
+    loop {
+        let candidate = format!("{base} {index}");
+        if !existing_names.iter().any(|name| name == &candidate) {
+            return candidate;
+        }
+        index += 1;
     }
 }

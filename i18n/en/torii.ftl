@@ -82,6 +82,7 @@ root_navigation = Navigation
 ## Sidebar
 
 sidebar_workspaces = Workspaces
+sidebar_new_workspace = New Workspace
 sidebar_collections = Collections
 sidebar_environments = Environments
 sidebar_utilities = Utilities
@@ -105,6 +106,7 @@ empty_state_no_tab_body = Choose an item from the sidebar to open it in a tab.
 ## Workspace Tab
 
 workspace_tab_subtitle = Workspace overview
+workspace_default_name = Workspace
 workspace_tab_collections = Collections
 workspace_tab_requests = Requests
 workspace_tab_environments = Environments

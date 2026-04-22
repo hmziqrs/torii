@@ -122,40 +122,65 @@ impl AppRoot {
                             .border_0()
                             .child(
                                 SidebarGroup::new(es_fluent::localize("sidebar_workspaces", None))
-                                    .child(SidebarMenu::new().children(
-                                        self.catalog.workspaces.iter().map(|workspace| {
-                                            let item_key = ItemKey::workspace(workspace.id);
-                                            let weak_root = weak_root.clone();
-                                            SidebarMenuItem::new(workspace.name.clone())
-                                                .icon(Icon::new(IconName::Inbox).small())
-                                                .active(
-                                                    active_key == Some(item_key)
-                                                        || selected_workspace_id
-                                                            == Some(workspace.id),
-                                                )
-                                                .on_click(cx.listener(move |this, _, _, cx| {
-                                                    this.open_item(item_key, cx);
-                                                }))
-                                                .context_menu(move |menu, _, _| {
+                                    .child(
+                                        SidebarMenu::new().children(
+                                            std::iter::once(
+                                                SidebarMenuItem::new(es_fluent::localize(
+                                                    "sidebar_new_workspace",
+                                                    None,
+                                                ))
+                                                .icon(Icon::new(IconName::Plus).small())
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    if let Err(err) = this.create_workspace(cx) {
+                                                        tracing::error!(
+                                                            "failed to create workspace: {err}"
+                                                        );
+                                                    }
+                                                })),
+                                            )
+                                            .chain(self.catalog.workspaces.iter().map(
+                                                |workspace| {
+                                                    let item_key = ItemKey::workspace(workspace.id);
                                                     let weak_root = weak_root.clone();
-                                                    menu.item(
-                                                        PopupMenuItem::new(es_fluent::localize(
-                                                            "menu_delete",
-                                                            None,
+                                                    SidebarMenuItem::new(workspace.name.clone())
+                                                        .icon(Icon::new(IconName::Inbox).small())
+                                                        .active(
+                                                            active_key == Some(item_key)
+                                                                || selected_workspace_id
+                                                                    == Some(workspace.id),
+                                                        )
+                                                        .on_click(cx.listener(
+                                                            move |this, _, _, cx| {
+                                                                this.open_item(item_key, cx);
+                                                            },
                                                         ))
-                                                        .icon(Icon::new(IconName::Close))
-                                                        .on_click(move |_, window, cx| {
-                                                            let _ =
-                                                                weak_root.update(cx, |this, cx| {
-                                                                    this.delete_item(
-                                                                        item_key, window, cx,
+                                                        .context_menu(move |menu, _, _| {
+                                                            let weak_root = weak_root.clone();
+                                                            menu.item(
+                                                                PopupMenuItem::new(
+                                                                    es_fluent::localize(
+                                                                        "menu_delete",
+                                                                        None,
+                                                                    ),
+                                                                )
+                                                                .icon(Icon::new(IconName::Close))
+                                                                .on_click(move |_, window, cx| {
+                                                                    let _ = weak_root.update(
+                                                                        cx,
+                                                                        |this, cx| {
+                                                                            this.delete_item(
+                                                                                item_key, window,
+                                                                                cx,
+                                                                            );
+                                                                        },
                                                                     );
-                                                                });
-                                                        }),
-                                                    )
-                                                })
-                                        }),
-                                    )),
+                                                                }),
+                                                            )
+                                                        })
+                                                },
+                                            )),
+                                        ),
+                                    ),
                             )
                             .when_some(self.catalog.selected_workspace(), |sidebar, workspace| {
                                 // Collections section (gated)
