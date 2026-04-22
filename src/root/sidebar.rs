@@ -426,8 +426,23 @@ fn render_folder_menu_item(
         }))
         .context_menu(move |menu, _, _| {
             let weak_root = weak_root.clone();
+            let weak_root_new_request = weak_root.clone();
             let weak_root_new = weak_root.clone();
             menu.item(
+                PopupMenuItem::new(es_fluent::localize("menu_new_request", None))
+                    .icon(Icon::new(IconName::Plus))
+                    .on_click(move |_, window, cx| {
+                        let _ = weak_root_new_request.update(cx, |this, cx| {
+                            this.open_draft_request_in_folder(
+                                collection_id_for_new,
+                                parent_folder_id_for_new,
+                                window,
+                                cx,
+                            );
+                        });
+                    }),
+            )
+            .item(
                 PopupMenuItem::new(es_fluent::localize("menu_new_folder", None))
                     .icon(Icon::new(IconName::Plus))
                     .on_click(move |_, window, cx| {

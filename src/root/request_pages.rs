@@ -2,7 +2,7 @@ use super::{AppRoot, services};
 use crate::{
     domain::{
         history::HistoryState,
-        ids::{CollectionId, RequestDraftId},
+        ids::{CollectionId, FolderId, RequestDraftId},
         response::{
             BodyRef, PhaseTimings, ResponseBudgets, ResponseMetaV2, ResponseSizeBreakdown,
             ResponseSummary, normalize_unix_ms,
@@ -180,8 +180,36 @@ impl AppRoot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_draft_request_with_parent(collection_id, None, window, cx);
+    }
+
+    /// Open a new draft request tab under the given folder.
+    pub fn open_draft_request_in_folder(
+        &mut self,
+        collection_id: CollectionId,
+        parent_folder_id: FolderId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_draft_request_with_parent(collection_id, Some(parent_folder_id), window, cx);
+    }
+
+    fn open_draft_request_with_parent(
+        &mut self,
+        collection_id: CollectionId,
+        parent_folder_id: Option<FolderId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let draft_id = RequestDraftId::new();
         let page = cx.new(|cx| request_tab::RequestTabView::new_draft(collection_id, window, cx));
+        if parent_folder_id.is_some() {
+            page.update(cx, |tab, cx| {
+                tab.editor_mut().draft_mut().parent_folder_id = parent_folder_id;
+                tab.editor_mut().refresh_save_status();
+                tab.mark_draft_dirty(cx);
+            });
+        }
 
         // Observe entity for draft→persisted transition and catalog refresh.
         // Track identity + revision so we only reload the catalog when structural

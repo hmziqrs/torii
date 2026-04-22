@@ -8,6 +8,7 @@ use torii::{
     repos::{
         collection_repo::{CollectionRepository, SqliteCollectionRepository},
         environment_repo::{EnvironmentRepository, SqliteEnvironmentRepository},
+        folder_repo::{FolderRepository, SqliteFolderRepository},
         request_repo::{RequestRepoRef, SqliteRequestRepository},
         workspace_repo::{SqliteWorkspaceRepository, WorkspaceRepository},
     },
@@ -132,6 +133,40 @@ fn environments_are_isolated_by_workspace() -> Result<()> {
     assert_eq!(b_envs[0].workspace_id, ws_b.id);
     assert_eq!(a_envs[0].name, "Env A");
     assert_eq!(b_envs[0].name, "Env B");
+
+    Ok(())
+}
+
+#[test]
+fn draft_save_with_parent_folder_persists_parent_link() -> Result<()> {
+    let (_paths, db) = common::test_database("draft-save-parent-folder")?;
+    let db = Arc::new(db);
+
+    let workspace_repo = SqliteWorkspaceRepository::new(db.clone());
+    let collection_repo = SqliteCollectionRepository::new(db.clone());
+    let folder_repo = SqliteFolderRepository::new(db.clone());
+    let request_repo: RequestRepoRef = Arc::new(SqliteRequestRepository::new(db.clone()));
+
+    let workspace = workspace_repo.create("Workspace Parent")?;
+    let collection = collection_repo.create(workspace.id, "Collection Parent")?;
+    let folder = folder_repo.create(collection.id, None, "Folder Parent")?;
+
+    let draft = RequestItem::new(
+        collection.id,
+        Some(folder.id),
+        "Nested Draft",
+        "GET",
+        "/nested",
+        0,
+    );
+    let saved = persist_new_draft_request(&request_repo, &draft)?;
+    let loaded = request_repo
+        .get(saved.id)?
+        .expect("saved nested request should exist");
+
+    assert_eq!(loaded.collection_id, collection.id);
+    assert_eq!(loaded.parent_folder_id, Some(folder.id));
+    assert_eq!(loaded.name, "Nested Draft");
 
     Ok(())
 }
