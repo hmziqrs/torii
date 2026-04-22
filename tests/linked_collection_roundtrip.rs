@@ -15,8 +15,8 @@ use torii::{
         request::RequestItem,
     },
     infra::linked_collection_format::{
-        COLLECTION_META_FILE, LinkedCollectionState, LinkedSiblingId, ensure_not_reserved_name,
-        read_linked_collection, write_linked_collection,
+        COLLECTION_META_FILE, LINKED_META_DIR, LinkedCollectionState, LinkedSiblingId,
+        ensure_not_reserved_name, read_linked_collection, write_linked_collection,
     },
 };
 
@@ -167,7 +167,11 @@ fn linked_collection_auto_initializes_missing_collection_meta() -> Result<()> {
     assert!(state.folders.is_empty());
     assert!(state.requests.is_empty());
     assert!(state.environments.is_empty());
-    assert!(root.join(COLLECTION_META_FILE).exists());
+    assert!(
+        root.join(LINKED_META_DIR)
+            .join(COLLECTION_META_FILE)
+            .exists()
+    );
 
     Ok(())
 }
@@ -199,7 +203,11 @@ fn linked_collection_auto_init_bootstraps_existing_folder_layout() -> Result<()>
     )?;
 
     let state = read_linked_collection(&root, &collection)?;
-    assert!(root.join(COLLECTION_META_FILE).exists());
+    assert!(
+        root.join(LINKED_META_DIR)
+            .join(COLLECTION_META_FILE)
+            .exists()
+    );
     assert_eq!(state.folders.len(), 1);
     let folder = &state.folders[0];
     assert_eq!(folder.name, "users");

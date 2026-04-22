@@ -125,7 +125,7 @@ fn collection_store_resolves_managed_and_linked_by_collection_id() -> Result<()>
     assert_eq!(linked_env_count, 0);
 
     // Linked collection writes should be persisted on disk.
-    let control_path = linked_root.join(".collection.json");
+    let control_path = linked_root.join(".torii").join("collection.json");
     assert!(control_path.exists());
     let linked_request_files = std::fs::read_dir(&linked_root)?
         .filter_map(|entry| entry.ok())

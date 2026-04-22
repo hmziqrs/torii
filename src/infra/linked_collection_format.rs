@@ -15,7 +15,8 @@ use crate::domain::{
     request::RequestItem,
 };
 
-pub const COLLECTION_META_FILE: &str = ".collection.json";
+pub const LINKED_META_DIR: &str = ".torii";
+pub const COLLECTION_META_FILE: &str = "collection.json";
 pub const REQUEST_FILE_EXT: &str = ".request.json";
 pub const ENV_FILE_EXT: &str = ".env.json";
 pub const FORMAT_VERSION: u32 = 1;
@@ -104,7 +105,13 @@ pub fn write_linked_collection(root: &Path, state: &LinkedCollectionState) -> Re
             })
             .collect(),
     };
-    write_json_file(&root.join(COLLECTION_META_FILE), &collection_meta)?;
+    fs::create_dir_all(collection_meta_dir(root)).with_context(|| {
+        format!(
+            "failed to create linked metadata dir {}",
+            collection_meta_dir(root).display()
+        )
+    })?;
+    write_json_file(&collection_meta_path(root), &collection_meta)?;
 
     for request in &state.requests {
         ensure_not_reserved_name(&request.name)?;
@@ -143,8 +150,7 @@ pub fn read_linked_collection(
     collection: &Collection,
 ) -> Result<LinkedCollectionState> {
     ensure_collection_meta_exists(root, collection)?;
-    let collection_meta_path = root.join(COLLECTION_META_FILE);
-    let collection_meta: CollectionMetaFile = read_json_file(&collection_meta_path)?;
+    let collection_meta: CollectionMetaFile = read_json_file(&collection_meta_path(root))?;
     if collection_meta.format_version != FORMAT_VERSION {
         return Err(anyhow!(
             "unsupported linked format version {}",
@@ -519,14 +525,26 @@ fn read_environment_files_in_dir(
 }
 
 fn ensure_collection_meta_exists(root: &Path, collection: &Collection) -> Result<()> {
-    let meta_path = root.join(COLLECTION_META_FILE);
+    let meta_path = collection_meta_path(root);
     if meta_path.exists() {
         return Ok(());
     }
-    fs::create_dir_all(root)
-        .with_context(|| format!("failed to create linked root {}", root.display()))?;
+    fs::create_dir_all(collection_meta_dir(root)).with_context(|| {
+        format!(
+            "failed to create linked metadata dir {}",
+            collection_meta_dir(root).display()
+        )
+    })?;
     let initial = bootstrap_collection_meta_from_fs(root, collection)?;
     write_json_file(&meta_path, &initial)
+}
+
+fn collection_meta_dir(root: &Path) -> PathBuf {
+    root.join(LINKED_META_DIR)
+}
+
+fn collection_meta_path(root: &Path) -> PathBuf {
+    collection_meta_dir(root).join(COLLECTION_META_FILE)
 }
 
 fn bootstrap_collection_meta_from_fs(
