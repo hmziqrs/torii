@@ -226,3 +226,104 @@ fn collection_and_request_mutations_compact_source_order() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn deleting_collection_cascades_descendants_without_dangling_references() -> Result<()> {
+    let (_paths, db) = common::test_database("delete-collection-cascade-dangling")?;
+    let db = Arc::new(db);
+
+    let workspace_repo = SqliteWorkspaceRepository::new(db.clone());
+    let collection_repo = SqliteCollectionRepository::new(db.clone());
+    let folder_repo = SqliteFolderRepository::new(db.clone());
+    let request_repo = SqliteRequestRepository::new(db.clone());
+
+    let workspace = workspace_repo.create("Workspace")?;
+    let collection_a = collection_repo.create(workspace.id, "Collection A")?;
+    let collection_b = collection_repo.create(workspace.id, "Collection B")?;
+
+    let folder_root = folder_repo.create(collection_a.id, None, "Root")?;
+    let folder_child = folder_repo.create(collection_a.id, Some(folder_root.id), "Child")?;
+    let request_a = request_repo.create(
+        collection_a.id,
+        Some(folder_root.id),
+        "Req A",
+        "GET",
+        "https://a.test",
+    )?;
+    let request_b = request_repo.create(
+        collection_a.id,
+        Some(folder_child.id),
+        "Req B",
+        "GET",
+        "https://b.test",
+    )?;
+
+    let keep_folder = folder_repo.create(collection_b.id, None, "Keep")?;
+    let keep_request = request_repo.create(
+        collection_b.id,
+        Some(keep_folder.id),
+        "Keep Req",
+        "GET",
+        "https://keep.test",
+    )?;
+
+    collection_repo.delete(collection_a.id)?;
+
+    assert!(folder_repo.get(folder_root.id)?.is_none());
+    assert!(folder_repo.get(folder_child.id)?.is_none());
+    assert!(request_repo.get(request_a.id)?.is_none());
+    assert!(request_repo.get(request_b.id)?.is_none());
+
+    assert!(folder_repo.get(keep_folder.id)?.is_some());
+    assert!(request_repo.get(keep_request.id)?.is_some());
+
+    let dangling_folder_collection: i64 = db.block_on(async {
+        sqlx::query_scalar(
+            "SELECT COUNT(*)
+             FROM folders f
+             LEFT JOIN collections c ON c.id = f.collection_id
+             WHERE c.id IS NULL",
+        )
+        .fetch_one(db.pool())
+        .await
+    })?;
+    assert_eq!(dangling_folder_collection, 0);
+
+    let dangling_folder_parent: i64 = db.block_on(async {
+        sqlx::query_scalar(
+            "SELECT COUNT(*)
+             FROM folders child
+             LEFT JOIN folders parent ON parent.id = child.parent_folder_id
+             WHERE child.parent_folder_id IS NOT NULL AND parent.id IS NULL",
+        )
+        .fetch_one(db.pool())
+        .await
+    })?;
+    assert_eq!(dangling_folder_parent, 0);
+
+    let dangling_request_collection: i64 = db.block_on(async {
+        sqlx::query_scalar(
+            "SELECT COUNT(*)
+             FROM requests r
+             LEFT JOIN collections c ON c.id = r.collection_id
+             WHERE c.id IS NULL",
+        )
+        .fetch_one(db.pool())
+        .await
+    })?;
+    assert_eq!(dangling_request_collection, 0);
+
+    let dangling_request_parent: i64 = db.block_on(async {
+        sqlx::query_scalar(
+            "SELECT COUNT(*)
+             FROM requests r
+             LEFT JOIN folders f ON f.id = r.parent_folder_id
+             WHERE r.parent_folder_id IS NOT NULL AND f.id IS NULL",
+        )
+        .fetch_one(db.pool())
+        .await
+    })?;
+    assert_eq!(dangling_request_parent, 0);
+
+    Ok(())
+}

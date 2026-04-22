@@ -317,12 +317,25 @@ pub(super) fn render_collection_menu_item(
         .context_menu(move |menu, _, _| {
             let weak_root = weak_root.clone();
             let weak_root_new = weak_root.clone();
+            let weak_root_new_folder = weak_root.clone();
             menu.item(
                 PopupMenuItem::new(es_fluent::localize("menu_new_request", None))
                     .icon(Icon::new(IconName::Plus))
                     .on_click(move |_, window, cx| {
                         let _ = weak_root_new.update(cx, |this, cx| {
                             this.open_draft_request(collection_id_for_new, window, cx);
+                        });
+                    }),
+            )
+            .item(
+                PopupMenuItem::new(es_fluent::localize("menu_new_folder", None))
+                    .icon(Icon::new(IconName::Plus))
+                    .on_click(move |_, window, cx| {
+                        let _ = weak_root_new_folder.update(cx, |this, cx| {
+                            if let Err(err) = this.create_folder(collection_id_for_new, None, cx) {
+                                window.push_notification(err.clone(), cx);
+                                tracing::error!("failed to create folder: {err}");
+                            }
                         });
                     }),
             )
@@ -400,6 +413,8 @@ fn render_folder_menu_item(
     cx: &mut gpui::Context<AppRoot>,
 ) -> SidebarMenuItem {
     let folder_key = ItemKey::folder(folder.folder.id);
+    let collection_id_for_new = folder.folder.collection_id;
+    let parent_folder_id_for_new = folder.folder.id;
     let weak_root = cx.entity().downgrade();
     SidebarMenuItem::new(folder.folder.name.clone())
         .icon(Icon::new(IconName::Folder).small())
@@ -411,7 +426,24 @@ fn render_folder_menu_item(
         }))
         .context_menu(move |menu, _, _| {
             let weak_root = weak_root.clone();
+            let weak_root_new = weak_root.clone();
             menu.item(
+                PopupMenuItem::new(es_fluent::localize("menu_new_folder", None))
+                    .icon(Icon::new(IconName::Plus))
+                    .on_click(move |_, window, cx| {
+                        let _ = weak_root_new.update(cx, |this, cx| {
+                            if let Err(err) = this.create_folder(
+                                collection_id_for_new,
+                                Some(parent_folder_id_for_new),
+                                cx,
+                            ) {
+                                window.push_notification(err.clone(), cx);
+                                tracing::error!("failed to create folder: {err}");
+                            }
+                        });
+                    }),
+            )
+            .item(
                 PopupMenuItem::new(es_fluent::localize("menu_delete", None))
                     .icon(Icon::new(IconName::Close))
                     .on_click(move |_, window, cx| {

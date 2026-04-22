@@ -1,6 +1,10 @@
 use super::{AppRoot, services};
 use crate::{
-    domain::{ids::RequestId, item_id::ItemId},
+    domain::{
+        collection::CollectionStorageKind,
+        ids::{CollectionId, FolderId, RequestId},
+        item_id::ItemId,
+    },
     session::{
         item_key::{ItemKey, ItemKind, TabKey},
         request_editor_state::EditorIdentity,
@@ -104,6 +108,52 @@ impl AppRoot {
 
         self.refresh_catalog(cx);
         self.open_item(ItemKey::environment(environment.id), cx);
+        Ok(())
+    }
+
+    pub(crate) fn create_folder(
+        &mut self,
+        collection_id: CollectionId,
+        parent_folder_id: Option<FolderId>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let services = services(cx);
+        let collection = services
+            .repos
+            .collection
+            .get(collection_id)
+            .map_err(|err| format!("failed to load collection: {err}"))?
+            .ok_or_else(|| "collection no longer exists".to_string())?;
+        if collection.storage_kind == CollectionStorageKind::Linked {
+            return Err(es_fluent::localize(
+                "create_folder_linked_unsupported",
+                None,
+            ));
+        }
+
+        let folders = services
+            .repos
+            .folder
+            .list_by_collection(collection_id)
+            .map_err(|err| format!("failed to list folders: {err}"))?;
+        let sibling_names = folders
+            .iter()
+            .filter(|folder| folder.parent_folder_id == parent_folder_id)
+            .map(|folder| folder.name.clone())
+            .collect::<Vec<_>>();
+        let name = next_item_name(
+            es_fluent::localize("folder_default_name", None),
+            &sibling_names,
+        );
+        let folder = services
+            .repos
+            .folder
+            .create(collection_id, parent_folder_id, &name)
+            .map_err(|err| format!("failed to create folder: {err}"))?;
+        drop(services);
+
+        self.refresh_catalog(cx);
+        self.open_item(ItemKey::folder(folder.id), cx);
         Ok(())
     }
 

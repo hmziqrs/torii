@@ -110,6 +110,7 @@ empty_state_no_tab_body = 从侧边栏选择一个项目以在标签页中打开
 workspace_tab_subtitle = 工作区概览
 workspace_default_name = 工作区
 collection_default_name = 集合
+folder_default_name = 文件夹
 environment_default_name = 环境
 workspace_tab_collections = 集合
 workspace_tab_requests = 请求
@@ -118,6 +119,7 @@ workspace_tab_collections_heading = 可用集合
 
 create_collection_no_workspace = 请先选择或创建工作区。
 create_environment_no_workspace = 请先选择或创建工作区。
+create_folder_linked_unsupported = 暂不支持在已链接集合中创建文件夹。
 
 ## Collection Tab
 
@@ -165,6 +167,7 @@ menu_theme = 主题
 menu_delete = 删除
 menu_duplicate = 复制
 menu_new_request = 新建请求
+menu_new_folder = 新建文件夹
 
 delete_success = 项目已删除。
 delete_failed = 删除失败。

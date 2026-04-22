@@ -110,6 +110,7 @@ empty_state_no_tab_body = Choose an item from the sidebar to open it in a tab.
 workspace_tab_subtitle = Workspace overview
 workspace_default_name = Workspace
 collection_default_name = Collection
+folder_default_name = Folder
 environment_default_name = Environment
 workspace_tab_collections = Collections
 workspace_tab_requests = Requests
@@ -118,6 +119,7 @@ workspace_tab_collections_heading = Available collections
 
 create_collection_no_workspace = Select or create a workspace first.
 create_environment_no_workspace = Select or create a workspace first.
+create_folder_linked_unsupported = Folder creation for linked collections is not supported yet.
 
 ## Collection Tab
 
@@ -165,6 +167,7 @@ menu_theme = Theme
 menu_delete = Delete
 menu_duplicate = Duplicate
 menu_new_request = New Request
+menu_new_folder = New Folder
 
 delete_success = Item deleted.
 delete_failed = Delete failed.
