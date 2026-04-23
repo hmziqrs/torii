@@ -82,7 +82,10 @@ impl AppRoot {
                                                     .text_size(px(8.))
                                                     .text_center()
                                                     .line_height(relative(1.))
-                                                    .child("Collect"),
+                                                    .child(es_fluent::localize(
+                                                        "sidebar_rail_collections_short",
+                                                        None,
+                                                    )),
                                             ),
                                     ),
                             )
@@ -112,7 +115,10 @@ impl AppRoot {
                                                     .text_size(px(8.))
                                                     .text_center()
                                                     .line_height(relative(1.))
-                                                    .child("Env"),
+                                                    .child(es_fluent::localize(
+                                                        "sidebar_rail_environments_short",
+                                                        None,
+                                                    )),
                                             ),
                                     ),
                             ),
@@ -400,10 +406,11 @@ pub(super) fn render_collection_menu_item(
                 ),
             };
             let tooltip = format!(
-                "{}\n{}\n{}",
+                "{}\n{}\n{}\n{}",
                 es_fluent::localize("sidebar_linked_collection_badge_tooltip", None),
                 root_line,
                 status_line,
+                es_fluent::localize("sidebar_linked_collection_badge_actions_hint", None),
             );
             let collection_id = collection.collection.id;
             item.suffix(move |_, _| {
@@ -423,7 +430,7 @@ pub(super) fn render_collection_menu_item(
             let weak_root = weak_root.clone();
             let weak_root_new = weak_root.clone();
             let weak_root_new_folder = weak_root.clone();
-            menu.item(
+            let menu = menu.item(
                 PopupMenuItem::new(es_fluent::localize("menu_new_request", None))
                     .icon(Icon::new(IconName::Plus))
                     .on_click(move |_, window, cx| {
@@ -431,8 +438,8 @@ pub(super) fn render_collection_menu_item(
                             this.open_auto_saved_request(collection_id_for_new, window, cx);
                         });
                     }),
-            )
-            .item(
+            );
+            let menu = menu.item(
                 PopupMenuItem::new(es_fluent::localize("menu_new_folder", None))
                     .icon(Icon::new(IconName::Plus))
                     .on_click(move |_, window, cx| {
@@ -443,8 +450,25 @@ pub(super) fn render_collection_menu_item(
                             }
                         });
                     }),
-            )
-            .item(
+            );
+            let menu = if let Some(linked_root_path) = linked_root_path.clone() {
+                menu.item(
+                    PopupMenuItem::new(es_fluent::localize("menu_copy_linked_root_path", None))
+                        .icon(Icon::new(IconName::Copy))
+                        .on_click(move |_, window, cx| {
+                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                linked_root_path.clone(),
+                            ));
+                            window.push_notification(
+                                es_fluent::localize("copy_linked_root_path_success", None),
+                                cx,
+                            );
+                        }),
+                )
+            } else {
+                menu
+            };
+            menu.item(
                 PopupMenuItem::new(es_fluent::localize("menu_delete", None))
                     .icon(Icon::new(IconName::Close))
                     .on_click(move |_, window, cx| {

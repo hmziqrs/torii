@@ -15,7 +15,7 @@ use crate::{
     },
     views::item_tabs::request_tab,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use gpui::prelude::*;
 use gpui::{Context, Entity, Window, div};
@@ -379,7 +379,7 @@ impl AppRoot {
             .ok()
             .flatten()
         else {
-            window.push_notification("workspace no longer exists", cx);
+            window.push_notification(es_fluent::localize("workspace_missing", None), cx);
             return;
         };
 
@@ -393,7 +393,10 @@ impl AppRoot {
             let weak_root_save = weak_root.clone();
             let input_for_save = input.clone();
             dialog
-                .title("Workspace Variables (JSON)")
+                .title(es_fluent::localize(
+                    "workspace_variables_dialog_title",
+                    None,
+                ))
                 .overlay_closable(true)
                 .keyboard(true)
                 .child(
@@ -407,13 +410,13 @@ impl AppRoot {
                         .gap_2()
                         .child(
                             Button::new("workspace-vars-cancel")
-                                .label("Cancel")
+                                .label(es_fluent::localize("dialog_cancel", None))
                                 .on_click(move |_, window, cx| window.close_dialog(cx)),
                         )
                         .child(
                             Button::new("workspace-vars-save")
                                 .primary()
-                                .label("Save")
+                                .label(es_fluent::localize("dialog_save", None))
                                 .on_click(move |_, window, cx| {
                                     let payload = input_for_save.read(cx).value().to_string();
                                     let parsed =
@@ -425,7 +428,7 @@ impl AppRoot {
                                     );
                                     if !is_valid {
                                         window.push_notification(
-                                            "Variables JSON must be an array or object",
+                                            es_fluent::localize("variables_json_invalid", None),
                                             cx,
                                         );
                                         return;
@@ -444,7 +447,11 @@ impl AppRoot {
                                             Err(err) => {
                                                 window.push_notification(
                                                     format!(
-                                                        "failed to save workspace variables: {err}"
+                                                        "{}: {err}",
+                                                        es_fluent::localize(
+                                                            "workspace_variables_save_failed",
+                                                            None
+                                                        )
                                                     ),
                                                     cx,
                                                 );
@@ -473,7 +480,7 @@ impl AppRoot {
             .ok()
             .flatten()
         else {
-            window.push_notification("environment no longer exists", cx);
+            window.push_notification(es_fluent::localize("environment_missing", None), cx);
             return;
         };
 
@@ -487,7 +494,10 @@ impl AppRoot {
             let weak_root_save = weak_root.clone();
             let input_for_save = input.clone();
             dialog
-                .title("Environment Variables (JSON)")
+                .title(es_fluent::localize(
+                    "environment_variables_dialog_title",
+                    None,
+                ))
                 .overlay_closable(true)
                 .keyboard(true)
                 .child(
@@ -501,23 +511,25 @@ impl AppRoot {
                         .gap_2()
                         .child(
                             Button::new("environment-vars-cancel")
-                                .label("Cancel")
+                                .label(es_fluent::localize("dialog_cancel", None))
                                 .on_click(move |_, window, cx| window.close_dialog(cx)),
                         )
                         .child(
                             Button::new("environment-vars-save")
                                 .primary()
-                                .label("Save")
+                                .label(es_fluent::localize("dialog_save", None))
                                 .on_click(move |_, window, cx| {
-                                    let payload =
-                                        input_for_save.read(cx).value().to_string();
+                                    let payload = input_for_save.read(cx).value().to_string();
                                     let parsed =
                                         serde_json::from_str::<serde_json::Value>(&payload);
-                                    let is_valid =
-                                        matches!(parsed, Ok(serde_json::Value::Array(_)) | Ok(serde_json::Value::Object(_)));
+                                    let is_valid = matches!(
+                                        parsed,
+                                        Ok(serde_json::Value::Array(_))
+                                            | Ok(serde_json::Value::Object(_))
+                                    );
                                     if !is_valid {
                                         window.push_notification(
-                                            "Variables JSON must be an array or object",
+                                            es_fluent::localize("variables_json_invalid", None),
                                             cx,
                                         );
                                         return;
@@ -536,7 +548,11 @@ impl AppRoot {
                                             Err(err) => {
                                                 window.push_notification(
                                                     format!(
-                                                        "failed to save environment variables: {err}"
+                                                        "{}: {err}",
+                                                        es_fluent::localize(
+                                                            "environment_variables_save_failed",
+                                                            None
+                                                        )
                                                     ),
                                                     cx,
                                                 );
@@ -933,6 +949,18 @@ impl AppRoot {
     ) {
         let services = services(cx);
         let close_keys = self.catalog.delete_closure(item_key);
+        let draft_close_keys = draft_descendant_close_keys(
+            &close_keys,
+            self.request_draft_pages
+                .iter()
+                .map(|(draft_id, page)| DraftLocation {
+                    draft_id: *draft_id,
+                    collection_id: page.read(cx).editor().draft().collection_id,
+                    parent_folder_id: page.read(cx).editor().draft().parent_folder_id,
+                }),
+        );
+        let mut all_close_keys = close_keys.clone();
+        all_close_keys.extend(draft_close_keys.iter().copied());
         let selected_workspace = services
             .session_restore
             .workspace_for_item(item_key)
@@ -980,7 +1008,7 @@ impl AppRoot {
                     .and_then(|workspaces| workspaces.first().map(|workspace| workspace.id));
 
                 self.session.update(cx, |session, cx| {
-                    session.close_tabs(&close_keys, cx);
+                    session.close_tabs(&all_close_keys, cx);
                     if let (ItemKind::Environment, Some(workspace_id)) =
                         (item_key.kind, selected_workspace)
                     {
@@ -994,6 +1022,16 @@ impl AppRoot {
                         session.set_selected_workspace(fallback_workspace, cx);
                     }
                 });
+                for key in draft_close_keys {
+                    if let Some(ItemId::RequestDraft(draft_id)) = key.id {
+                        if let Some(page) = self.request_draft_pages.remove(&draft_id) {
+                            let _ = page.update(cx, |tab, cx| {
+                                tab.cancel_send(cx);
+                                tab.release_html_webview(cx);
+                            });
+                        }
+                    }
+                }
                 self.refresh_catalog(cx);
                 self.persist_session_state(cx);
                 window.push_notification(es_fluent::localize("delete_success", None), cx);
@@ -1030,6 +1068,44 @@ impl AppRoot {
     }
 }
 
+#[derive(Clone, Copy)]
+struct DraftLocation {
+    draft_id: crate::domain::ids::RequestDraftId,
+    collection_id: CollectionId,
+    parent_folder_id: Option<FolderId>,
+}
+
+fn draft_descendant_close_keys(
+    close_keys: &[ItemKey],
+    draft_locations: impl IntoIterator<Item = DraftLocation>,
+) -> Vec<ItemKey> {
+    let deleted_collections: HashSet<CollectionId> = close_keys
+        .iter()
+        .filter_map(|key| match key.id {
+            Some(ItemId::Collection(id)) => Some(id),
+            _ => None,
+        })
+        .collect();
+    let deleted_folders: HashSet<FolderId> = close_keys
+        .iter()
+        .filter_map(|key| match key.id {
+            Some(ItemId::Folder(id)) => Some(id),
+            _ => None,
+        })
+        .collect();
+
+    draft_locations
+        .into_iter()
+        .filter(|draft| {
+            deleted_collections.contains(&draft.collection_id)
+                || draft
+                    .parent_folder_id
+                    .is_some_and(|folder_id| deleted_folders.contains(&folder_id))
+        })
+        .map(|draft| ItemKey::request_draft(draft.draft_id))
+        .collect()
+}
+
 fn should_reset_selected_workspace_on_delete(
     item_key: ItemKey,
     selected_workspace_id: Option<WorkspaceId>,
@@ -1062,9 +1138,11 @@ fn next_item_name(base: String, existing_names: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::should_reset_selected_workspace_on_delete;
+    use super::{
+        DraftLocation, draft_descendant_close_keys, should_reset_selected_workspace_on_delete,
+    };
     use crate::{
-        domain::ids::{CollectionId, WorkspaceId},
+        domain::ids::{CollectionId, FolderId, RequestDraftId, WorkspaceId},
         session::item_key::ItemKey,
     };
 
@@ -1098,5 +1176,81 @@ mod tests {
             Some(selected_workspace_id),
             Some(deleted_workspace_id),
         ));
+    }
+
+    #[test]
+    fn draft_descendant_closure_matches_deleted_collection() {
+        let deleted_collection = CollectionId::new();
+        let keep_collection = CollectionId::new();
+        let matching_draft = RequestDraftId::new();
+        let other_draft = RequestDraftId::new();
+
+        let close_keys = vec![ItemKey::collection(deleted_collection)];
+        let draft_keys = draft_descendant_close_keys(
+            &close_keys,
+            [
+                DraftLocation {
+                    draft_id: matching_draft,
+                    collection_id: deleted_collection,
+                    parent_folder_id: None,
+                },
+                DraftLocation {
+                    draft_id: other_draft,
+                    collection_id: keep_collection,
+                    parent_folder_id: None,
+                },
+            ],
+        );
+
+        assert_eq!(draft_keys, vec![ItemKey::request_draft(matching_draft)]);
+    }
+
+    #[test]
+    fn draft_descendant_closure_matches_deleted_folder() {
+        let collection_id = CollectionId::new();
+        let deleted_folder = FolderId::new();
+        let child_draft = RequestDraftId::new();
+        let root_draft = RequestDraftId::new();
+
+        let close_keys = vec![ItemKey::folder(deleted_folder)];
+        let draft_keys = draft_descendant_close_keys(
+            &close_keys,
+            [
+                DraftLocation {
+                    draft_id: child_draft,
+                    collection_id,
+                    parent_folder_id: Some(deleted_folder),
+                },
+                DraftLocation {
+                    draft_id: root_draft,
+                    collection_id,
+                    parent_folder_id: None,
+                },
+            ],
+        );
+
+        assert_eq!(draft_keys, vec![ItemKey::request_draft(child_draft)]);
+    }
+
+    #[test]
+    fn draft_descendant_closure_avoids_duplicates_when_both_match() {
+        let collection_id = CollectionId::new();
+        let folder_id = FolderId::new();
+        let draft_id = RequestDraftId::new();
+
+        let close_keys = vec![
+            ItemKey::collection(collection_id),
+            ItemKey::folder(folder_id),
+        ];
+        let draft_keys = draft_descendant_close_keys(
+            &close_keys,
+            [DraftLocation {
+                draft_id,
+                collection_id,
+                parent_folder_id: Some(folder_id),
+            }],
+        );
+
+        assert_eq!(draft_keys, vec![ItemKey::request_draft(draft_id)]);
     }
 }

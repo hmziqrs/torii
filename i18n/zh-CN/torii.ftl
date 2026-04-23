@@ -87,6 +87,8 @@ sidebar_new_collection = 新建集合
 sidebar_new_environment = 新建环境
 sidebar_collections = 集合
 sidebar_environments = 环境
+sidebar_rail_collections_short = 集合
+sidebar_rail_environments_short = 环境
 sidebar_environment_active_suffix = （已激活）
 sidebar_linked_collection_badge_tooltip = 已链接集合（Git）
 sidebar_linked_collection_badge_root = 根目录：
@@ -95,6 +97,7 @@ sidebar_linked_collection_badge_status = 状态：
 sidebar_linked_collection_badge_status_ok = 可用
 sidebar_linked_collection_badge_status_unavailable = 不可用
 sidebar_linked_collection_badge_status_missing_root = 缺少根路径
+sidebar_linked_collection_badge_actions_hint = 操作：打开集合菜单可使用已链接路径操作
 sidebar_utilities = 工具
 
 ## Tabs
@@ -140,6 +143,14 @@ create_collection_linked_root_not_directory = 已链接根目录必须是目录�
 create_collection_linked_init_failed = 初始化已链接集合磁盘结构失败
 create_environment_no_workspace = 请先选择或创建工作区。
 create_folder_linked_unsupported = 暂不支持在已链接集合中创建文件夹。
+workspace_missing = 工作区已不存在。
+environment_missing = 环境已不存在。
+workspace_variables_dialog_title = 工作区变量（JSON）
+environment_variables_dialog_title = 环境变量（JSON）
+dialog_save = 保存
+variables_json_invalid = 变量 JSON 必须是数组或对象。
+workspace_variables_save_failed = 保存工作区变量失败
+environment_variables_save_failed = 保存环境变量失败
 
 ## Collection Tab
 
@@ -189,9 +200,11 @@ menu_duplicate = 复制
 menu_new_request = 新建请求
 menu_new_folder = 新建文件夹
 menu_set_active_environment = 设为激活环境
+menu_copy_linked_root_path = 复制已链接根路径
 
 delete_success = 项目已删除。
 delete_failed = 删除失败。
+copy_linked_root_path_success = 已复制已链接根路径。
 
 ## TitleBar
 

@@ -87,6 +87,8 @@ sidebar_new_collection = New Collection
 sidebar_new_environment = New Environment
 sidebar_collections = Collections
 sidebar_environments = Environments
+sidebar_rail_collections_short = Collect
+sidebar_rail_environments_short = Env
 sidebar_environment_active_suffix = (Active)
 sidebar_linked_collection_badge_tooltip = Linked collection (Git-backed)
 sidebar_linked_collection_badge_root = Root:
@@ -95,6 +97,7 @@ sidebar_linked_collection_badge_status = Status:
 sidebar_linked_collection_badge_status_ok = available
 sidebar_linked_collection_badge_status_unavailable = unavailable
 sidebar_linked_collection_badge_status_missing_root = missing root path
+sidebar_linked_collection_badge_actions_hint = Actions: open collection menu for linked-path actions
 sidebar_utilities = Utilities
 
 ## Tabs
@@ -140,6 +143,14 @@ create_collection_linked_root_not_directory = Linked root path must be a directo
 create_collection_linked_init_failed = Failed to initialize linked collection on disk
 create_environment_no_workspace = Select or create a workspace first.
 create_folder_linked_unsupported = Folder creation for linked collections is not supported yet.
+workspace_missing = Workspace no longer exists.
+environment_missing = Environment no longer exists.
+workspace_variables_dialog_title = Workspace Variables (JSON)
+environment_variables_dialog_title = Environment Variables (JSON)
+dialog_save = Save
+variables_json_invalid = Variables JSON must be an array or object.
+workspace_variables_save_failed = Failed to save workspace variables
+environment_variables_save_failed = Failed to save environment variables
 
 ## Collection Tab
 
@@ -189,9 +200,11 @@ menu_duplicate = Duplicate
 menu_new_request = New Request
 menu_new_folder = New Folder
 menu_set_active_environment = Set Active Environment
+menu_copy_linked_root_path = Copy Linked Root Path
 
 delete_success = Item deleted.
 delete_failed = Delete failed.
+copy_linked_root_path_success = Linked root path copied.
 
 ## TitleBar
 
