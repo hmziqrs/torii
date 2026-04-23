@@ -148,6 +148,7 @@ environment_missing = Environment no longer exists.
 workspace_variables_dialog_title = Workspace Variables (JSON)
 environment_variables_dialog_title = Environment Variables (JSON)
 dialog_save = Save
+dialog_cancel = Cancel
 variables_json_invalid = Variables JSON must be an array or object.
 workspace_variables_save_failed = Failed to save workspace variables
 environment_variables_save_failed = Failed to save environment variables

@@ -148,6 +148,7 @@ environment_missing = 环境已不存在。
 workspace_variables_dialog_title = 工作区变量（JSON）
 environment_variables_dialog_title = 环境变量（JSON）
 dialog_save = 保存
+dialog_cancel = 取消
 variables_json_invalid = 变量 JSON 必须是数组或对象。
 workspace_variables_save_failed = 保存工作区变量失败
 environment_variables_save_failed = 保存环境变量失败
