@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use anyhow::{Result, anyhow};
 
@@ -84,6 +84,13 @@ impl VariableResolutionService {
             .collect();
         resolved.auth = resolve_auth(&request.auth, &vars);
         resolved.body = resolve_body(&request.body, &vars);
+        let missing = collect_missing_placeholders(&resolved);
+        if !missing.is_empty() {
+            let joined = missing.into_iter().collect::<Vec<_>>().join(", ");
+            return Err(anyhow!(
+                "missing variables: {joined}; checked scopes: request overrides -> active environment -> workspace"
+            ));
+        }
         Ok(resolved)
     }
 }
@@ -231,9 +238,77 @@ fn resolve_text(input: &str, vars: &HashMap<String, String>) -> String {
     out
 }
 
+fn collect_missing_placeholders(request: &RequestItem) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    collect_placeholders_in_text(&request.method, &mut out);
+    collect_placeholders_in_text(&request.url, &mut out);
+
+    for entry in &request.params {
+        collect_placeholders_in_text(&entry.key, &mut out);
+        collect_placeholders_in_text(&entry.value, &mut out);
+    }
+    for entry in &request.headers {
+        collect_placeholders_in_text(&entry.key, &mut out);
+        collect_placeholders_in_text(&entry.value, &mut out);
+    }
+
+    match &request.auth {
+        AuthType::None | AuthType::Bearer { .. } => {}
+        AuthType::Basic { username, .. } => {
+            collect_placeholders_in_text(username, &mut out);
+        }
+        AuthType::ApiKey { key_name, .. } => {
+            collect_placeholders_in_text(key_name, &mut out);
+        }
+    }
+
+    match &request.body {
+        BodyType::None | BodyType::BinaryFile { .. } => {}
+        BodyType::RawText { content } | BodyType::RawJson { content } => {
+            collect_placeholders_in_text(content, &mut out);
+        }
+        BodyType::UrlEncoded { entries } => {
+            for entry in entries {
+                collect_placeholders_in_text(&entry.key, &mut out);
+                collect_placeholders_in_text(&entry.value, &mut out);
+            }
+        }
+        BodyType::FormData {
+            text_fields,
+            file_fields: _,
+        } => {
+            for entry in text_fields {
+                collect_placeholders_in_text(&entry.key, &mut out);
+                collect_placeholders_in_text(&entry.value, &mut out);
+            }
+        }
+    }
+
+    out
+}
+
+fn collect_placeholders_in_text(value: &str, out: &mut BTreeSet<String>) {
+    let mut rest = value;
+    loop {
+        let Some(start) = rest.find("{{") else {
+            break;
+        };
+        let after_start = &rest[start + 2..];
+        let Some(end) = after_start.find("}}") else {
+            break;
+        };
+        let key = after_start[..end].trim();
+        if !key.is_empty() {
+            out.insert(key.to_string());
+        }
+        rest = &after_start[end + 2..];
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::resolve_text;
+    use super::{collect_missing_placeholders, resolve_text};
+    use crate::domain::request::RequestItem;
     use std::collections::HashMap;
 
     #[test]
@@ -251,5 +326,26 @@ mod tests {
         let vars = HashMap::new();
         let resolved = resolve_text("{{missing}}/users", &vars);
         assert_eq!(resolved, "{{missing}}/users");
+    }
+
+    #[test]
+    fn collect_missing_placeholders_extracts_unique_trimmed_keys() {
+        let mut request = RequestItem::new(
+            crate::domain::ids::CollectionId::new(),
+            None,
+            "Req",
+            "GET",
+            "{{ baseUrl }}/users/{{userId}}",
+            0,
+        );
+        request.headers = vec![crate::domain::request::KeyValuePair::new(
+            "X-Env",
+            "{{ env }} {{userId}}",
+        )];
+
+        let missing = collect_missing_placeholders(&request)
+            .into_iter()
+            .collect::<Vec<_>>();
+        assert_eq!(missing, vec!["baseUrl", "env", "userId"]);
     }
 }

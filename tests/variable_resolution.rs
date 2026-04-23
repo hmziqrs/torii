@@ -160,3 +160,40 @@ fn variable_resolution_supports_secret_values() -> Result<()> {
     assert_eq!(resolved.url, "https://secret.example/v1");
     Ok(())
 }
+
+#[test]
+fn variable_resolution_fails_preflight_for_missing_variables() -> Result<()> {
+    let (_paths, db) = common::test_database("variable-resolution-missing-preflight")?;
+    let workspace_repo = Arc::new(SqliteWorkspaceRepository::new(Arc::new(db.clone())));
+    let collection_repo = Arc::new(SqliteCollectionRepository::new(Arc::new(db.clone())));
+    let request_repo = Arc::new(SqliteRequestRepository::new(Arc::new(db.clone())));
+    let environment_repo = Arc::new(SqliteEnvironmentRepository::new(Arc::new(db)));
+
+    let workspace = workspace_repo.create("Workspace Missing")?;
+    let collection = collection_repo.create(workspace.id, "Main")?;
+    let request = request_repo.create(
+        collection.id,
+        None,
+        "Missing Vars",
+        "GET",
+        "{{baseUrl}}/users/{{userId}}",
+    )?;
+
+    let secret_store: Arc<dyn torii::infra::secrets::SecretStore> =
+        Arc::new(InMemorySecretStore::new());
+    let resolver = VariableResolutionService::new(
+        workspace_repo.clone(),
+        environment_repo.clone(),
+        secret_store,
+    );
+
+    let err = resolver
+        .resolve_request(&request, workspace.id, None)
+        .expect_err("expected missing variable preflight failure");
+    let msg = err.to_string();
+    assert!(msg.contains("missing variables"));
+    assert!(msg.contains("baseUrl"));
+    assert!(msg.contains("userId"));
+    assert!(msg.contains("checked scopes"));
+    Ok(())
+}
