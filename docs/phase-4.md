@@ -1182,7 +1182,7 @@ Required GPUI performance audit:
 - [ ] Drag/drop mutations are transactional and reject illegal targets
 - [ ] Workspace variables, environment variables, and request-local overrides all exist
 - [x] Linked collection rows display a right-aligned Git indicator without changing left-side primary icons
-- [ ] Hover/focus on the linked-collection Git indicator shows a popover/tooltip with root-path context and actions
+- [x] Hover/focus on the linked-collection Git indicator shows a popover/tooltip with root-path context and actions
 - [x] Linked collections support workspace-scoped environment creation/selection flow from the UI
 - [x] Active environment is session-scoped per workspace and restored on reopen
 - [x] Request send path resolves variables with deterministic precedence

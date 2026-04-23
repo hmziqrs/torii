@@ -4,17 +4,18 @@ use crate::{
     services::workspace_tree::{CollectionTree, FolderTree, LinkedCollectionHealth, TreeItem},
     session::{item_key::ItemKey, window_layout::SidebarSection},
 };
-use gpui::{div, prelude::*, px, relative};
+use gpui::{SharedString, div, prelude::*, px, relative};
 use gpui_component::{
     ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _, WindowExt as _,
     button::{Button, ButtonRounded, ButtonVariants as _},
     h_flex,
+    hover_card::HoverCard,
     menu::PopupMenuItem,
     scroll::ScrollableElement as _,
     sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem},
-    tooltip::Tooltip,
     v_flex,
 };
+use std::time::Duration;
 
 impl AppRoot {
     pub(super) fn render_sidebar(
@@ -405,22 +406,66 @@ pub(super) fn render_collection_menu_item(
                     IconName::Github,
                 ),
             };
-            let tooltip = format!(
-                "{}\n{}\n{}\n{}",
-                es_fluent::localize("sidebar_linked_collection_badge_tooltip", None),
-                root_line,
-                status_line,
-                es_fluent::localize("sidebar_linked_collection_badge_actions_hint", None),
-            );
             let collection_id = collection.collection.id;
+            let copy_button_path = linked_root_path.clone();
             item.suffix(move |_, _| {
-                div()
-                    .id(format!("linked-collection-badge-{}", collection_id))
-                    .child(Icon::new(icon_name.clone()).small())
-                    .tooltip({
-                        let tooltip = tooltip.clone();
-                        move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx)
-                    })
+                HoverCard::new(SharedString::from(format!(
+                    "linked-collection-badge-{collection_id}"
+                )))
+                .open_delay(Duration::from_millis(120))
+                .close_delay(Duration::from_millis(180))
+                .trigger(
+                    div()
+                        .id(format!("linked-collection-badge-trigger-{}", collection_id))
+                        .child(Icon::new(icon_name.clone()).small()),
+                )
+                .content({
+                    let root_line = root_line.clone();
+                    let status_line = status_line.clone();
+                    let copy_button_path = copy_button_path.clone();
+                        move |_, _window, _cx| {
+                        v_flex()
+                            .w(px(320.))
+                            .gap_2()
+                            .p_3()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .child(es_fluent::localize(
+                                        "sidebar_linked_collection_badge_tooltip",
+                                        None,
+                                    )),
+                            )
+                            .child(div().text_xs().child(root_line.clone()))
+                            .child(div().text_xs().child(status_line.clone()))
+                            .when_some(copy_button_path.clone(), |this, path| {
+                                this.child(
+                                    Button::new(format!(
+                                        "linked-collection-copy-root-path-{collection_id}"
+                                    ))
+                                    .xsmall()
+                                    .label(es_fluent::localize("menu_copy_linked_root_path", None))
+                                    .on_click(
+                                        move |_, window, cx| {
+                                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                                path.clone(),
+                                            ));
+                                            window.push_notification(
+                                                es_fluent::localize(
+                                                    "copy_linked_root_path_success",
+                                                    None,
+                                                ),
+                                                cx,
+                                            );
+                                        },
+                                    ),
+                                )
+                            })
+                            .into_any_element()
+                    }
+                })
+                .into_any_element()
             })
         })
         .on_click(cx.listener(move |this, _, _, cx| {
