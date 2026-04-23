@@ -91,6 +91,10 @@ sidebar_environment_active_suffix = （已激活）
 sidebar_linked_collection_badge_tooltip = 已链接集合（Git）
 sidebar_linked_collection_badge_root = 根目录：
 sidebar_linked_collection_badge_root_missing = 根目录：不可用
+sidebar_linked_collection_badge_status = 状态：
+sidebar_linked_collection_badge_status_ok = 可用
+sidebar_linked_collection_badge_status_unavailable = 不可用
+sidebar_linked_collection_badge_status_missing_root = 缺少根路径
 sidebar_utilities = 工具
 
 ## Tabs

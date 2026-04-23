@@ -35,7 +35,15 @@ pub struct WorkspaceTree {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CollectionTree {
     pub collection: Collection,
+    pub linked_health: Option<LinkedCollectionHealth>,
     pub children: Vec<TreeItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LinkedCollectionHealth {
+    Healthy,
+    MissingRootPath,
+    Unavailable { reason: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,22 +98,33 @@ fn build_workspace_tree(
 
     let mut collection_trees = Vec::with_capacity(collection_rows.len());
     for collection in collection_rows {
-        let (folder_rows, request_rows) = match collection.storage_kind {
+        let (linked_health, folder_rows, request_rows) = match collection.storage_kind {
             CollectionStorageKind::Managed => (
+                None,
                 folders.list_by_collection(collection.id)?,
                 requests.list_by_collection(collection.id)?,
             ),
             CollectionStorageKind::Linked => {
                 match collection.storage_config.linked_root_path.clone() {
                     Some(root) => match read_linked_collection(&root, &collection) {
-                        Ok(state) => (state.folders, state.requests),
+                        Ok(state) => (
+                            Some(LinkedCollectionHealth::Healthy),
+                            state.folders,
+                            state.requests,
+                        ),
                         Err(err) => {
                             tracing::warn!(
                                 collection_id = %collection.id,
                                 root = %root.display(),
                                 "failed to read linked collection tree: {err}"
                             );
-                            (Vec::new(), Vec::new())
+                            (
+                                Some(LinkedCollectionHealth::Unavailable {
+                                    reason: err.to_string(),
+                                }),
+                                Vec::new(),
+                                Vec::new(),
+                            )
                         }
                     },
                     None => {
@@ -113,13 +132,18 @@ fn build_workspace_tree(
                             collection_id = %collection.id,
                             "linked collection missing root path; rendering empty tree"
                         );
-                        (Vec::new(), Vec::new())
+                        (
+                            Some(LinkedCollectionHealth::MissingRootPath),
+                            Vec::new(),
+                            Vec::new(),
+                        )
                     }
                 }
             }
         };
         collection_trees.push(CollectionTree {
             collection,
+            linked_health,
             children: build_tree_items(&folder_rows, &request_rows, None),
         });
     }
@@ -596,6 +620,7 @@ mod tests {
                         ),
                         meta: RevisionMetadata::new_now(),
                     },
+                    linked_health: None,
                     children: vec![TreeItem::Folder(FolderTree {
                         folder: Folder {
                             id: folder_id,

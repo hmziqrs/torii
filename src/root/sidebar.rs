@@ -1,7 +1,7 @@
 use super::AppRoot;
 use crate::{
     domain::collection::CollectionStorageKind,
-    services::workspace_tree::{CollectionTree, FolderTree, TreeItem},
+    services::workspace_tree::{CollectionTree, FolderTree, LinkedCollectionHealth, TreeItem},
     session::{item_key::ItemKey, window_layout::SidebarSection},
 };
 use gpui::{div, prelude::*, px, relative};
@@ -345,32 +345,71 @@ pub(super) fn render_collection_menu_item(
         .linked_root_path
         .as_ref()
         .map(|path| path.display().to_string());
+    let linked_health = collection.linked_health.clone();
     SidebarMenuItem::new(collection.collection.name.clone())
         .icon(Icon::new(IconName::BookOpen).small())
         .active(active_key == Some(collection_key))
         .default_open(true)
         .click_to_open(true)
         .when(is_linked, |item| {
-            let tooltip = match linked_root_path.clone() {
+            let root_line = match linked_root_path.clone() {
                 Some(path) => format!(
-                    "{}\n{}",
-                    es_fluent::localize("sidebar_linked_collection_badge_tooltip", None),
-                    format!(
-                        "{} {path}",
-                        es_fluent::localize("sidebar_linked_collection_badge_root", None),
-                    ),
+                    "{} {path}",
+                    es_fluent::localize("sidebar_linked_collection_badge_root", None),
                 ),
-                None => format!(
-                    "{}\n{}",
-                    es_fluent::localize("sidebar_linked_collection_badge_tooltip", None),
-                    es_fluent::localize("sidebar_linked_collection_badge_root_missing", None),
+                None => es_fluent::localize("sidebar_linked_collection_badge_root_missing", None),
+            };
+            let (status_line, icon_name) = match linked_health.clone() {
+                Some(LinkedCollectionHealth::Healthy) => (
+                    format!(
+                        "{} {}",
+                        es_fluent::localize("sidebar_linked_collection_badge_status", None),
+                        es_fluent::localize("sidebar_linked_collection_badge_status_ok", None),
+                    ),
+                    IconName::Github,
+                ),
+                Some(LinkedCollectionHealth::MissingRootPath) => (
+                    format!(
+                        "{} {}",
+                        es_fluent::localize("sidebar_linked_collection_badge_status", None),
+                        es_fluent::localize(
+                            "sidebar_linked_collection_badge_status_missing_root",
+                            None
+                        ),
+                    ),
+                    IconName::Info,
+                ),
+                Some(LinkedCollectionHealth::Unavailable { reason }) => (
+                    format!(
+                        "{} {} ({reason})",
+                        es_fluent::localize("sidebar_linked_collection_badge_status", None),
+                        es_fluent::localize(
+                            "sidebar_linked_collection_badge_status_unavailable",
+                            None
+                        ),
+                    ),
+                    IconName::Info,
+                ),
+                None => (
+                    format!(
+                        "{} {}",
+                        es_fluent::localize("sidebar_linked_collection_badge_status", None),
+                        es_fluent::localize("sidebar_linked_collection_badge_status_ok", None),
+                    ),
+                    IconName::Github,
                 ),
             };
+            let tooltip = format!(
+                "{}\n{}\n{}",
+                es_fluent::localize("sidebar_linked_collection_badge_tooltip", None),
+                root_line,
+                status_line,
+            );
             let collection_id = collection.collection.id;
             item.suffix(move |_, _| {
                 div()
                     .id(format!("linked-collection-badge-{}", collection_id))
-                    .child(Icon::new(IconName::Github).small())
+                    .child(Icon::new(icon_name.clone()).small())
                     .tooltip({
                         let tooltip = tooltip.clone();
                         move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx)

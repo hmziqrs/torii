@@ -3,7 +3,6 @@
 > Derived from `docs/plan.md` Phase 4
 > Constrained by `docs/gpui-performance.md`
 > Builds on `docs/completed/phase-3.5.md`
-> Date: 2026-04-23
 
 ## 1. Objective
 
@@ -793,7 +792,7 @@ Notes:
 
 ## 9. Execution Slices
 
-### Current Status (2026-04-23)
+### Current Status
 
 - Slice 0 — `Done` (with workspace-scoped environments restored by `0004_workspace_scoped_environments.sql`)
 - Slice 1 — `Mostly Done`

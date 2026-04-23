@@ -91,6 +91,10 @@ sidebar_environment_active_suffix = (Active)
 sidebar_linked_collection_badge_tooltip = Linked collection (Git-backed)
 sidebar_linked_collection_badge_root = Root:
 sidebar_linked_collection_badge_root_missing = Root: unavailable
+sidebar_linked_collection_badge_status = Status:
+sidebar_linked_collection_badge_status_ok = available
+sidebar_linked_collection_badge_status_unavailable = unavailable
+sidebar_linked_collection_badge_status_missing_root = missing root path
 sidebar_utilities = Utilities
 
 ## Tabs
