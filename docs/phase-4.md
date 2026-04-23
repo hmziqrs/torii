@@ -795,9 +795,8 @@ Notes:
 ### Current Status
 
 - Slice 0 — `Done` (with workspace-scoped environments restored by `0004_workspace_scoped_environments.sql`)
-- Slice 1 — `Mostly Done`
-  - done: store boundary, linked format, `.torii/collection.json`, monitor wiring, native directory picker
-  - pending: explicit degraded/offline linked-root UX state
+- Slice 1 — `Done`
+  - done: store boundary, linked format, `.torii/collection.json`, monitor wiring, native directory picker, degraded/offline linked-root UX state
 - Slice 2 — `Pending` (flat row model + expansion keyboard model not fully landed)
 - Slice 3 — `Partially Done`
   - done: core create flows (workspace/collection/environment/folder/request), linked Git badge tooltip, folder-level request creation
