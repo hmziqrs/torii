@@ -4,7 +4,7 @@ use crate::{
         collection::CollectionStorageKind,
         ids::{CollectionId, FolderId, RequestId},
     },
-    services::workspace_tree::{CollectionTree, FolderTree, LinkedCollectionHealth, TreeItem},
+    services::workspace_tree::{CollectionTree, FolderTree, LinkedCollectionHealth, TreeRow},
     session::item_key::ItemKey,
 };
 use gpui::{
@@ -13,7 +13,7 @@ use gpui::{
 };
 use gpui_component::{
     ActiveTheme as _, Icon, IconName, Sizable as _, StyledExt as _, WindowExt as _,
-    button::Button,
+    button::{Button, ButtonVariants as _},
     h_flex,
     hover_card::HoverCard,
     menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem},
@@ -35,18 +35,61 @@ pub(super) enum TreeDropTarget {
     Request(RequestId),
 }
 
-pub(super) fn render_collection_tree_row(
+pub(super) fn render_flat_tree_row(
+    row: &TreeRow,
+    active_key: Option<ItemKey>,
+    weak_root: &gpui::WeakEntity<AppRoot>,
+    _window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    match row {
+        TreeRow::Collection {
+            collection,
+            depth,
+            expanded,
+            has_children,
+        } => render_collection_row_only(
+            collection,
+            active_key,
+            weak_root,
+            *depth,
+            *expanded,
+            *has_children,
+            cx,
+        ),
+        TreeRow::Folder {
+            folder,
+            depth,
+            expanded,
+            has_children,
+        } => render_folder_row_only(
+            folder,
+            active_key,
+            weak_root,
+            *depth,
+            *expanded,
+            *has_children,
+            cx,
+        ),
+        TreeRow::Request { request, depth } => {
+            render_request_tree_row(request, active_key, weak_root, *depth, cx)
+        }
+    }
+}
+
+fn render_collection_row_only(
     collection: &CollectionTree,
     active_key: Option<ItemKey>,
     weak_root: &gpui::WeakEntity<AppRoot>,
-    collapsed_folder_ids: &std::collections::HashSet<FolderId>,
     depth: usize,
-    _window: &mut Window,
+    is_expanded: bool,
+    has_children: bool,
     cx: &mut App,
 ) -> AnyElement {
     let collection_id = collection.collection.id;
     let item_key = ItemKey::collection(collection_id);
     let weak_root_click = weak_root.clone();
+    let weak_root_toggle = weak_root.clone();
     let weak_root_drop = weak_root.clone();
     let weak_root_menu_new = weak_root.clone();
     let weak_root_menu_new_folder = weak_root.clone();
@@ -62,7 +105,7 @@ pub(super) fn render_collection_tree_row(
     let payload = TreeDragPayload::Collection(collection_id);
     let drop_target = TreeDropTarget::Collection(collection_id);
 
-    let row = tree_row_base(depth, active_key == Some(item_key), cx)
+    tree_row_base(depth, active_key == Some(item_key), cx)
         .id(format!("tree-collection-row-{}", collection_id))
         .on_click(move |_, _, cx| {
             let _ = weak_root_click.update(cx, |this, cx| this.open_item(item_key, cx));
@@ -176,72 +219,59 @@ pub(super) fn render_collection_tree_row(
                     h_flex()
                         .gap_2()
                         .items_center()
+                        .child(h_flex().w_4().justify_center().items_center().when(
+                            has_children,
+                            |this| {
+                                this.child(
+                                    Button::new(format!(
+                                        "tree-collection-expand-{}",
+                                        collection_id
+                                    ))
+                                    .ghost()
+                                    .xsmall()
+                                    .compact()
+                                    .child(
+                                        Icon::new(if is_expanded {
+                                            IconName::ChevronDown
+                                        } else {
+                                            IconName::ChevronRight
+                                        })
+                                        .small()
+                                        .text_color(cx.theme().muted_foreground),
+                                    )
+                                    .on_click(
+                                        move |_, _, cx| {
+                                            let _ = weak_root_toggle.update(cx, |this, cx| {
+                                                this.toggle_collection_expanded(collection_id, cx);
+                                            });
+                                        },
+                                    ),
+                                )
+                            },
+                        ))
                         .child(Icon::new(IconName::BookOpen).small())
                         .child(div().text_sm().child(collection.collection.name.clone())),
                 )
                 .when_some(render_linked_badge(collection), |this: gpui::Div, badge| {
                     this.child(badge)
                 }),
-        );
-
-    let children = v_flex().gap_1().children(
-        collection
-            .children
-            .iter()
-            .map(|item| {
-                render_tree_item_row(
-                    item,
-                    active_key,
-                    weak_root,
-                    collapsed_folder_ids,
-                    depth + 1,
-                    cx,
-                )
-            })
-            .collect::<Vec<_>>(),
-    );
-
-    v_flex()
-        .gap_1()
-        .child(row)
-        .child(children)
+        )
         .into_any_element()
 }
 
-fn render_tree_item_row(
-    item: &TreeItem,
-    active_key: Option<ItemKey>,
-    weak_root: &gpui::WeakEntity<AppRoot>,
-    collapsed_folder_ids: &std::collections::HashSet<FolderId>,
-    depth: usize,
-    cx: &mut App,
-) -> AnyElement {
-    match item {
-        TreeItem::Folder(folder) => render_folder_tree_row(
-            folder,
-            active_key,
-            weak_root,
-            collapsed_folder_ids,
-            depth,
-            cx,
-        ),
-        TreeItem::Request(request) => {
-            render_request_tree_row(request, active_key, weak_root, depth, cx)
-        }
-    }
-}
-
-fn render_folder_tree_row(
+fn render_folder_row_only(
     folder: &FolderTree,
     active_key: Option<ItemKey>,
     weak_root: &gpui::WeakEntity<AppRoot>,
-    collapsed_folder_ids: &std::collections::HashSet<FolderId>,
     depth: usize,
+    is_expanded: bool,
+    has_children: bool,
     cx: &mut App,
 ) -> AnyElement {
     let folder_id = folder.folder.id;
     let item_key = ItemKey::folder(folder_id);
     let weak_root_click = weak_root.clone();
+    let weak_root_toggle = weak_root.clone();
     let weak_root_drop = weak_root.clone();
     let weak_root_menu_new = weak_root.clone();
     let weak_root_menu_new_request = weak_root.clone();
@@ -251,14 +281,14 @@ fn render_folder_tree_row(
     let drop_target = TreeDropTarget::Folder(folder_id);
     let folder_name = folder.folder.name.clone();
     let collection_id = folder.folder.collection_id;
-    let is_collapsed = collapsed_folder_ids.contains(&folder_id);
-    let has_children = !folder.children.is_empty();
 
-    let row = tree_row_base(depth, active_key == Some(item_key), cx)
+    tree_row_base(depth, active_key == Some(item_key), cx)
         .id(format!("tree-folder-row-{}", folder_id))
         .on_click(move |_, _, cx| {
             let _ = weak_root_click.update(cx, |this, cx| {
-                this.toggle_folder_collapsed(folder_id, cx);
+                if has_children {
+                    this.toggle_folder_expanded(folder_id, cx);
+                }
                 this.open_item(item_key, cx);
             });
         })
@@ -352,42 +382,31 @@ fn render_folder_tree_row(
                         .items_center()
                         .when(has_children, |this| {
                             this.child(
-                                Icon::new(if is_collapsed {
-                                    IconName::ChevronRight
-                                } else {
-                                    IconName::ChevronDown
-                                })
-                                .small()
-                                .text_color(cx.theme().muted_foreground),
+                                Button::new(format!("tree-folder-expand-{}", folder_id))
+                                    .ghost()
+                                    .xsmall()
+                                    .compact()
+                                    .child(
+                                        Icon::new(if is_expanded {
+                                            IconName::ChevronDown
+                                        } else {
+                                            IconName::ChevronRight
+                                        })
+                                        .small()
+                                        .text_color(cx.theme().muted_foreground),
+                                    )
+                                    .on_click(move |_, _, cx| {
+                                        let _ = weak_root_toggle.update(cx, |this, cx| {
+                                            this.toggle_folder_expanded(folder_id, cx);
+                                        });
+                                    }),
                             )
                         }),
                 )
                 .child(Icon::new(IconName::Folder).small())
                 .child(div().text_sm().child(folder.folder.name.clone())),
-        );
-
-    let content = v_flex().gap_1().child(row);
-    if is_collapsed {
-        content.into_any_element()
-    } else {
-        let children = v_flex().gap_1().children(
-            folder
-                .children
-                .iter()
-                .map(|item| {
-                    render_tree_item_row(
-                        item,
-                        active_key,
-                        weak_root,
-                        collapsed_folder_ids,
-                        depth + 1,
-                        cx,
-                    )
-                })
-                .collect::<Vec<_>>(),
-        );
-        content.child(children).into_any_element()
-    }
+        )
+        .into_any_element()
 }
 
 fn render_request_tree_row(

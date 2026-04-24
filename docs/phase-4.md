@@ -53,6 +53,8 @@ The following items were implemented on-the-fly during Phase 4 and are now the s
   - monitor starts only when the selected workspace has at least one linked collection root
   - monitor is not started globally by default
 - environment domain scope remains workspace-scoped in the current implementation (`Environment { workspace_id, ... }`)
+- sidebar collection tree now renders from a flat row projection instead of recursive child rendering
+- collection/folder expansion state is explicit per workspace and is persisted through `tab_session_workspace_state.expanded_items_json`
 
 ## 2. Non-Negotiable GPUI Performance Rules
 
@@ -797,7 +799,7 @@ Notes:
 - Slice 0 — `Done` (with workspace-scoped environments restored by `0004_workspace_scoped_environments.sql`)
 - Slice 1 — `Done`
   - done: store boundary, linked format, `.torii/collection.json`, monitor wiring, native directory picker, degraded/offline linked-root UX state
-- Slice 2 — `Pending` (flat row model + expansion keyboard model not fully landed)
+- Slice 2 — `Partially Done` (flat row model + persisted expansion landed; expansion keyboard bindings pending)
 - Slice 3 — `Partially Done`
   - done: core create flows (workspace/collection/environment/folder/request), linked Git badge tooltip, folder-level request creation
   - pending: full rename/edit parity and richer linked badge actions
@@ -1171,7 +1173,7 @@ Required GPUI performance audit:
 
 ## 11. Acceptance Checklist
 
-- [ ] Tree rendering uses a flat row model with explicit expansion state
+- [x] Tree rendering uses a flat row model with explicit expansion state
 - [x] Collections support both `Managed` and `Linked` storage authority
 - [x] Linked collections round-trip through a stable on-disk file format with stable IDs
 - [x] Linked collection order is owned by Git-visible parent metadata, not hidden SQLite state

@@ -3,8 +3,7 @@ mod tree_view;
 
 use super::AppRoot;
 use crate::{
-    domain::ids::FolderId,
-    services::workspace_tree::CollectionTree,
+    services::workspace_tree::TreeRow,
     session::{item_key::ItemKey, window_layout::SidebarSection},
 };
 use gpui::{App, Window, div, prelude::*, px, relative};
@@ -18,7 +17,7 @@ use gpui_component::{
     v_flex,
 };
 
-use self::tree_view::render_collection_tree_row;
+use self::tree_view::render_flat_tree_row;
 
 impl AppRoot {
     pub(super) fn render_sidebar(
@@ -257,16 +256,26 @@ impl AppRoot {
                                 sidebar
                                     .when(is_collections, |sidebar| {
                                         let weak_root_tree = weak_root.clone();
+                                        let expanded_items = self
+                                            .session
+                                            .read(cx)
+                                            .selected_workspace_id
+                                            .and_then(|workspace_id| {
+                                                self.session
+                                                    .read(cx)
+                                                    .expanded_items_for_workspace(workspace_id)
+                                                    .cloned()
+                                            })
+                                            .unwrap_or_default();
                                         sidebar.child(AppSidebarNode::GroupTree(
                                             SidebarGroup::new(es_fluent::localize(
                                                 "sidebar_collections",
                                                 None,
                                             ))
                                             .child(CollectionTreeMenu::new(
-                                                workspace.collections.clone(),
+                                                workspace.flat_collection_rows(&expanded_items),
                                                 active_key,
                                                 weak_root_tree,
-                                                self.collapsed_folder_ids.clone(),
                                             )),
                                         ))
                                     })
@@ -422,25 +431,22 @@ impl SidebarItem for AppSidebarNode {
 
 #[derive(Clone)]
 struct CollectionTreeMenu {
-    collections: Vec<CollectionTree>,
+    rows: Vec<TreeRow>,
     active_key: Option<ItemKey>,
     weak_root: gpui::WeakEntity<AppRoot>,
-    collapsed_folder_ids: std::collections::HashSet<FolderId>,
     collapsed: bool,
 }
 
 impl CollectionTreeMenu {
     fn new(
-        collections: Vec<CollectionTree>,
+        rows: Vec<TreeRow>,
         active_key: Option<ItemKey>,
         weak_root: gpui::WeakEntity<AppRoot>,
-        collapsed_folder_ids: std::collections::HashSet<FolderId>,
     ) -> Self {
         Self {
-            collections,
+            rows,
             active_key,
             weak_root,
-            collapsed_folder_ids,
             collapsed: false,
         }
     }
@@ -466,19 +472,9 @@ impl SidebarItem for CollectionTreeMenu {
     ) -> impl IntoElement {
         let id = id.into();
         v_flex().id(id).gap_1().children(
-            self.collections
+            self.rows
                 .into_iter()
-                .map(|collection| {
-                    render_collection_tree_row(
-                        &collection,
-                        self.active_key,
-                        &self.weak_root,
-                        &self.collapsed_folder_ids,
-                        0,
-                        window,
-                        cx,
-                    )
-                })
+                .map(|row| render_flat_tree_row(&row, self.active_key, &self.weak_root, window, cx))
                 .collect::<Vec<_>>(),
         )
     }

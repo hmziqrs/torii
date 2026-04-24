@@ -54,7 +54,6 @@ pub struct AppRoot {
     previous_active_tab: Option<TabKey>,
     linked_collection_monitor: Option<LinkedCollectionMonitor>,
     linked_monitor_workspace_id: Option<WorkspaceId>,
-    collapsed_folder_ids: std::collections::HashSet<crate::domain::ids::FolderId>,
 }
 
 impl AppRoot {
@@ -101,6 +100,7 @@ impl AppRoot {
                     restored.active,
                     selected_workspace_id,
                     restored.active_environments_by_workspace,
+                    restored.expanded_items_by_workspace,
                     restored.sidebar_selection,
                     restored.window_layout,
                     cx,
@@ -148,6 +148,7 @@ impl AppRoot {
                         Ok(catalog) => this.catalog = catalog,
                         Err(err) => tracing::error!("failed to refresh workspace catalog: {err}"),
                     }
+                    this.sync_expansion_state_with_catalog(cx);
                     this.sync_linked_collection_monitor(selected_workspace_id, cx);
                 }
 
@@ -209,8 +210,8 @@ impl AppRoot {
             previous_active_tab: None,
             linked_collection_monitor: None,
             linked_monitor_workspace_id: None,
-            collapsed_folder_ids: std::collections::HashSet::new(),
         };
+        root.sync_expansion_state_with_catalog(cx);
         root.sync_linked_collection_monitor(selected_workspace_id, cx);
         root
     }
@@ -319,13 +320,32 @@ impl AppRoot {
             tracing::error!("failed to persist tab session: {err}");
         }
 
-        let workspace_states = snapshot
+        let workspace_ids = snapshot
             .active_environments_by_workspace
-            .iter()
-            .map(|(workspace_id, environment_id)| TabSessionWorkspaceState {
-                workspace_id: *workspace_id,
-                active_environment_id: Some(*environment_id),
-                expanded_items_json: "[]".to_string(),
+            .keys()
+            .chain(snapshot.expanded_items_by_workspace.keys())
+            .copied()
+            .collect::<std::collections::HashSet<_>>();
+        let workspace_states = workspace_ids
+            .into_iter()
+            .map(|workspace_id| TabSessionWorkspaceState {
+                workspace_id,
+                active_environment_id: snapshot
+                    .active_environments_by_workspace
+                    .get(&workspace_id)
+                    .copied(),
+                expanded_items_json: serde_json::to_string(
+                    snapshot
+                        .expanded_items_by_workspace
+                        .get(&workspace_id)
+                        .cloned()
+                        .unwrap_or_default()
+                        .iter()
+                        .copied()
+                        .collect::<Vec<_>>()
+                        .as_slice(),
+                )
+                .unwrap_or_else(|_| "[]".to_string()),
                 created_at: now,
                 updated_at: now,
             })

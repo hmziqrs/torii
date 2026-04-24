@@ -20,7 +20,7 @@ use torii::{
         item_key::{ItemKey, TabKey},
         tab_manager::TabState,
         window_layout::WindowLayoutState,
-        workspace_session::SessionId,
+        workspace_session::{ExpandableItem, SessionId},
     },
 };
 
@@ -46,6 +46,7 @@ fn tab_session_repo_roundtrip_and_restore_skip_missing_items() -> Result<()> {
         "https://example.test",
     )?;
     let environment = environment_repo.create(workspace.id, "Env")?;
+    let expanded_items_json = serde_json::to_string(&[ExpandableItem::Collection(collection.id)])?;
 
     let session_id = SessionId::new();
     let tabs = vec![
@@ -77,7 +78,7 @@ fn tab_session_repo_roundtrip_and_restore_skip_missing_items() -> Result<()> {
         &[TabSessionWorkspaceState {
             workspace_id: workspace.id,
             active_environment_id: Some(environment.id),
-            expanded_items_json: "[]".to_string(),
+            expanded_items_json,
             created_at: 1,
             updated_at: 1,
         }],
@@ -128,6 +129,12 @@ fn tab_session_repo_roundtrip_and_restore_skip_missing_items() -> Result<()> {
             .get(&workspace.id)
             .copied(),
         Some(environment.id)
+    );
+    assert!(
+        restore
+            .expanded_items_by_workspace
+            .get(&workspace.id)
+            .is_some_and(|items| items.contains(&ExpandableItem::Collection(collection.id)))
     );
     assert_eq!(restore.sidebar_selection, metadata.sidebar_selection);
     assert_eq!(restore.window_layout, metadata.window_layout);

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    domain::ids::{EnvironmentId, WorkspaceId},
+    domain::ids::{CollectionId, EnvironmentId, FolderId, WorkspaceId},
     session::{
         item_key::{ItemKey, TabKey},
         tab_manager::{CloseTabOutcome, OpenTabOutcome, TabManager, TabState},
@@ -10,6 +10,7 @@ use crate::{
     },
 };
 use gpui::Context;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SessionId(pub Uuid);
@@ -30,10 +31,18 @@ impl Default for SessionId {
 pub struct WorkspaceSession {
     pub session_id: SessionId,
     pub selected_workspace_id: Option<WorkspaceId>,
-    pub active_environments_by_workspace: std::collections::HashMap<WorkspaceId, EnvironmentId>,
+    pub active_environments_by_workspace: HashMap<WorkspaceId, EnvironmentId>,
+    pub expanded_items_by_workspace: HashMap<WorkspaceId, HashSet<ExpandableItem>>,
     pub sidebar_selection: Option<ItemKey>,
     pub tab_manager: TabManager,
     pub window_layout: WindowLayoutState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "id")]
+pub enum ExpandableItem {
+    Collection(CollectionId),
+    Folder(FolderId),
 }
 
 impl WorkspaceSession {
@@ -41,7 +50,8 @@ impl WorkspaceSession {
         Self {
             session_id: SessionId::new(),
             selected_workspace_id: None,
-            active_environments_by_workspace: std::collections::HashMap::new(),
+            active_environments_by_workspace: HashMap::new(),
+            expanded_items_by_workspace: HashMap::new(),
             sidebar_selection: None,
             tab_manager: TabManager::default(),
             window_layout: WindowLayoutState::default(),
@@ -141,7 +151,8 @@ impl WorkspaceSession {
         tabs: Vec<TabState>,
         active: Option<TabKey>,
         selected_workspace_id: Option<WorkspaceId>,
-        active_environments_by_workspace: std::collections::HashMap<WorkspaceId, EnvironmentId>,
+        active_environments_by_workspace: HashMap<WorkspaceId, EnvironmentId>,
+        expanded_items_by_workspace: HashMap<WorkspaceId, HashSet<ExpandableItem>>,
         sidebar_selection: Option<ItemKey>,
         window_layout: WindowLayoutState,
         cx: &mut Context<Self>,
@@ -151,7 +162,60 @@ impl WorkspaceSession {
             sidebar_selection.or_else(|| self.tab_manager.active().map(|tab| tab.item()));
         self.selected_workspace_id = selected_workspace_id;
         self.active_environments_by_workspace = active_environments_by_workspace;
+        self.expanded_items_by_workspace = expanded_items_by_workspace;
         self.window_layout = window_layout;
+        cx.notify();
+    }
+
+    pub fn expanded_items_for_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Option<&HashSet<ExpandableItem>> {
+        self.expanded_items_by_workspace.get(&workspace_id)
+    }
+
+    pub fn seed_expanded_items_for_workspace(
+        &mut self,
+        workspace_id: WorkspaceId,
+        items: HashSet<ExpandableItem>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.expanded_items_by_workspace.contains_key(&workspace_id) {
+            return;
+        }
+        self.expanded_items_by_workspace.insert(workspace_id, items);
+        cx.notify();
+    }
+
+    pub fn prune_expanded_items_for_workspace(
+        &mut self,
+        workspace_id: WorkspaceId,
+        valid_items: &HashSet<ExpandableItem>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(items) = self.expanded_items_by_workspace.get_mut(&workspace_id) else {
+            return;
+        };
+        let before = items.len();
+        items.retain(|item| valid_items.contains(item));
+        if items.len() != before {
+            cx.notify();
+        }
+    }
+
+    pub fn toggle_expanded_item(
+        &mut self,
+        workspace_id: WorkspaceId,
+        item: ExpandableItem,
+        cx: &mut Context<Self>,
+    ) {
+        let items = self
+            .expanded_items_by_workspace
+            .entry(workspace_id)
+            .or_default();
+        if !items.insert(item) {
+            items.remove(&item);
+        }
         cx.notify();
     }
 

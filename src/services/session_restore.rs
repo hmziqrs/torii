@@ -1,6 +1,5 @@
 use std::{
-    collections::HashMap,
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
 };
 
@@ -22,6 +21,7 @@ use crate::{
     session::{
         item_key::{ItemKey, ItemKind, TabKey},
         tab_manager::TabState,
+        workspace_session::ExpandableItem,
     },
 };
 
@@ -42,6 +42,7 @@ pub struct RestoredSessionState {
     pub active: Option<TabKey>,
     pub selected_workspace_id: Option<WorkspaceId>,
     pub active_environments_by_workspace: HashMap<WorkspaceId, EnvironmentId>,
+    pub expanded_items_by_workspace: HashMap<WorkspaceId, HashSet<ExpandableItem>>,
     pub sidebar_selection: Option<ItemKey>,
     pub window_layout: crate::session::window_layout::WindowLayoutState,
 }
@@ -115,10 +116,12 @@ impl SessionRestoreService {
             }
         }
 
-        let active_environments_by_workspace = self
+        let workspace_states = self
             .tab_sessions
-            .load_workspace_states(snapshot.session_id)?
-            .into_iter()
+            .load_workspace_states(snapshot.session_id)?;
+
+        let active_environments_by_workspace = workspace_states
+            .iter()
             .filter_map(|state| {
                 let active_environment_id = state.active_environment_id?;
                 match self.environments.get(active_environment_id) {
@@ -129,12 +132,26 @@ impl SessionRestoreService {
                 }
             })
             .collect::<HashMap<_, _>>();
+        let expanded_items_by_workspace = workspace_states
+            .into_iter()
+            .filter_map(|state| {
+                let expanded =
+                    serde_json::from_str::<HashSet<ExpandableItem>>(&state.expanded_items_json)
+                        .unwrap_or_default();
+                if expanded.is_empty() {
+                    None
+                } else {
+                    Some((state.workspace_id, expanded))
+                }
+            })
+            .collect::<HashMap<_, _>>();
 
         Ok(Some(RestoredSessionState {
             tabs,
             active,
             selected_workspace_id,
             active_environments_by_workspace,
+            expanded_items_by_workspace,
             sidebar_selection: snapshot.metadata.sidebar_selection,
             window_layout: snapshot.metadata.window_layout,
         }))

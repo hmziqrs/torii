@@ -16,8 +16,12 @@ use crate::{
         collection_repo::CollectionRepoRef, environment_repo::EnvironmentRepoRef,
         folder_repo::FolderRepoRef, request_repo::RequestRepoRef, workspace_repo::WorkspaceRepoRef,
     },
-    session::item_key::{ItemKey, ItemKind},
+    session::{
+        item_key::{ItemKey, ItemKind},
+        workspace_session::ExpandableItem,
+    },
 };
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceCatalog {
@@ -56,6 +60,26 @@ pub struct FolderTree {
 pub enum TreeItem {
     Folder(FolderTree),
     Request(RequestItem),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TreeRow {
+    Collection {
+        collection: CollectionTree,
+        depth: usize,
+        expanded: bool,
+        has_children: bool,
+    },
+    Folder {
+        folder: FolderTree,
+        depth: usize,
+        expanded: bool,
+        has_children: bool,
+    },
+    Request {
+        request: RequestItem,
+        depth: usize,
+    },
 }
 
 pub fn load_workspace_catalog(
@@ -485,6 +509,72 @@ impl WorkspaceCatalog {
     }
 }
 
+impl WorkspaceTree {
+    pub fn expandable_items(&self) -> HashSet<ExpandableItem> {
+        let mut items = HashSet::new();
+        for collection in &self.collections {
+            items.insert(ExpandableItem::Collection(collection.collection.id));
+            collect_folder_expandable_items(&collection.children, &mut items);
+        }
+        items
+    }
+
+    pub fn flat_collection_rows(&self, expanded_items: &HashSet<ExpandableItem>) -> Vec<TreeRow> {
+        let mut rows = Vec::new();
+        for collection in &self.collections {
+            let expanded =
+                expanded_items.contains(&ExpandableItem::Collection(collection.collection.id));
+            rows.push(TreeRow::Collection {
+                collection: collection.clone(),
+                depth: 0,
+                expanded,
+                has_children: !collection.children.is_empty(),
+            });
+            if expanded {
+                push_flat_tree_items(&collection.children, expanded_items, 1, &mut rows);
+            }
+        }
+        rows
+    }
+}
+
+fn collect_folder_expandable_items(items: &[TreeItem], output: &mut HashSet<ExpandableItem>) {
+    for item in items {
+        if let TreeItem::Folder(folder) = item {
+            output.insert(ExpandableItem::Folder(folder.folder.id));
+            collect_folder_expandable_items(&folder.children, output);
+        }
+    }
+}
+
+fn push_flat_tree_items(
+    items: &[TreeItem],
+    expanded_items: &HashSet<ExpandableItem>,
+    depth: usize,
+    rows: &mut Vec<TreeRow>,
+) {
+    for item in items {
+        match item {
+            TreeItem::Folder(folder) => {
+                let expanded = expanded_items.contains(&ExpandableItem::Folder(folder.folder.id));
+                rows.push(TreeRow::Folder {
+                    folder: folder.clone(),
+                    depth,
+                    expanded,
+                    has_children: !folder.children.is_empty(),
+                });
+                if expanded {
+                    push_flat_tree_items(&folder.children, expanded_items, depth + 1, rows);
+                }
+            }
+            TreeItem::Request(request) => rows.push(TreeRow::Request {
+                request: request.clone(),
+                depth,
+            }),
+        }
+    }
+}
+
 impl CollectionTree {
     pub fn request_count(&self) -> usize {
         self.children.iter().map(TreeItem::request_count).sum()
@@ -756,5 +846,94 @@ mod tests {
             TreeItem::Request(_) => panic!("folder should appear before request at root"),
         }
         assert!(matches!(tree[1], TreeItem::Request(_)));
+    }
+
+    #[test]
+    fn flat_rows_respect_explicit_expansion_state() {
+        let workspace_id = WorkspaceId::new();
+        let collection_id = CollectionId::new();
+        let root_folder = Folder::new(collection_id, None, "Root Folder", 0);
+        let nested_folder = Folder::new(collection_id, Some(root_folder.id), "Nested Folder", 0);
+        let root_request = RequestItem::new(
+            collection_id,
+            None,
+            "Root Request",
+            "GET",
+            "https://root",
+            1,
+        );
+        let nested_request = RequestItem::new(
+            collection_id,
+            Some(root_folder.id),
+            "Nested Request",
+            "GET",
+            "https://nested",
+            1,
+        );
+        let tree = WorkspaceTree {
+            workspace: Workspace {
+                id: workspace_id,
+                name: "Workspace".into(),
+                variables_json: "[]".into(),
+                meta: RevisionMetadata::new_now(),
+            },
+            collections: vec![CollectionTree {
+                collection: Collection {
+                    id: collection_id,
+                    workspace_id,
+                    name: "Collection".into(),
+                    sort_order: 0,
+                    storage_kind: crate::domain::collection::CollectionStorageKind::Managed,
+                    storage_config: crate::domain::collection::CollectionStorageConfig::default(),
+                    meta: RevisionMetadata::new_now(),
+                },
+                linked_health: None,
+                children: build_tree_items(
+                    &[root_folder.clone(), nested_folder.clone()],
+                    &[root_request.clone(), nested_request.clone()],
+                    None,
+                ),
+            }],
+            environments: Vec::new(),
+        };
+
+        let all_expandable = tree.expandable_items();
+        assert!(all_expandable.contains(&ExpandableItem::Collection(collection_id)));
+        assert!(all_expandable.contains(&ExpandableItem::Folder(root_folder.id)));
+        assert!(all_expandable.contains(&ExpandableItem::Folder(nested_folder.id)));
+
+        let rows = tree.flat_collection_rows(&all_expandable);
+        assert_eq!(rows.len(), 5);
+        assert!(matches!(rows[0], TreeRow::Collection { depth: 0, .. }));
+        assert!(matches!(rows[1], TreeRow::Folder { depth: 1, .. }));
+        assert!(matches!(rows[2], TreeRow::Folder { depth: 2, .. }));
+        assert!(matches!(rows[3], TreeRow::Request { depth: 2, .. }));
+        assert!(matches!(rows[4], TreeRow::Request { depth: 1, .. }));
+
+        let rows = tree.flat_collection_rows(&std::collections::HashSet::from([
+            ExpandableItem::Collection(collection_id),
+        ]));
+        assert_eq!(rows.len(), 3);
+        assert!(matches!(rows[0], TreeRow::Collection { depth: 0, .. }));
+        assert!(matches!(
+            rows[1],
+            TreeRow::Folder {
+                depth: 1,
+                expanded: false,
+                ..
+            }
+        ));
+        assert!(matches!(rows[2], TreeRow::Request { depth: 1, .. }));
+
+        let rows = tree.flat_collection_rows(&std::collections::HashSet::new());
+        assert_eq!(rows.len(), 1);
+        assert!(matches!(
+            rows[0],
+            TreeRow::Collection {
+                depth: 0,
+                expanded: false,
+                ..
+            }
+        ));
     }
 }

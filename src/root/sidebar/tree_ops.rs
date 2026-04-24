@@ -10,6 +10,7 @@ use crate::{
         read_linked_collection, write_linked_collection,
     },
     services::workspace_tree::{FolderTree, TreeItem},
+    session::workspace_session::ExpandableItem,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -28,29 +29,48 @@ impl MixedSibling {
 }
 
 impl AppRoot {
-    pub(crate) fn prune_collapsed_folder_ids(&mut self) {
+    pub(crate) fn sync_expansion_state_with_catalog(&mut self, cx: &mut gpui::Context<Self>) {
         let Some(workspace) = self.catalog.selected_workspace() else {
-            self.collapsed_folder_ids.clear();
             return;
         };
-
-        self.collapsed_folder_ids.retain(|folder_id| {
-            workspace
-                .collections
-                .iter()
-                .any(|collection| collection.find_folder_tree(*folder_id).is_some())
+        let workspace_id = workspace.workspace.id;
+        let expandable_items = workspace.expandable_items();
+        self.session.update(cx, |session, cx| {
+            session.seed_expanded_items_for_workspace(workspace_id, expandable_items.clone(), cx);
+            session.prune_expanded_items_for_workspace(workspace_id, &expandable_items, cx);
         });
     }
 
-    pub(super) fn toggle_folder_collapsed(
+    pub(super) fn toggle_collection_expanded(
+        &mut self,
+        collection_id: CollectionId,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let Some(workspace_id) = self.catalog.selected_workspace_id() else {
+            return;
+        };
+        self.session.update(cx, |session, cx| {
+            session.toggle_expanded_item(
+                workspace_id,
+                ExpandableItem::Collection(collection_id),
+                cx,
+            );
+        });
+        self.persist_session_state(cx);
+    }
+
+    pub(super) fn toggle_folder_expanded(
         &mut self,
         folder_id: FolderId,
         cx: &mut gpui::Context<Self>,
     ) {
-        if !self.collapsed_folder_ids.insert(folder_id) {
-            self.collapsed_folder_ids.remove(&folder_id);
-        }
-        cx.notify();
+        let Some(workspace_id) = self.catalog.selected_workspace_id() else {
+            return;
+        };
+        self.session.update(cx, |session, cx| {
+            session.toggle_expanded_item(workspace_id, ExpandableItem::Folder(folder_id), cx);
+        });
+        self.persist_session_state(cx);
     }
 
     pub(super) fn apply_tree_drop(
