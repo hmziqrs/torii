@@ -186,6 +186,11 @@ impl RequestTabView {
         }
 
         let draft = self.editor.draft().clone();
+        if self.name_input.read(cx).value().as_ref() != draft.name.as_str() {
+            self.name_input.update(cx, |s, cx| {
+                s.set_value(draft.name.clone(), window, cx);
+            });
+        }
         if self.url_input.read(cx).value().as_ref() != draft.url.as_str() {
             self.url_input.update(cx, |s, cx| {
                 s.set_value(draft.url.clone(), window, cx);

@@ -67,6 +67,7 @@ impl RequestTabView {
                     self.editor.transition_to_persisted(saved.id, &saved);
                 }
 
+                self.draft_dirty = true;
                 cx.notify();
                 Ok(())
             }

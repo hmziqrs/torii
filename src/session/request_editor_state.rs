@@ -176,11 +176,10 @@ impl RequestEditorState {
     /// Transition from draft identity to persisted identity after first save.
     pub fn transition_to_persisted(&mut self, id: RequestId, saved: &RequestItem) {
         self.identity = EditorIdentity::Persisted(id);
-        self.draft.id = id;
-        self.draft.collection_id = saved.collection_id;
-        self.draft.parent_folder_id = saved.parent_folder_id;
-        self.draft.sort_order = saved.sort_order;
-        self.baseline = Some(self.draft.clone());
+        let mut persisted = saved.clone();
+        persisted.id = id;
+        self.draft = persisted.clone();
+        self.baseline = Some(persisted);
         self.save_status = SaveStatus::Pristine;
     }
 
@@ -249,8 +248,8 @@ impl RequestEditorState {
     }
 
     pub fn complete_save(&mut self, saved: &RequestItem) {
-        self.draft.meta = saved.meta.clone();
-        self.baseline = Some(self.draft.clone());
+        self.draft = saved.clone();
+        self.baseline = Some(saved.clone());
         self.save_status = SaveStatus::Pristine;
     }
 
@@ -467,6 +466,35 @@ mod tests {
     }
 
     #[test]
+    fn complete_save_adopts_storage_adjusted_fields() {
+        let request = RequestItem::new(
+            test_collection_id(),
+            None,
+            "Untitled Request",
+            "GET",
+            "/api",
+            0,
+        );
+        let mut editor = RequestEditorState::from_persisted(request);
+        editor.draft_mut().name = "Untitled Request".to_string();
+        editor.begin_save();
+
+        let mut saved = editor.draft().clone();
+        saved.name = "Untitled Request (2)".to_string();
+        saved.url = "/normalized".to_string();
+        editor.complete_save(&saved);
+
+        assert_eq!(editor.draft().name, "Untitled Request (2)");
+        assert_eq!(editor.draft().url, "/normalized");
+        assert_eq!(
+            editor.baseline().map(|baseline| baseline.name.as_str()),
+            Some("Untitled Request (2)")
+        );
+        assert_eq!(editor.save_status(), &SaveStatus::Pristine);
+        assert!(!editor.detect_dirty());
+    }
+
+    #[test]
     fn save_failed_stays_dirty() {
         let request = RequestItem::new(test_collection_id(), None, "Test", "GET", "/api", 0);
         let mut editor = RequestEditorState::from_persisted(request);
@@ -638,10 +666,17 @@ mod tests {
         assert!(editor.request_id().is_none());
 
         let id = crate::domain::ids::RequestId::new();
-        let saved = editor.draft().clone();
+        let mut saved = editor.draft().clone();
+        saved.id = id;
+        saved.name = "Untitled Request (2)".to_string();
         editor.transition_to_persisted(id, &saved);
         assert!(matches!(editor.identity(), EditorIdentity::Persisted(_)));
         assert_eq!(editor.request_id(), Some(id));
+        assert_eq!(editor.draft().name, "Untitled Request (2)");
+        assert_eq!(
+            editor.baseline().map(|baseline| baseline.name.as_str()),
+            Some("Untitled Request (2)")
+        );
     }
 
     #[test]

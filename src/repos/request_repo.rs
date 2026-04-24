@@ -103,10 +103,13 @@ impl RequestRepository for SqliteRequestRepository {
             let next_sort =
                 next_mixed_sibling_sort_order(&mut tx, collection_id, parent_folder_id).await?;
 
+            let effective_name =
+                unique_request_name(&mut tx, collection_id, parent_folder_id, name, None).await?;
+
             let request = RequestItem::new(
                 collection_id,
                 parent_folder_id,
-                name,
+                &effective_name,
                 method,
                 url,
                 next_sort,
@@ -155,17 +158,34 @@ impl RequestRepository for SqliteRequestRepository {
 
     fn rename(&self, id: RequestId, name: &str) -> RepoResult<()> {
         self.db.block_on(async {
+            let row =
+                sqlx::query("SELECT collection_id, parent_folder_id FROM requests WHERE id = ?")
+                    .bind(id.to_string())
+                    .fetch_optional(self.db.pool())
+                    .await?
+                    .ok_or_else(|| anyhow!("request does not exist"))?;
+            let collection_id = CollectionId::parse(row.get::<&str, _>("collection_id"))?;
+            let parent_folder_id = row
+                .get::<Option<String>, _>("parent_folder_id")
+                .map(|value| FolderId::parse(&value))
+                .transpose()?;
+            let mut tx = self.db.pool().begin().await?;
+            let effective_name =
+                unique_request_name(&mut tx, collection_id, parent_folder_id, name, Some(id))
+                    .await?;
+
             sqlx::query(
                 "UPDATE requests
                  SET name = ?, updated_at = ?, revision = revision + 1
                  WHERE id = ?",
             )
-            .bind(name)
+            .bind(effective_name)
             .bind(now_unix_ts())
             .bind(id.to_string())
-            .execute(self.db.pool())
+            .execute(&mut *tx)
             .await
             .context("failed to rename request")?;
+            tx.commit().await?;
             Ok::<(), anyhow::Error>(())
         })
     }
@@ -179,7 +199,7 @@ impl RequestRepository for SqliteRequestRepository {
         self.db.block_on(async {
             let mut tx = self.db.pool().begin().await?;
             let source_row = sqlx::query(
-                "SELECT collection_id, parent_folder_id FROM requests WHERE id = ?",
+                "SELECT collection_id, parent_folder_id, name FROM requests WHERE id = ?",
             )
             .bind(id.to_string())
             .fetch_optional(&mut *tx)
@@ -193,6 +213,7 @@ impl RequestRepository for SqliteRequestRepository {
                 .get::<Option<String>, _>("parent_folder_id")
                 .map(|value| FolderId::parse(&value))
                 .transpose()?;
+            let source_name: String = source_row.get("name");
 
             if let Some(parent) = parent_folder_id {
                 let parent_exists: Option<i64> = sqlx::query_scalar(
@@ -209,14 +230,23 @@ impl RequestRepository for SqliteRequestRepository {
 
             let next_sort =
                 next_mixed_sibling_sort_order(&mut tx, collection_id, parent_folder_id).await?;
+            let effective_name = unique_request_name(
+                &mut tx,
+                collection_id,
+                parent_folder_id,
+                &source_name,
+                Some(id),
+            )
+            .await?;
 
             sqlx::query(
                 "UPDATE requests
-                 SET collection_id = ?, parent_folder_id = ?, sort_order = ?, updated_at = ?, revision = revision + 1
+                 SET collection_id = ?, parent_folder_id = ?, name = ?, sort_order = ?, updated_at = ?, revision = revision + 1
                  WHERE id = ?",
             )
             .bind(collection_id.to_string())
             .bind(parent_folder_id.map(|it| it.to_string()))
+            .bind(effective_name)
             .bind(next_sort)
             .bind(now_unix_ts())
             .bind(id.to_string())
@@ -338,6 +368,15 @@ impl RequestRepository for SqliteRequestRepository {
             }
 
             let ts = now_unix_ts();
+            let effective_name = unique_request_name(
+                &mut tx,
+                request.collection_id,
+                request.parent_folder_id,
+                &request.name,
+                Some(request.id),
+            )
+            .await
+            .map_err(RequestRepoError::Storage)?;
             let params_json = serde_json::to_string(&request.params)
                 .map_err(|e| RequestRepoError::Storage(e.into()))?;
             let headers_json = serde_json::to_string(&request.headers)
@@ -360,7 +399,7 @@ impl RequestRepository for SqliteRequestRepository {
                      updated_at = ?, revision = revision + 1
                  WHERE id = ? AND revision = ?",
             )
-            .bind(&request.name)
+            .bind(effective_name)
             .bind(&request.method)
             .bind(&request.url)
             .bind(request.body_blob_hash.clone())
@@ -420,11 +459,19 @@ impl RequestRepository for SqliteRequestRepository {
                 source.parent_folder_id,
             )
             .await?;
+            let effective_name = unique_request_name(
+                &mut tx,
+                source.collection_id,
+                source.parent_folder_id,
+                new_name,
+                None,
+            )
+            .await?;
 
             let mut dup = RequestItem::new(
                 source.collection_id,
                 source.parent_folder_id,
-                new_name,
+                &effective_name,
                 &source.method,
                 &source.url,
                 next_sort,
@@ -489,6 +536,52 @@ async fn insert_request(
     .await?;
 
     Ok(())
+}
+
+async fn unique_request_name(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    collection_id: CollectionId,
+    parent_folder_id: Option<FolderId>,
+    requested_name: &str,
+    exclude_request_id: Option<RequestId>,
+) -> RepoResult<String> {
+    let rows = sqlx::query(
+        "SELECT id, name
+         FROM requests
+         WHERE collection_id = ? AND parent_folder_id IS ?",
+    )
+    .bind(collection_id.to_string())
+    .bind(parent_folder_id.map(|it| it.to_string()))
+    .fetch_all(&mut **tx)
+    .await?;
+
+    let existing_names = rows
+        .into_iter()
+        .filter(|row| {
+            let id: String = row.get("id");
+            exclude_request_id
+                .map(|excluded| id != excluded.to_string())
+                .unwrap_or(true)
+        })
+        .map(|row| row.get::<String, _>("name"))
+        .collect::<Vec<_>>();
+
+    Ok(next_postman_style_name(requested_name, &existing_names))
+}
+
+fn next_postman_style_name(base: &str, existing_names: &[String]) -> String {
+    if !existing_names.iter().any(|name| name == base) {
+        return base.to_string();
+    }
+
+    let mut index = 2;
+    loop {
+        let candidate = format!("{base} ({index})");
+        if !existing_names.iter().any(|name| name == &candidate) {
+            return candidate;
+        }
+        index += 1;
+    }
 }
 
 async fn normalize_mixed_sort_orders(

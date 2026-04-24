@@ -11,6 +11,7 @@ use torii::{
     },
     repos::{
         collection_repo::{CollectionRepository, SqliteCollectionRepository},
+        folder_repo::{FolderRepository, SqliteFolderRepository},
         history_repo::{HistoryRepository, SqliteHistoryRepository},
         request_repo::{RequestRepoError, RequestRepository, SqliteRequestRepository},
         workspace_repo::{SqliteWorkspaceRepository, WorkspaceRepository},
@@ -128,6 +129,67 @@ fn request_duplicate_creates_independent_copy() -> Result<()> {
     // Source is unchanged
     let source = request_repo.get(request.id)?.unwrap();
     assert_eq!(source.name, "Original");
+
+    Ok(())
+}
+
+#[test]
+fn managed_request_names_stay_unique_within_each_parent() -> Result<()> {
+    let (_paths, db) = common::test_database("request-name-uniqueness")?;
+    let db = Arc::new(db);
+    let workspace_repo = SqliteWorkspaceRepository::new(db.clone());
+    let collection_repo = SqliteCollectionRepository::new(db.clone());
+    let folder_repo = SqliteFolderRepository::new(db.clone());
+    let request_repo = SqliteRequestRepository::new(db.clone());
+
+    let workspace = workspace_repo.create("Workspace")?;
+    let collection = collection_repo.create(workspace.id, "Collection")?;
+    let folder = folder_repo.create(collection.id, None, "Folder")?;
+
+    let root_a = request_repo.create(collection.id, None, "Untitled Request", "GET", "/a")?;
+    let root_b = request_repo.create(collection.id, None, "Untitled Request", "GET", "/b")?;
+    assert_eq!(root_a.name, "Untitled Request");
+    assert_eq!(root_b.name, "Untitled Request (2)");
+
+    let nested_a = request_repo.create(
+        collection.id,
+        Some(folder.id),
+        "Untitled Request",
+        "GET",
+        "/c",
+    )?;
+    assert_eq!(
+        nested_a.name, "Untitled Request",
+        "same name is allowed in a different folder"
+    );
+
+    let duplicated = request_repo.duplicate(root_a.id, "Untitled Request")?;
+    assert_eq!(duplicated.name, "Untitled Request (3)");
+
+    request_repo.rename(root_a.id, "Untitled Request (2)")?;
+    let renamed = request_repo
+        .get(root_a.id)?
+        .expect("renamed request should still exist");
+    assert_eq!(renamed.name, "Untitled Request (2) (2)");
+
+    let mut saved = renamed.clone();
+    saved.name = "Untitled Request (3)".to_string();
+    let saved = request_repo.save(&saved, renamed.meta.revision)?;
+    assert_eq!(saved.name, "Untitled Request (3) (2)");
+
+    let move_source = request_repo.create(collection.id, None, "Move Me", "GET", "/move-source")?;
+    let _move_target = request_repo.create(
+        collection.id,
+        Some(folder.id),
+        "Move Me",
+        "GET",
+        "/move-target",
+    )?;
+    request_repo.move_to(move_source.id, collection.id, Some(folder.id))?;
+    let moved = request_repo
+        .get(move_source.id)?
+        .expect("moved request should still exist");
+    assert_eq!(moved.name, "Move Me (2)");
 
     Ok(())
 }
