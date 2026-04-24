@@ -187,9 +187,10 @@ fn parse_variable_entries(variables_json: &str) -> Result<Vec<VariableEntry>> {
     let value = serde_json::from_str::<serde_json::Value>(variables_json)
         .unwrap_or_else(|_| serde_json::json!([]));
     match value {
-        serde_json::Value::Array(items) => Ok(serde_json::from_value::<Vec<VariableEntry>>(
-            serde_json::Value::Array(items),
-        )?),
+        serde_json::Value::Array(items) => Ok(items
+            .into_iter()
+            .filter_map(parse_variable_entry_value)
+            .collect()),
         serde_json::Value::Object(map) => Ok(map
             .into_iter()
             .map(|(key, value)| VariableEntry {
@@ -204,6 +205,83 @@ fn parse_variable_entries(variables_json: &str) -> Result<Vec<VariableEntry>> {
             })
             .collect()),
         _ => Ok(Vec::new()),
+    }
+}
+
+fn parse_variable_entry_value(value: serde_json::Value) -> Option<VariableEntry> {
+    if let Ok(entry) = serde_json::from_value::<VariableEntry>(value.clone()) {
+        return Some(entry);
+    }
+
+    let serde_json::Value::Object(mut obj) = value else {
+        return None;
+    };
+    let key = obj
+        .remove("key")
+        .and_then(|v| v.as_str().map(ToString::to_string))?;
+    let enabled = obj
+        .remove("enabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let raw_value = obj.remove("value").unwrap_or(serde_json::Value::Null);
+    let value = parse_variable_value(raw_value);
+
+    Some(VariableEntry {
+        key,
+        enabled,
+        value,
+    })
+}
+
+fn parse_variable_value(value: serde_json::Value) -> VariableValue {
+    match value {
+        serde_json::Value::String(text) => VariableValue::Plain { value: text },
+        serde_json::Value::Object(mut obj) => {
+            if let Some(kind) = obj
+                .get("kind")
+                .and_then(|kind| kind.as_str())
+                .map(|s| s.to_ascii_lowercase())
+            {
+                if kind == "plain" {
+                    let text = obj.remove("value").map(as_string_lossy).unwrap_or_default();
+                    return VariableValue::Plain { value: text };
+                }
+                if kind == "secret" {
+                    let secret_ref = obj.remove("secret_ref").and_then(|v| match v {
+                        serde_json::Value::Null => None,
+                        other => Some(as_string_lossy(other)),
+                    });
+                    return VariableValue::Secret { secret_ref };
+                }
+            }
+
+            if obj.contains_key("secret_ref") {
+                let secret_ref = obj.remove("secret_ref").and_then(|v| match v {
+                    serde_json::Value::Null => None,
+                    other => Some(as_string_lossy(other)),
+                });
+                return VariableValue::Secret { secret_ref };
+            }
+
+            if obj.contains_key("value") {
+                let text = obj.remove("value").map(as_string_lossy).unwrap_or_default();
+                return VariableValue::Plain { value: text };
+            }
+
+            VariableValue::Plain {
+                value: serde_json::Value::Object(obj).to_string(),
+            }
+        }
+        other => VariableValue::Plain {
+            value: as_string_lossy(other),
+        },
+    }
+}
+
+fn as_string_lossy(value: serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(text) => text,
+        other => other.to_string(),
     }
 }
 
@@ -307,7 +385,7 @@ fn collect_placeholders_in_text(value: &str, out: &mut BTreeSet<String>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_missing_placeholders, resolve_text};
+    use super::{collect_missing_placeholders, parse_variable_entries, resolve_text};
     use crate::domain::request::RequestItem;
     use std::collections::HashMap;
 
@@ -347,5 +425,31 @@ mod tests {
             .into_iter()
             .collect::<Vec<_>>();
         assert_eq!(missing, vec!["baseUrl", "env", "userId"]);
+    }
+
+    #[test]
+    fn parse_variable_entries_accepts_kind_plain_shape() {
+        let raw = r#"[{"key":"missingVar","enabled":true,"value":{"kind":"plain","value":"abc"}}]"#;
+        let entries = parse_variable_entries(raw).expect("parse kind/plain json");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].key, "missingVar");
+        assert!(entries[0].enabled);
+        match &entries[0].value {
+            crate::domain::variable::VariableValue::Plain { value } => assert_eq!(value, "abc"),
+            _ => panic!("expected plain variable value"),
+        }
+    }
+
+    #[test]
+    fn parse_variable_entries_accepts_string_value_shape() {
+        let raw = r#"[{"key":"missingVar","value":"abc"}]"#;
+        let entries = parse_variable_entries(raw).expect("parse string value json");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].key, "missingVar");
+        assert!(entries[0].enabled);
+        match &entries[0].value {
+            crate::domain::variable::VariableValue::Plain { value } => assert_eq!(value, "abc"),
+            _ => panic!("expected plain variable value"),
+        }
     }
 }
