@@ -54,6 +54,7 @@ pub struct AppRoot {
     previous_active_tab: Option<TabKey>,
     linked_collection_monitor: Option<LinkedCollectionMonitor>,
     linked_monitor_workspace_id: Option<WorkspaceId>,
+    collapsed_folder_ids: std::collections::HashSet<crate::domain::ids::FolderId>,
 }
 
 impl AppRoot {
@@ -208,6 +209,7 @@ impl AppRoot {
             previous_active_tab: None,
             linked_collection_monitor: None,
             linked_monitor_workspace_id: None,
+            collapsed_folder_ids: std::collections::HashSet::new(),
         };
         root.sync_linked_collection_monitor(selected_workspace_id, cx);
         root

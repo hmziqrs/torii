@@ -1076,6 +1076,7 @@ impl AppRoot {
             Ok(catalog) => {
                 if self.catalog != catalog {
                     self.catalog = catalog;
+                    self.prune_collapsed_folder_ids();
                     cx.notify();
                 }
             }
