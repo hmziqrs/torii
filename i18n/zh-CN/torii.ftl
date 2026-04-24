@@ -244,6 +244,7 @@ request_tab_tests_label = 测试脚本
 request_tab_settings_label = 设置
 request_tab_timeout_label = 超时（毫秒）
 request_tab_follow_redirects_label = 跟随重定向（true/false）
+request_tab_variable_overrides_label = 变量覆盖（JSON）
 request_tab_latest_run_label = 最近一次运行
 request_tab_latest_run_none = 尚未运行
 request_tab_response_label = 响应

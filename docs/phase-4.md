@@ -1180,7 +1180,7 @@ Required GPUI performance audit:
 - [ ] Folders and requests can be interleaved and reordered under the same parent
 - [ ] CRUD exists for workspace, collection, folder, request, and environment items
 - [ ] Drag/drop mutations are transactional and reject illegal targets
-- [ ] Workspace variables, environment variables, and request-local overrides all exist
+- [x] Workspace variables, environment variables, and request-local overrides all exist
 - [x] Linked collection rows display a right-aligned Git indicator without changing left-side primary icons
 - [x] Hover/focus on the linked-collection Git indicator shows a popover/tooltip with root-path context and actions
 - [x] Linked collections support workspace-scoped environment creation/selection flow from the UI

@@ -297,6 +297,14 @@ impl RequestTabView {
             _ => {}
         }
 
+        if self.variable_overrides_input.read(cx).value().as_ref()
+            != draft.variable_overrides_json.as_str()
+        {
+            self.variable_overrides_input.update(cx, |s, cx| {
+                s.set_value(draft.variable_overrides_json.clone(), window, cx);
+            });
+        }
+
         if self.input_sync_guard.leave_and_take_deferred() {
             cx.notify();
         }

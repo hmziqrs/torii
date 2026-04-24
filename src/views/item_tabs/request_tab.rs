@@ -84,6 +84,7 @@ pub struct RequestTabView {
     body_raw_json_input: Entity<InputState>,
     pre_request_input: Entity<InputState>,
     tests_input: Entity<InputState>,
+    variable_overrides_input: Entity<InputState>,
     timeout_input: Entity<InputState>,
     follow_redirects_input: Entity<InputState>,
     params_rows: Vec<KeyValueEditorRow>,

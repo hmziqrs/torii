@@ -28,6 +28,7 @@ impl RequestTabView {
         let name_input = self.name_input.clone();
         let timeout_input = self.timeout_input.clone();
         let follow_redirects_input = self.follow_redirects_input.clone();
+        let variable_overrides_input = self.variable_overrides_input.clone();
 
         window.open_dialog(cx, move |dialog, _, cx| {
             let muted = cx.theme().muted_foreground;
@@ -67,6 +68,17 @@ impl RequestTabView {
                                     es_fluent::localize("request_tab_follow_redirects_label", None),
                                 ))
                                 .child(Input::new(&follow_redirects_input).large()),
+                        )
+                        .child(
+                            v_flex()
+                                .gap_2()
+                                .child(div().text_xs().text_color(muted).child(
+                                    es_fluent::localize(
+                                        "request_tab_variable_overrides_label",
+                                        None,
+                                    ),
+                                ))
+                                .child(Input::new(&variable_overrides_input).h(px(180.)).large()),
                         ),
                 )
                 .footer(

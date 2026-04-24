@@ -19,6 +19,7 @@ impl RequestTabView {
         body_raw_json_input: &Entity<InputState>,
         pre_request_input: &Entity<InputState>,
         tests_input: &Entity<InputState>,
+        variable_overrides_input: &Entity<InputState>,
         timeout_input: &Entity<InputState>,
         follow_redirects_input: &Entity<InputState>,
     ) -> Vec<Subscription> {
@@ -220,6 +221,20 @@ impl RequestTabView {
                     let text = state.read(cx).value().to_string();
                     if this.editor.draft().scripts.tests != text {
                         this.editor.draft_mut().scripts.tests = text;
+                        this.editor.refresh_save_status();
+                        cx.notify();
+                    }
+                }
+            },
+        ));
+
+        subscriptions.push(cx.subscribe(
+            variable_overrides_input,
+            |this: &mut RequestTabView, state: Entity<InputState>, event: &InputEvent, cx| {
+                if let InputEvent::Change = event {
+                    let text = state.read(cx).value().to_string();
+                    if this.editor.draft().variable_overrides_json != text {
+                        this.editor.draft_mut().variable_overrides_json = text;
                         this.editor.refresh_save_status();
                         cx.notify();
                     }

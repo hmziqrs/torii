@@ -244,6 +244,7 @@ request_tab_tests_label = Tests Script
 request_tab_settings_label = Settings
 request_tab_timeout_label = Timeout (ms)
 request_tab_follow_redirects_label = Follow Redirects (true/false)
+request_tab_variable_overrides_label = Variable Overrides (JSON)
 request_tab_latest_run_label = Latest Run
 request_tab_latest_run_none = No run yet
 request_tab_response_label = Response

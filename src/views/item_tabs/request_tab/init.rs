@@ -166,6 +166,15 @@ impl RequestTabView {
             state.set_value(initial.scripts.tests.clone(), window, cx);
             state
         });
+        let variable_overrides_input = cx.new(|cx| {
+            let mut state = InputState::new(window, cx)
+                .code_editor("json")
+                .line_number(true)
+                .searchable(true)
+                .soft_wrap(false);
+            state.set_value(initial.variable_overrides_json.clone(), window, cx);
+            state
+        });
         let timeout_input = cx.new(|cx| {
             let mut state = InputState::new(window, cx);
             let value = initial
@@ -204,6 +213,7 @@ impl RequestTabView {
             &body_raw_json_input,
             &pre_request_input,
             &tests_input,
+            &variable_overrides_input,
             &timeout_input,
             &follow_redirects_input,
         );
@@ -226,6 +236,7 @@ impl RequestTabView {
             body_raw_json_input,
             pre_request_input,
             tests_input,
+            variable_overrides_input,
             timeout_input,
             follow_redirects_input,
             params_rows: Vec::new(),
