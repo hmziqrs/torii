@@ -19,6 +19,8 @@ use crate::{
     },
 };
 
+const UNTITLED_REQUEST_NAME: &str = "Untitled Request";
+
 #[derive(Clone)]
 pub struct CollectionStoreRepos {
     pub requests: RequestRepoRef,
@@ -115,16 +117,27 @@ impl ResolvedCollectionStore {
                     .create(store.collection_id, parent_folder_id, name, method, url)
             }
             Self::Linked(store) => {
-                ensure_not_reserved_name(name)?;
                 let mut state =
                     read_linked_collection(&store.root_path, &linked_collection_stub(store))?;
+                let sibling_names = state
+                    .requests
+                    .iter()
+                    .filter(|request| request.parent_folder_id == parent_folder_id)
+                    .map(|request| request.name.clone())
+                    .collect::<Vec<_>>();
+                let effective_name = if name == UNTITLED_REQUEST_NAME {
+                    next_postman_style_name(UNTITLED_REQUEST_NAME, &sibling_names)
+                } else {
+                    name.to_string()
+                };
+                ensure_not_reserved_name(&effective_name)?;
 
                 let next_sort =
                     next_request_sort(&state.folders, &state.requests, parent_folder_id);
                 let request = RequestItem::new(
                     store.collection_id,
                     parent_folder_id,
-                    name,
+                    &effective_name,
                     method,
                     url,
                     next_sort,
@@ -218,6 +231,21 @@ fn linked_collection_stub(store: &LinkedCollectionStore) -> Collection {
         linked_root_path: Some(store.root_path.clone()),
     };
     collection
+}
+
+fn next_postman_style_name(base: &str, existing_names: &[String]) -> String {
+    if !existing_names.iter().any(|name| name == base) {
+        return base.to_string();
+    }
+
+    let mut index = 2;
+    loop {
+        let candidate = format!("{base} ({index})");
+        if !existing_names.iter().any(|name| name == &candidate) {
+            return candidate;
+        }
+        index += 1;
+    }
 }
 
 #[allow(dead_code)]

@@ -88,7 +88,17 @@ fn collection_store_resolves_managed_and_linked_by_collection_id() -> Result<()>
 
     let _linked_request =
         linked_store.create_request(&store_repos, None, "Linked Request", "GET", "/linked")?;
+    let linked_untitled_1 =
+        linked_store.create_request(&store_repos, None, "Untitled Request", "GET", "")?;
+    let linked_untitled_2 =
+        linked_store.create_request(&store_repos, None, "Untitled Request", "GET", "")?;
+    let linked_untitled_3 =
+        linked_store.create_request(&store_repos, None, "Untitled Request", "GET", "")?;
     let _linked_env = linked_store.create_environment(&store_repos, "Linked Env")?;
+
+    assert_eq!(linked_untitled_1.name, "Untitled Request");
+    assert_eq!(linked_untitled_2.name, "Untitled Request (2)");
+    assert_eq!(linked_untitled_3.name, "Untitled Request (3)");
 
     // Managed collection writes should stay in SQLite tables.
     let managed_request_count: i64 = db.block_on(async {
@@ -137,7 +147,7 @@ fn collection_store_resolves_managed_and_linked_by_collection_id() -> Result<()>
                 .is_some_and(|name| name.ends_with(".request.json"))
         })
         .count();
-    assert_eq!(linked_request_files, 1);
+    assert_eq!(linked_request_files, 4);
     let linked_env_files = std::fs::read_dir(&linked_root)?
         .filter_map(|entry| entry.ok())
         .filter(|entry| {
