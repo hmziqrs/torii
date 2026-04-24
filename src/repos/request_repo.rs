@@ -223,9 +223,9 @@ impl RequestRepository for SqliteRequestRepository {
             .execute(&mut *tx)
             .await?;
 
-            normalize_request_sort_orders(&mut tx, source_collection_id, source_parent_folder_id)
+            normalize_mixed_sort_orders(&mut tx, source_collection_id, source_parent_folder_id)
                 .await?;
-            normalize_request_sort_orders(&mut tx, collection_id, parent_folder_id).await?;
+            normalize_mixed_sort_orders(&mut tx, collection_id, parent_folder_id).await?;
 
             tx.commit().await?;
             Ok::<(), anyhow::Error>(())
@@ -304,7 +304,7 @@ impl RequestRepository for SqliteRequestRepository {
                 .execute(&mut *tx)
                 .await
                 .context("failed to delete request")?;
-            normalize_request_sort_orders(&mut tx, collection_id, parent_folder_id).await?;
+            normalize_mixed_sort_orders(&mut tx, collection_id, parent_folder_id).await?;
             tx.commit().await?;
             Ok::<(), anyhow::Error>(())
         })
@@ -491,16 +491,26 @@ async fn insert_request(
     Ok(())
 }
 
-async fn normalize_request_sort_orders(
+async fn normalize_mixed_sort_orders(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     collection_id: CollectionId,
     parent_folder_id: Option<FolderId>,
 ) -> RepoResult<()> {
     let rows = sqlx::query(
-        "SELECT id FROM requests
-         WHERE collection_id = ? AND parent_folder_id IS ?
+        "SELECT kind, id
+         FROM (
+             SELECT 'request' AS kind, id, sort_order
+             FROM requests
+             WHERE collection_id = ? AND parent_folder_id IS ?
+             UNION ALL
+             SELECT 'folder' AS kind, id, sort_order
+             FROM folders
+             WHERE collection_id = ? AND parent_folder_id IS ?
+         )
          ORDER BY sort_order ASC, id ASC",
     )
+    .bind(collection_id.to_string())
+    .bind(parent_folder_id.map(|it| it.to_string()))
     .bind(collection_id.to_string())
     .bind(parent_folder_id.map(|it| it.to_string()))
     .fetch_all(&mut **tx)
@@ -508,17 +518,27 @@ async fn normalize_request_sort_orders(
 
     let updated_at = now_unix_ts();
     for (index, row) in rows.iter().enumerate() {
+        let kind: String = row.get("kind");
         let id: String = row.get("id");
-        sqlx::query(
-            "UPDATE requests
-             SET sort_order = ?, updated_at = ?, revision = revision + 1
-             WHERE id = ?",
-        )
-        .bind(index as i64)
-        .bind(updated_at)
-        .bind(id)
-        .execute(&mut **tx)
-        .await?;
+        let query = match kind.as_str() {
+            "request" => {
+                "UPDATE requests
+                 SET sort_order = ?, updated_at = ?, revision = revision + 1
+                 WHERE id = ?"
+            }
+            "folder" => {
+                "UPDATE folders
+                 SET sort_order = ?, updated_at = ?, revision = revision + 1
+                 WHERE id = ?"
+            }
+            _ => return Err(anyhow!("unexpected sibling kind in normalize: {kind}")),
+        };
+        sqlx::query(query)
+            .bind(index as i64)
+            .bind(updated_at)
+            .bind(id)
+            .execute(&mut **tx)
+            .await?;
     }
 
     Ok(())

@@ -1177,7 +1177,7 @@ Required GPUI performance audit:
 - [x] Linked collection order is owned by Git-visible parent metadata, not hidden SQLite state
 - [x] Linked collections can rebuild fully from tracked files without relying on cache
 - [x] Linked collections define one watcher/reconcile contract for normal disk edits and future Git-driven edits
-- [ ] Folders and requests can be interleaved and reordered under the same parent
+- [x] Folders and requests can be interleaved and reordered under the same parent
 - [x] CRUD exists for workspace, collection, folder, request, and environment items
 - [ ] Drag/drop mutations are transactional and reject illegal targets
 - [x] Workspace variables, environment variables, and request-local overrides all exist

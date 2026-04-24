@@ -210,8 +210,8 @@ fn collection_and_request_mutations_compact_source_order() -> Result<()> {
             .iter()
             .map(|request| (request.id, request.sort_order))
             .collect::<Vec<_>>(),
-        vec![(request_b.id, 0), (request_c.id, 1)],
-        "request sort orders should compact after move-out"
+        vec![(request_b.id, 1), (request_c.id, 2)],
+        "request sort orders should preserve mixed sibling order after move-out"
     );
 
     request_repo.delete(request_b.id)?;
@@ -222,7 +222,7 @@ fn collection_and_request_mutations_compact_source_order() -> Result<()> {
         .collect::<Vec<_>>();
     assert_eq!(root_requests_after_delete.len(), 1);
     assert_eq!(root_requests_after_delete[0].id, request_c.id);
-    assert_eq!(root_requests_after_delete[0].sort_order, 0);
+    assert_eq!(root_requests_after_delete[0].sort_order, 1);
 
     Ok(())
 }
