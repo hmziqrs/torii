@@ -8,7 +8,7 @@ use crate::{
     session::item_key::ItemKey,
 };
 use gpui::{
-    AnyElement, App, InteractiveElement as _, Render, SharedString,
+    AnyElement, App, InteractiveElement as _, Pixels, Point, Render, SharedString,
     StatefulInteractiveElement as _, StyleRefinement, Window, div, prelude::*, px,
 };
 use gpui_component::{
@@ -32,6 +32,7 @@ pub(super) enum TreeDragPayload {
 pub(super) enum TreeDropTarget {
     Collection(CollectionId),
     Folder(FolderId),
+    Request(RequestId),
 }
 
 pub(super) fn render_collection_tree_row(
@@ -68,14 +69,21 @@ pub(super) fn render_collection_tree_row(
         })
         .on_drag(payload.clone(), {
             let title = collection.collection.name.clone();
-            move |_, _, _, cx: &mut App| {
-                cx.new(|_| DragTreePreview::new(title.clone(), IconName::BookOpen))
+            move |_, position, _, cx: &mut App| {
+                cx.new(|_| DragTreePreview::new(title.clone(), IconName::BookOpen, position))
             }
         })
-        .drag_over::<TreeDragPayload>(move |style: StyleRefinement, _, _, _| {
-            style.border_1().border_color(gpui::rgb(0x2563EB))
+        .drag_over::<TreeDragPayload>(move |style: StyleRefinement, dragged, _, _| {
+            if matches!(dragged, TreeDragPayload::Request(_)) {
+                style.border_1().border_color(gpui::rgb(0x2563EB))
+            } else {
+                style
+            }
         })
         .on_drop(move |dragged: &TreeDragPayload, window, cx| {
+            if !matches!(dragged, TreeDragPayload::Request(_)) {
+                return;
+            }
             let result = weak_root_drop
                 .update(cx, |this, cx| {
                     this.apply_tree_drop(dragged.clone(), drop_target, cx)
@@ -256,8 +264,8 @@ fn render_folder_tree_row(
         })
         .on_drag(payload.clone(), {
             let title = folder.folder.name.clone();
-            move |_, _, _, cx: &mut App| {
-                cx.new(|_| DragTreePreview::new(title.clone(), IconName::Folder))
+            move |_, position, _, cx: &mut App| {
+                cx.new(|_| DragTreePreview::new(title.clone(), IconName::Folder, position))
             }
         })
         .drag_over::<TreeDragPayload>(move |style: StyleRefinement, _, _, _| {
@@ -338,14 +346,20 @@ fn render_folder_tree_row(
                 .gap_2()
                 .items_center()
                 .child(
-                    div()
+                    h_flex()
                         .w_4()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(if has_children {
-                            if is_collapsed { ">" } else { "v" }
-                        } else {
-                            ""
+                        .justify_center()
+                        .items_center()
+                        .when(has_children, |this| {
+                            this.child(
+                                Icon::new(if is_collapsed {
+                                    IconName::ChevronRight
+                                } else {
+                                    IconName::ChevronDown
+                                })
+                                .small()
+                                .text_color(cx.theme().muted_foreground),
+                            )
                         }),
                 )
                 .child(Icon::new(IconName::Folder).small())
@@ -388,7 +402,9 @@ fn render_request_tree_row(
     let weak_root_click = weak_root.clone();
     let weak_root_menu_dup = weak_root.clone();
     let weak_root_menu_delete = weak_root.clone();
+    let weak_root_drop = weak_root.clone();
     let payload = TreeDragPayload::Request(request_id);
+    let drop_target = TreeDropTarget::Request(request_id);
     let request_name = request.name.clone();
 
     tree_row_base(depth, active_key == Some(item_key), cx)
@@ -398,8 +414,21 @@ fn render_request_tree_row(
         })
         .on_drag(payload, {
             let title = request.name.clone();
-            move |_, _, _, cx: &mut App| {
-                cx.new(|_| DragTreePreview::new(title.clone(), IconName::File))
+            move |_, position, _, cx: &mut App| {
+                cx.new(|_| DragTreePreview::new(title.clone(), IconName::File, position))
+            }
+        })
+        .drag_over::<TreeDragPayload>(move |style: StyleRefinement, _, _, _| {
+            style.border_1().border_color(gpui::rgb(0x2563EB))
+        })
+        .on_drop(move |dragged: &TreeDragPayload, window, cx| {
+            let result = weak_root_drop
+                .update(cx, |this, cx| {
+                    this.apply_tree_drop(dragged.clone(), drop_target, cx)
+                })
+                .unwrap_or_else(|_| Err("workspace view was closed".to_string()));
+            if let Err(err) = result {
+                window.push_notification(err, cx);
             }
         })
         .context_menu(move |menu: PopupMenu, _, _| {
@@ -570,27 +599,31 @@ fn render_linked_badge(collection: &CollectionTree) -> Option<AnyElement> {
 struct DragTreePreview {
     title: SharedString,
     icon: IconName,
+    position: Point<Pixels>,
 }
 
 impl DragTreePreview {
-    fn new(title: impl Into<SharedString>, icon: IconName) -> Self {
+    fn new(title: impl Into<SharedString>, icon: IconName, position: Point<Pixels>) -> Self {
         Self {
             title: title.into(),
             icon,
+            position,
         }
     }
 }
 
 impl Render for DragTreePreview {
     fn render(&mut self, _window: &mut Window, _cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        h_flex()
-            .px_2()
-            .py_1()
-            .gap_2()
-            .rounded_sm()
-            .bg(gpui::rgb(0x1F2937))
-            .text_color(gpui::rgb(0xF9FAFB))
-            .child(Icon::new(self.icon.clone()).small())
-            .child(div().text_sm().child(self.title.clone()))
+        div().pl(self.position.x).pt(self.position.y).child(
+            h_flex()
+                .px_2()
+                .py_1()
+                .gap_2()
+                .rounded_sm()
+                .bg(gpui::rgb(0x1F2937))
+                .text_color(gpui::rgb(0xF9FAFB))
+                .child(Icon::new(self.icon.clone()).small())
+                .child(div().text_sm().child(self.title.clone())),
+        )
     }
 }

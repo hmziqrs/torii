@@ -11,6 +11,21 @@ use crate::{
     services::workspace_tree::{FolderTree, TreeItem},
 };
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum MixedSibling {
+    Folder(FolderId),
+    Request(RequestId),
+}
+
+impl MixedSibling {
+    fn to_linked(self) -> LinkedSiblingId {
+        match self {
+            Self::Folder(id) => LinkedSiblingId::Folder { id: id.to_string() },
+            Self::Request(id) => LinkedSiblingId::Request { id: id.to_string() },
+        }
+    }
+}
+
 impl AppRoot {
     pub(crate) fn prune_collapsed_folder_ids(&mut self) {
         let Some(workspace) = self.catalog.selected_workspace() else {
@@ -102,29 +117,68 @@ impl AppRoot {
         target: TreeDropTarget,
         cx: &mut gpui::Context<Self>,
     ) -> Result<(), String> {
-        let Some((source_collection_id, _)) = self.find_folder_location(dragged_folder_id) else {
+        let Some((source_collection_id, source_parent)) =
+            self.find_folder_location(dragged_folder_id)
+        else {
             return Err("dragged folder no longer exists".to_string());
         };
-        let (target_collection_id, target_parent) = self.resolve_drop_parent(target)?;
-        if target_parent == Some(dragged_folder_id) {
-            return Err("cannot drop a folder into itself".to_string());
-        }
 
-        if let Some(target_folder_id) = target_parent
-            && self.folder_is_descendant_of(target_folder_id, dragged_folder_id)
-        {
-            return Err("cannot drop a folder into its descendant".to_string());
+        let (target_collection_id, target_parent, insert_before) = match target {
+            TreeDropTarget::Collection(collection_id) => (collection_id, None, None),
+            TreeDropTarget::Folder(target_folder_id) => {
+                if target_folder_id == dragged_folder_id {
+                    return Ok(());
+                }
+                let Some((collection_id, target_folder_parent)) =
+                    self.find_folder_location(target_folder_id)
+                else {
+                    return Err("drop target folder no longer exists".to_string());
+                };
+                if source_collection_id == collection_id && source_parent == target_folder_parent {
+                    (
+                        collection_id,
+                        target_folder_parent,
+                        Some(MixedSibling::Folder(target_folder_id)),
+                    )
+                } else {
+                    (collection_id, Some(target_folder_id), None)
+                }
+            }
+            TreeDropTarget::Request(_) => {
+                return Err("folders cannot be dropped onto requests".to_string());
+            }
+        };
+
+        if let Some(target_folder_id) = target_parent {
+            if target_folder_id == dragged_folder_id {
+                return Err("cannot drop a folder into itself".to_string());
+            }
+            if self.folder_is_descendant_of(target_folder_id, dragged_folder_id) {
+                return Err("cannot drop a folder into its descendant".to_string());
+            }
         }
 
         let storage_kind =
             self.ensure_same_storage_kind(source_collection_id, target_collection_id)?;
         match storage_kind {
             CollectionStorageKind::Managed => {
-                services(cx)
-                    .repos
-                    .folder
-                    .move_to(dragged_folder_id, target_collection_id, target_parent)
-                    .map_err(|err| format!("failed to move folder: {err}"))?;
+                if let Some(insert_before) = insert_before {
+                    self.reorder_mixed_after_drop_managed(
+                        MixedSibling::Folder(dragged_folder_id),
+                        source_collection_id,
+                        source_parent,
+                        target_collection_id,
+                        target_parent,
+                        insert_before,
+                        cx,
+                    )?;
+                } else {
+                    services(cx)
+                        .repos
+                        .folder
+                        .move_to(dragged_folder_id, target_collection_id, target_parent)
+                        .map_err(|err| format!("failed to move folder: {err}"))?;
+                }
             }
             CollectionStorageKind::Linked => {
                 if source_collection_id != target_collection_id {
@@ -133,9 +187,24 @@ impl AppRoot {
                             .to_string(),
                     );
                 }
-                self.move_linked_folder(dragged_folder_id, target_parent, target_collection_id)?;
+                if let Some(insert_before) = insert_before {
+                    self.reorder_mixed_after_drop_linked(
+                        MixedSibling::Folder(dragged_folder_id),
+                        source_parent,
+                        target_parent,
+                        insert_before,
+                        target_collection_id,
+                    )?;
+                } else {
+                    self.move_linked_folder(
+                        dragged_folder_id,
+                        target_parent,
+                        target_collection_id,
+                    )?;
+                }
             }
         }
+
         self.refresh_catalog(cx);
         self.persist_session_state(cx);
         Ok(())
@@ -147,19 +216,68 @@ impl AppRoot {
         target: TreeDropTarget,
         cx: &mut gpui::Context<Self>,
     ) -> Result<(), String> {
-        let Some((source_collection_id, _)) = self.find_request_location(dragged_request_id) else {
+        let Some((source_collection_id, source_parent)) =
+            self.find_request_location(dragged_request_id)
+        else {
             return Err("dragged request no longer exists".to_string());
         };
-        let (target_collection_id, target_parent) = self.resolve_drop_parent(target)?;
+
+        let (target_collection_id, target_parent, insert_before) = match target {
+            TreeDropTarget::Collection(collection_id) => (collection_id, None, None),
+            TreeDropTarget::Folder(target_folder_id) => {
+                let Some((collection_id, target_folder_parent)) =
+                    self.find_folder_location(target_folder_id)
+                else {
+                    return Err("drop target folder no longer exists".to_string());
+                };
+                if source_collection_id == collection_id && source_parent == target_folder_parent {
+                    (
+                        collection_id,
+                        target_folder_parent,
+                        Some(MixedSibling::Folder(target_folder_id)),
+                    )
+                } else {
+                    (collection_id, Some(target_folder_id), None)
+                }
+            }
+            TreeDropTarget::Request(target_request_id) => {
+                if target_request_id == dragged_request_id {
+                    return Ok(());
+                }
+                let Some((collection_id, target_request_parent)) =
+                    self.find_request_location(target_request_id)
+                else {
+                    return Err("drop target request no longer exists".to_string());
+                };
+                (
+                    collection_id,
+                    target_request_parent,
+                    Some(MixedSibling::Request(target_request_id)),
+                )
+            }
+        };
+
         let storage_kind =
             self.ensure_same_storage_kind(source_collection_id, target_collection_id)?;
         match storage_kind {
             CollectionStorageKind::Managed => {
-                services(cx)
-                    .repos
-                    .request
-                    .move_to(dragged_request_id, target_collection_id, target_parent)
-                    .map_err(|err| format!("failed to move request: {err}"))?;
+                if let Some(insert_before) = insert_before {
+                    self.reorder_mixed_after_drop_managed(
+                        MixedSibling::Request(dragged_request_id),
+                        source_collection_id,
+                        source_parent,
+                        target_collection_id,
+                        target_parent,
+                        insert_before,
+                        cx,
+                    )?;
+                } else {
+                    services(cx)
+                        .repos
+                        .request
+                        .move_to(dragged_request_id, target_collection_id, target_parent)
+                        .map_err(|err| format!("failed to move request: {err}"))?;
+                }
             }
             CollectionStorageKind::Linked => {
                 if source_collection_id != target_collection_id {
@@ -168,25 +286,117 @@ impl AppRoot {
                             .to_string(),
                     );
                 }
-                self.move_linked_request(dragged_request_id, target_parent, target_collection_id)?;
+                if let Some(insert_before) = insert_before {
+                    self.reorder_mixed_after_drop_linked(
+                        MixedSibling::Request(dragged_request_id),
+                        source_parent,
+                        target_parent,
+                        insert_before,
+                        target_collection_id,
+                    )?;
+                } else {
+                    self.move_linked_request(
+                        dragged_request_id,
+                        target_parent,
+                        target_collection_id,
+                    )?;
+                }
             }
         }
+
         self.refresh_catalog(cx);
         self.persist_session_state(cx);
         Ok(())
     }
 
-    fn resolve_drop_parent(
-        &self,
-        target: TreeDropTarget,
-    ) -> Result<(CollectionId, Option<FolderId>), String> {
-        match target {
-            TreeDropTarget::Collection(collection_id) => Ok((collection_id, None)),
-            TreeDropTarget::Folder(folder_id) => self
-                .find_folder_location(folder_id)
-                .map(|(collection_id, _)| (collection_id, Some(folder_id)))
-                .ok_or_else(|| "drop target folder no longer exists".to_string()),
+    fn reorder_mixed_after_drop_managed(
+        &mut self,
+        dragged: MixedSibling,
+        source_collection_id: CollectionId,
+        source_parent: Option<FolderId>,
+        target_collection_id: CollectionId,
+        target_parent: Option<FolderId>,
+        insert_before: MixedSibling,
+        cx: &mut gpui::Context<Self>,
+    ) -> Result<(), String> {
+        if dragged == insert_before {
+            return Ok(());
         }
+
+        if source_collection_id != target_collection_id || source_parent != target_parent {
+            self.move_sibling_managed(dragged, target_collection_id, target_parent, cx)?;
+        }
+
+        self.refresh_catalog(cx);
+        let mut siblings = self
+            .mixed_siblings_for_parent(target_collection_id, target_parent)
+            .ok_or_else(|| "drop target parent no longer exists".to_string())?;
+
+        let Some(dragged_pos) = siblings.iter().position(|sibling| *sibling == dragged) else {
+            return Err("dragged item no longer exists after move".to_string());
+        };
+        siblings.remove(dragged_pos);
+
+        let Some(insert_idx) = siblings
+            .iter()
+            .position(|sibling| *sibling == insert_before)
+        else {
+            return Err("drop target no longer exists after move".to_string());
+        };
+        siblings.insert(insert_idx, dragged);
+
+        self.apply_mixed_order_managed(target_collection_id, target_parent, &siblings, cx)
+    }
+
+    fn apply_mixed_order_managed(
+        &self,
+        collection_id: CollectionId,
+        parent_folder_id: Option<FolderId>,
+        ordered: &[MixedSibling],
+        cx: &mut gpui::Context<Self>,
+    ) -> Result<(), String> {
+        for sibling in ordered {
+            self.move_sibling_managed(*sibling, collection_id, parent_folder_id, cx)?;
+        }
+        Ok(())
+    }
+
+    fn move_sibling_managed(
+        &self,
+        sibling: MixedSibling,
+        collection_id: CollectionId,
+        parent_folder_id: Option<FolderId>,
+        cx: &mut gpui::Context<Self>,
+    ) -> Result<(), String> {
+        match sibling {
+            MixedSibling::Folder(folder_id) => services(cx)
+                .repos
+                .folder
+                .move_to(folder_id, collection_id, parent_folder_id)
+                .map_err(|err| format!("failed to move folder: {err}")),
+            MixedSibling::Request(request_id) => services(cx)
+                .repos
+                .request
+                .move_to(request_id, collection_id, parent_folder_id)
+                .map_err(|err| format!("failed to move request: {err}")),
+        }
+    }
+
+    fn reorder_mixed_after_drop_linked(
+        &self,
+        dragged: MixedSibling,
+        source_parent: Option<FolderId>,
+        target_parent: Option<FolderId>,
+        insert_before: MixedSibling,
+        collection_id: CollectionId,
+    ) -> Result<(), String> {
+        self.move_linked_sibling_with_order(
+            dragged,
+            source_parent,
+            target_parent,
+            Some(insert_before),
+            collection_id,
+        )
     }
 
     fn ensure_same_storage_kind(
@@ -242,6 +452,31 @@ impl AppRoot {
         })
     }
 
+    fn mixed_siblings_for_parent(
+        &self,
+        collection_id: CollectionId,
+        parent_folder_id: Option<FolderId>,
+    ) -> Option<Vec<MixedSibling>> {
+        let workspace = self.catalog.selected_workspace()?;
+        let collection_tree = workspace
+            .collections
+            .iter()
+            .find(|collection| collection.collection.id == collection_id)?;
+        let children = match parent_folder_id {
+            Some(folder_id) => &collection_tree.find_folder_tree(folder_id)?.children,
+            None => &collection_tree.children,
+        };
+        Some(
+            children
+                .iter()
+                .map(|item| match item {
+                    TreeItem::Folder(folder) => MixedSibling::Folder(folder.folder.id),
+                    TreeItem::Request(request) => MixedSibling::Request(request.id),
+                })
+                .collect(),
+        )
+    }
+
     fn folder_is_descendant_of(&self, candidate: FolderId, ancestor: FolderId) -> bool {
         fn contains_descendant(folder: &FolderTree, candidate: FolderId) -> bool {
             folder.children.iter().any(|item| match item {
@@ -267,54 +502,44 @@ impl AppRoot {
         target_parent: Option<FolderId>,
         collection_id: CollectionId,
     ) -> Result<(), String> {
-        let collection = self.load_linked_collection_row(collection_id)?;
-        let root_path = collection
-            .storage_config
-            .linked_root_path
-            .clone()
-            .ok_or_else(|| "linked collection is missing root path".to_string())?;
-        let mut state = read_linked_collection(&root_path, &collection)
-            .map_err(|err| format!("failed to read linked collection: {err}"))?;
-
-        let source_idx = state
-            .folders
-            .iter()
-            .position(|folder| folder.id == dragged_folder_id)
+        let source_parent = self
+            .find_folder_location(dragged_folder_id)
+            .map(|(_, parent)| parent)
             .ok_or_else(|| "dragged folder no longer exists".to_string())?;
-        let previous_parent = state.folders[source_idx].parent_folder_id;
-
-        if target_parent == previous_parent {
-            return Ok(());
-        }
-
-        detach_linked_sibling(
-            &mut state,
-            previous_parent,
-            &LinkedSiblingId::Folder {
-                id: dragged_folder_id.to_string(),
-            },
-        );
-        attach_linked_sibling(
-            &mut state,
+        self.move_linked_sibling_with_order(
+            MixedSibling::Folder(dragged_folder_id),
+            source_parent,
             target_parent,
-            LinkedSiblingId::Folder {
-                id: dragged_folder_id.to_string(),
-            },
-        );
-
-        let next_sort = next_linked_sibling_sort(&state, target_parent);
-        state.folders[source_idx].parent_folder_id = target_parent;
-        state.folders[source_idx].sort_order = next_sort;
-
-        write_linked_collection(&root_path, &state)
-            .map_err(|err| format!("failed to write linked collection: {err}"))?;
-        Ok(())
+            None,
+            collection_id,
+        )
     }
 
     fn move_linked_request(
         &self,
         dragged_request_id: RequestId,
         target_parent: Option<FolderId>,
+        collection_id: CollectionId,
+    ) -> Result<(), String> {
+        let source_parent = self
+            .find_request_location(dragged_request_id)
+            .map(|(_, parent)| parent)
+            .ok_or_else(|| "dragged request no longer exists".to_string())?;
+        self.move_linked_sibling_with_order(
+            MixedSibling::Request(dragged_request_id),
+            source_parent,
+            target_parent,
+            None,
+            collection_id,
+        )
+    }
+
+    fn move_linked_sibling_with_order(
+        &self,
+        dragged: MixedSibling,
+        source_parent: Option<FolderId>,
+        target_parent: Option<FolderId>,
+        insert_before: Option<MixedSibling>,
         collection_id: CollectionId,
     ) -> Result<(), String> {
         let collection = self.load_linked_collection_row(collection_id)?;
@@ -326,35 +551,49 @@ impl AppRoot {
         let mut state = read_linked_collection(&root_path, &collection)
             .map_err(|err| format!("failed to read linked collection: {err}"))?;
 
-        let source_idx = state
-            .requests
-            .iter()
-            .position(|request| request.id == dragged_request_id)
-            .ok_or_else(|| "dragged request no longer exists".to_string())?;
-        let previous_parent = state.requests[source_idx].parent_folder_id;
+        let dragged_linked = dragged.to_linked();
+        detach_linked_sibling(&mut state, source_parent, &dragged_linked);
+        let insert_before_linked = insert_before.map(MixedSibling::to_linked);
 
-        if target_parent == previous_parent {
-            return Ok(());
+        {
+            let destination = linked_children_mut(&mut state, target_parent);
+            let insert_idx = match insert_before_linked.as_ref() {
+                Some(target) => destination
+                    .iter()
+                    .position(|sibling| sibling == target)
+                    .unwrap_or(destination.len()),
+                None => destination.len(),
+            };
+            destination.insert(insert_idx, dragged_linked.clone());
         }
 
-        detach_linked_sibling(
-            &mut state,
-            previous_parent,
-            &LinkedSiblingId::Request {
-                id: dragged_request_id.to_string(),
-            },
-        );
-        attach_linked_sibling(
-            &mut state,
-            target_parent,
-            LinkedSiblingId::Request {
-                id: dragged_request_id.to_string(),
-            },
-        );
+        match dragged {
+            MixedSibling::Folder(folder_id) => {
+                let Some(folder) = state
+                    .folders
+                    .iter_mut()
+                    .find(|folder| folder.id == folder_id)
+                else {
+                    return Err("dragged folder no longer exists".to_string());
+                };
+                folder.parent_folder_id = target_parent;
+            }
+            MixedSibling::Request(request_id) => {
+                let Some(request) = state
+                    .requests
+                    .iter_mut()
+                    .find(|request| request.id == request_id)
+                else {
+                    return Err("dragged request no longer exists".to_string());
+                };
+                request.parent_folder_id = target_parent;
+            }
+        }
 
-        let next_sort = next_linked_sibling_sort(&state, target_parent);
-        state.requests[source_idx].parent_folder_id = target_parent;
-        state.requests[source_idx].sort_order = next_sort;
+        renumber_linked_parent(&mut state, source_parent);
+        if target_parent != source_parent {
+            renumber_linked_parent(&mut state, target_parent);
+        }
 
         write_linked_collection(&root_path, &state)
             .map_err(|err| format!("failed to write linked collection: {err}"))?;
@@ -377,6 +616,16 @@ impl AppRoot {
     }
 }
 
+fn linked_children_mut(
+    state: &mut LinkedCollectionState,
+    parent_folder_id: Option<FolderId>,
+) -> &mut Vec<LinkedSiblingId> {
+    match parent_folder_id {
+        Some(parent_id) => state.folder_child_orders.entry(parent_id).or_default(),
+        None => &mut state.root_child_order,
+    }
+}
+
 fn detach_linked_sibling(
     state: &mut LinkedCollectionState,
     parent_folder_id: Option<FolderId>,
@@ -394,38 +643,38 @@ fn detach_linked_sibling(
     }
 }
 
-fn attach_linked_sibling(
-    state: &mut LinkedCollectionState,
-    parent_folder_id: Option<FolderId>,
-    sibling: LinkedSiblingId,
-) {
-    match parent_folder_id {
+fn renumber_linked_parent(state: &mut LinkedCollectionState, parent_folder_id: Option<FolderId>) {
+    let ordered = match parent_folder_id {
         Some(parent_id) => state
             .folder_child_orders
-            .entry(parent_id)
-            .or_default()
-            .push(sibling),
-        None => state.root_child_order.push(sibling),
-    }
-}
+            .get(&parent_id)
+            .cloned()
+            .unwrap_or_default(),
+        None => state.root_child_order.clone(),
+    };
 
-fn next_linked_sibling_sort(
-    state: &LinkedCollectionState,
-    parent_folder_id: Option<FolderId>,
-) -> i64 {
-    state
-        .folders
-        .iter()
-        .filter(|folder| folder.parent_folder_id == parent_folder_id)
-        .map(|folder| folder.sort_order)
-        .chain(
-            state
-                .requests
-                .iter()
-                .filter(|request| request.parent_folder_id == parent_folder_id)
-                .map(|request| request.sort_order),
-        )
-        .max()
-        .unwrap_or(-1)
-        + 1
+    for (index, sibling) in ordered.iter().enumerate() {
+        match sibling {
+            LinkedSiblingId::Folder { id } => {
+                if let Some(folder) = state
+                    .folders
+                    .iter_mut()
+                    .find(|folder| folder.id.to_string() == *id)
+                {
+                    folder.parent_folder_id = parent_folder_id;
+                    folder.sort_order = index as i64;
+                }
+            }
+            LinkedSiblingId::Request { id } => {
+                if let Some(request) = state
+                    .requests
+                    .iter_mut()
+                    .find(|request| request.id.to_string() == *id)
+                {
+                    request.parent_folder_id = parent_folder_id;
+                    request.sort_order = index as i64;
+                }
+            }
+        }
+    }
 }
