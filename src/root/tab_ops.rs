@@ -1126,21 +1126,172 @@ impl AppRoot {
     pub(crate) fn duplicate_request(
         &mut self,
         request_id: RequestId,
-        request_name: String,
+        _request_name: String,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let services = services(cx);
-        let new_name = format!("{} (Copy)", request_name);
-        match services.repos.request.duplicate(request_id, &new_name) {
-            Ok(new_request) => {
+        let managed_source = match services.repos.request.get(request_id) {
+            Ok(source) => source,
+            Err(err) => {
+                tracing::error!("failed to load source request: {err}");
+                window.push_notification(
+                    es_fluent::localize("request_tab_duplicate_failed", None),
+                    cx,
+                );
+                return;
+            }
+        };
+
+        if let Some(source) = managed_source {
+            let siblings = match services
+                .repos
+                .request
+                .list_by_collection(source.collection_id)
+            {
+                Ok(requests) => requests
+                    .into_iter()
+                    .filter(|request| request.parent_folder_id == source.parent_folder_id)
+                    .map(|request| request.name)
+                    .collect::<Vec<_>>(),
+                Err(err) => {
+                    tracing::error!("failed to list sibling requests: {err}");
+                    window.push_notification(
+                        es_fluent::localize("request_tab_duplicate_failed", None),
+                        cx,
+                    );
+                    return;
+                }
+            };
+            let new_name = next_duplicate_request_name(&source.name, &siblings);
+            match services.repos.request.duplicate(request_id, &new_name) {
+                Ok(new_request) => {
+                    drop(services);
+                    self.refresh_catalog(cx);
+                    self.open_item(ItemKey::request(new_request.id), cx);
+                    window.push_notification(
+                        es_fluent::localize("request_tab_duplicate_ok", None),
+                        cx,
+                    );
+                }
+                Err(err) => {
+                    tracing::error!("failed to duplicate request: {err}");
+                    window.push_notification(
+                        es_fluent::localize("request_tab_duplicate_failed", None),
+                        cx,
+                    );
+                }
+            }
+            return;
+        }
+
+        let maybe_collection = self.catalog.selected_workspace().and_then(|workspace| {
+            workspace.collections.iter().find_map(|collection| {
+                collection
+                    .find_request(request_id)
+                    .map(|_| collection.collection.clone())
+            })
+        });
+
+        let Some(collection) = maybe_collection else {
+            window.push_notification(
+                es_fluent::localize("request_tab_duplicate_failed", None),
+                cx,
+            );
+            return;
+        };
+
+        if collection.storage_kind != CollectionStorageKind::Linked {
+            window.push_notification(
+                es_fluent::localize("request_tab_duplicate_failed", None),
+                cx,
+            );
+            return;
+        }
+
+        let root_path = match collection.storage_config.linked_root_path.clone() {
+            Some(path) => path,
+            None => {
+                window.push_notification(
+                    es_fluent::localize("request_tab_duplicate_failed", None),
+                    cx,
+                );
+                return;
+            }
+        };
+        let mut state = match read_linked_collection(&root_path, &collection) {
+            Ok(state) => state,
+            Err(err) => {
+                tracing::error!("failed to load linked collection for duplicate: {err}");
+                window.push_notification(
+                    es_fluent::localize("request_tab_duplicate_failed", None),
+                    cx,
+                );
+                return;
+            }
+        };
+        let Some(source) = state
+            .requests
+            .iter()
+            .find(|request| request.id == request_id)
+            .cloned()
+        else {
+            window.push_notification(
+                es_fluent::localize("request_tab_duplicate_failed", None),
+                cx,
+            );
+            return;
+        };
+
+        let sibling_names = state
+            .requests
+            .iter()
+            .filter(|request| request.parent_folder_id == source.parent_folder_id)
+            .map(|request| request.name.clone())
+            .collect::<Vec<_>>();
+        let mut duplicate = source.clone();
+        duplicate.id = RequestId::new();
+        duplicate.name = next_duplicate_request_name(&source.name, &sibling_names);
+        duplicate.sort_order = state
+            .folders
+            .iter()
+            .filter(|folder| folder.parent_folder_id == duplicate.parent_folder_id)
+            .map(|folder| folder.sort_order)
+            .chain(
+                state
+                    .requests
+                    .iter()
+                    .filter(|request| request.parent_folder_id == duplicate.parent_folder_id)
+                    .map(|request| request.sort_order),
+            )
+            .max()
+            .unwrap_or(-1)
+            + 1;
+        duplicate.meta = crate::domain::revision::RevisionMetadata::new_now();
+
+        if let Some(parent_id) = duplicate.parent_folder_id {
+            state
+                .folder_child_orders
+                .entry(parent_id)
+                .or_default()
+                .push(LinkedSiblingId::Request {
+                    id: duplicate.id.to_string(),
+                });
+        } else {
+            state.root_child_order.push(LinkedSiblingId::Request {
+                id: duplicate.id.to_string(),
+            });
+        }
+        state.requests.push(duplicate.clone());
+        match write_linked_collection(&root_path, &state) {
+            Ok(()) => {
                 drop(services);
                 self.refresh_catalog(cx);
-                self.open_item(ItemKey::request(new_request.id), cx);
+                self.open_item(ItemKey::request(duplicate.id), cx);
                 window.push_notification(es_fluent::localize("request_tab_duplicate_ok", None), cx);
             }
             Err(err) => {
-                tracing::error!("failed to duplicate request: {err}");
+                tracing::error!("failed to duplicate linked request: {err}");
                 window.push_notification(
                     es_fluent::localize("request_tab_duplicate_failed", None),
                     cx,
@@ -1329,6 +1480,22 @@ fn next_workspace_name(existing_names: &[String]) -> String {
     )
 }
 
+fn next_duplicate_request_name(source_name: &str, existing_names: &[String]) -> String {
+    let base = format!("{source_name} (Copy)");
+    if !existing_names.iter().any(|name| name == &base) {
+        return base;
+    }
+
+    let mut index = 2;
+    loop {
+        let candidate = format!("{source_name} (Copy {index})");
+        if !existing_names.iter().any(|name| name == &candidate) {
+            return candidate;
+        }
+        index += 1;
+    }
+}
+
 fn next_item_name(base: String, existing_names: &[String]) -> String {
     if !existing_names.iter().any(|name| name == &base) {
         return base;
@@ -1347,7 +1514,8 @@ fn next_item_name(base: String, existing_names: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        DraftLocation, draft_descendant_close_keys, should_reset_selected_workspace_on_delete,
+        DraftLocation, draft_descendant_close_keys, next_duplicate_request_name,
+        should_reset_selected_workspace_on_delete,
     };
     use crate::{
         domain::ids::{CollectionId, FolderId, RequestDraftId, WorkspaceId},
@@ -1460,5 +1628,18 @@ mod tests {
         );
 
         assert_eq!(draft_keys, vec![ItemKey::request_draft(draft_id)]);
+    }
+
+    #[test]
+    fn duplicate_request_name_uses_copy_suffix_with_increment() {
+        let existing = vec![
+            "My Request".to_string(),
+            "My Request (Copy)".to_string(),
+            "My Request (Copy 2)".to_string(),
+        ];
+        assert_eq!(
+            next_duplicate_request_name("My Request", &existing),
+            "My Request (Copy 3)"
+        );
     }
 }

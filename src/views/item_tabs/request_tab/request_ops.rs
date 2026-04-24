@@ -8,6 +8,8 @@ use crate::{
 };
 use anyhow::anyhow;
 
+const UNTITLED_REQUEST_NAME: &str = "Untitled Request";
+
 impl RequestTabView {
     pub fn has_unsaved_changes(&self) -> bool {
         matches!(
@@ -129,6 +131,15 @@ impl RequestTabView {
             let mut saved = request.clone();
             saved.id = crate::domain::ids::RequestId::new();
             saved.collection_id = collection.id;
+            let sibling_names = state
+                .requests
+                .iter()
+                .filter(|request| request.parent_folder_id == saved.parent_folder_id)
+                .map(|request| request.name.clone())
+                .collect::<Vec<_>>();
+            if saved.name == UNTITLED_REQUEST_NAME {
+                saved.name = next_postman_style_name(UNTITLED_REQUEST_NAME, &sibling_names);
+            }
             saved.sort_order = next_linked_request_sort(
                 &state.folders,
                 &state.requests,
@@ -200,10 +211,10 @@ impl RequestTabView {
         };
 
         // Duplicate from persisted baseline (not dirty in-memory draft).
-        let source = services
+        let source_collection = services
             .repos
-            .request
-            .get(source_id)
+            .collection
+            .get(self.editor.draft().collection_id)
             .map_err(|e| {
                 format!(
                     "{}: {e}",
@@ -212,17 +223,109 @@ impl RequestTabView {
             })?
             .ok_or_else(|| es_fluent::localize("request_tab_save_not_found", None).to_string())?;
 
-        let new_name = format!("{} (Copy)", source.name);
-        let mut duplicate = services
-            .repos
-            .request
-            .duplicate(source_id, &new_name)
-            .map_err(|e| {
-                format!(
-                    "{}: {e}",
-                    es_fluent::localize("request_tab_duplicate_failed", None)
-                )
-            })?;
+        let (source, mut duplicate) =
+            if source_collection.storage_kind == CollectionStorageKind::Linked {
+                let root_path = source_collection
+                    .storage_config
+                    .linked_root_path
+                    .clone()
+                    .ok_or_else(|| {
+                        format!(
+                            "{}: linked collection missing root path",
+                            es_fluent::localize("request_tab_duplicate_failed", None)
+                        )
+                    })?;
+                let mut state =
+                    read_linked_collection(&root_path, &source_collection).map_err(|e| {
+                        format!(
+                            "{}: {e}",
+                            es_fluent::localize("request_tab_duplicate_failed", None)
+                        )
+                    })?;
+                let source = state
+                    .requests
+                    .iter()
+                    .find(|request| request.id == source_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        es_fluent::localize("request_tab_save_not_found", None).to_string()
+                    })?;
+
+                let sibling_names = state
+                    .requests
+                    .iter()
+                    .filter(|request| request.parent_folder_id == source.parent_folder_id)
+                    .map(|request| request.name.clone())
+                    .collect::<Vec<_>>();
+                let mut duplicate = source.clone();
+                duplicate.id = crate::domain::ids::RequestId::new();
+                duplicate.name = next_duplicate_request_name(&source.name, &sibling_names);
+                duplicate.sort_order = next_linked_request_sort(
+                    &state.folders,
+                    &state.requests,
+                    duplicate.parent_folder_id,
+                    None,
+                );
+                duplicate.meta = crate::domain::revision::RevisionMetadata::new_now();
+
+                if let Err(err) =
+                    self.clone_auth_secrets_for_duplicate(&source, &mut duplicate, &services)
+                {
+                    return Err(err);
+                }
+
+                attach_request_order(&mut state, duplicate.id, duplicate.parent_folder_id);
+                state.requests.push(duplicate.clone());
+                write_linked_collection(&root_path, &state).map_err(|e| {
+                    format!(
+                        "{}: {e}",
+                        es_fluent::localize("request_tab_duplicate_failed", None)
+                    )
+                })?;
+                return Ok(duplicate);
+            } else {
+                let source = services
+                    .repos
+                    .request
+                    .get(source_id)
+                    .map_err(|e| {
+                        format!(
+                            "{}: {e}",
+                            es_fluent::localize("request_tab_duplicate_failed", None)
+                        )
+                    })?
+                    .ok_or_else(|| {
+                        es_fluent::localize("request_tab_save_not_found", None).to_string()
+                    })?;
+
+                let sibling_names = services
+                    .repos
+                    .request
+                    .list_by_collection(source.collection_id)
+                    .map_err(|e| {
+                        format!(
+                            "{}: {e}",
+                            es_fluent::localize("request_tab_duplicate_failed", None)
+                        )
+                    })?
+                    .into_iter()
+                    .filter(|request| request.parent_folder_id == source.parent_folder_id)
+                    .map(|request| request.name)
+                    .collect::<Vec<_>>();
+
+                let new_name = next_duplicate_request_name(&source.name, &sibling_names);
+                let duplicate = services
+                    .repos
+                    .request
+                    .duplicate(source_id, &new_name)
+                    .map_err(|e| {
+                        format!(
+                            "{}: {e}",
+                            es_fluent::localize("request_tab_duplicate_failed", None)
+                        )
+                    })?;
+                (source, duplicate)
+            };
 
         if let Err(err) = self.clone_auth_secrets_for_duplicate(&source, &mut duplicate, &services)
         {
@@ -760,5 +863,66 @@ fn detach_request_order(
             LinkedSiblingId::Request { id } => id != &request_id,
             _ => true,
         });
+    }
+}
+
+fn next_duplicate_request_name(source_name: &str, existing_names: &[String]) -> String {
+    let base = format!("{source_name} (Copy)");
+    if !existing_names.iter().any(|name| name == &base) {
+        return base;
+    }
+
+    let mut index = 2;
+    loop {
+        let candidate = format!("{source_name} (Copy {index})");
+        if !existing_names.iter().any(|name| name == &candidate) {
+            return candidate;
+        }
+        index += 1;
+    }
+}
+
+fn next_postman_style_name(base: &str, existing_names: &[String]) -> String {
+    if !existing_names.iter().any(|name| name == base) {
+        return base.to_string();
+    }
+
+    let mut index = 2;
+    loop {
+        let candidate = format!("{base} ({index})");
+        if !existing_names.iter().any(|name| name == &candidate) {
+            return candidate;
+        }
+        index += 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{next_duplicate_request_name, next_postman_style_name};
+
+    #[test]
+    fn duplicate_name_uses_copy_suffix_and_increments() {
+        let existing = vec![
+            "Untitled Request".to_string(),
+            "Untitled Request (Copy)".to_string(),
+            "Untitled Request (Copy 2)".to_string(),
+        ];
+        assert_eq!(
+            next_duplicate_request_name("Untitled Request", &existing),
+            "Untitled Request (Copy 3)"
+        );
+    }
+
+    #[test]
+    fn postman_style_name_uses_parenthesized_increment() {
+        let existing = vec![
+            "Untitled Request".to_string(),
+            "Untitled Request (2)".to_string(),
+        ];
+        assert_eq!(
+            next_postman_style_name("Untitled Request", &existing),
+            "Untitled Request (3)"
+        );
     }
 }
