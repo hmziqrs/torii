@@ -200,12 +200,19 @@ menu_delete = Delete
 menu_duplicate = Duplicate
 menu_new_request = New Request
 menu_new_folder = New Folder
+menu_rename = Rename
 menu_set_active_environment = Set Active Environment
 menu_copy_linked_root_path = Copy Linked Root Path
 
 delete_success = Item deleted.
 delete_failed = Delete failed.
 copy_linked_root_path_success = Linked root path copied.
+rename_dialog_title = Rename
+rename_dialog_name_label = Name
+rename_dialog_name_required = Name is required.
+rename_success = Item renamed.
+rename_failed = Rename failed
+rename_unsupported = This item cannot be renamed.
 
 ## TitleBar
 

@@ -1,5 +1,6 @@
 use super::{AppRoot, services};
 use crate::{
+    domain::revision::now_unix_ts,
     domain::{
         collection::{CollectionStorageConfig, CollectionStorageKind},
         folder::Folder,
@@ -659,6 +660,166 @@ impl AppRoot {
 
         self.refresh_catalog(cx);
         self.open_item(ItemKey::folder(folder.id), cx);
+        Ok(())
+    }
+
+    pub(crate) fn open_rename_item_dialog(
+        &mut self,
+        item_key: ItemKey,
+        current_name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let input = cx.new(|cx| InputState::new(window, cx));
+        input.update(cx, |state, cx| {
+            state.set_value(current_name.clone(), window, cx);
+        });
+        let weak_root = cx.entity().downgrade();
+
+        window.open_dialog(cx, move |dialog, _, _cx| {
+            let weak_root_save = weak_root.clone();
+            let input_for_save = input.clone();
+            dialog
+                .title(es_fluent::localize("rename_dialog_title", None))
+                .overlay_closable(true)
+                .keyboard(true)
+                .child(
+                    v_flex()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_sm()
+                                .child(es_fluent::localize("rename_dialog_name_label", None)),
+                        )
+                        .child(Input::new(&input).w_full()),
+                )
+                .footer(
+                    h_flex()
+                        .justify_end()
+                        .gap_2()
+                        .child(
+                            Button::new("rename-item-cancel")
+                                .label(es_fluent::localize("dialog_cancel", None))
+                                .on_click(move |_, window, cx| window.close_dialog(cx)),
+                        )
+                        .child(
+                            Button::new("rename-item-save")
+                                .primary()
+                                .label(es_fluent::localize("dialog_save", None))
+                                .on_click(move |_, window, cx| {
+                                    let name = input_for_save.read(cx).value().trim().to_string();
+                                    if name.is_empty() {
+                                        window.push_notification(
+                                            es_fluent::localize(
+                                                "rename_dialog_name_required",
+                                                None,
+                                            ),
+                                            cx,
+                                        );
+                                        return;
+                                    }
+                                    let result = weak_root_save.update(cx, |this, cx| {
+                                        this.rename_item(item_key, &name, cx)
+                                    });
+                                    match result {
+                                        Ok(Ok(())) => {
+                                            window.push_notification(
+                                                es_fluent::localize("rename_success", None),
+                                                cx,
+                                            );
+                                            window.close_dialog(cx);
+                                        }
+                                        Ok(Err(err)) => window.push_notification(err, cx),
+                                        Err(err) => window.push_notification(
+                                            format!(
+                                                "{}: {err}",
+                                                es_fluent::localize("rename_failed", None)
+                                            ),
+                                            cx,
+                                        ),
+                                    }
+                                }),
+                        ),
+                )
+        });
+    }
+
+    fn rename_item(
+        &mut self,
+        item_key: ItemKey,
+        new_name: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let services = services(cx);
+        match (item_key.kind, item_key.id) {
+            (ItemKind::Workspace, Some(ItemId::Workspace(id))) => services
+                .repos
+                .workspace
+                .rename(id, new_name)
+                .map_err(|err| format!("failed to rename workspace: {err}"))?,
+            (ItemKind::Collection, Some(ItemId::Collection(id))) => services
+                .repos
+                .collection
+                .rename(id, new_name)
+                .map_err(|err| format!("failed to rename collection: {err}"))?,
+            (ItemKind::Environment, Some(ItemId::Environment(id))) => services
+                .repos
+                .environment
+                .rename(id, new_name)
+                .map_err(|err| format!("failed to rename environment: {err}"))?,
+            (ItemKind::Request, Some(ItemId::Request(id))) => services
+                .repos
+                .request
+                .rename(id, new_name)
+                .map_err(|err| format!("failed to rename request: {err}"))?,
+            (ItemKind::Folder, Some(ItemId::Folder(id))) => {
+                let maybe_collection = self.catalog.selected_workspace().and_then(|workspace| {
+                    workspace.collections.iter().find_map(|collection| {
+                        collection
+                            .find_folder_tree(id)
+                            .map(|_| collection.collection.clone())
+                    })
+                });
+                if let Some(collection) = maybe_collection {
+                    if collection.storage_kind == CollectionStorageKind::Linked {
+                        let root_path = collection
+                            .storage_config
+                            .linked_root_path
+                            .clone()
+                            .ok_or_else(|| "linked collection is missing root path".to_string())?;
+                        let mut state = read_linked_collection(&root_path, &collection)
+                            .map_err(|err| format!("failed to load linked collection: {err}"))?;
+                        let folder = state
+                            .folders
+                            .iter_mut()
+                            .find(|folder| folder.id == id)
+                            .ok_or_else(|| "folder no longer exists".to_string())?;
+                        folder.name = new_name.to_string();
+                        folder.meta.updated_at = now_unix_ts();
+                        folder.meta.revision += 1;
+                        write_linked_collection(&root_path, &state)
+                            .map_err(|err| format!("failed to write linked collection: {err}"))?;
+                    } else {
+                        services
+                            .repos
+                            .folder
+                            .rename(id, new_name)
+                            .map_err(|err| format!("failed to rename folder: {err}"))?;
+                    }
+                } else {
+                    services
+                        .repos
+                        .folder
+                        .rename(id, new_name)
+                        .map_err(|err| format!("failed to rename folder: {err}"))?;
+                }
+            }
+            _ => return Err(es_fluent::localize("rename_unsupported", None).to_string()),
+        }
+
+        drop(services);
+        self.refresh_catalog(cx);
+        self.persist_session_state(cx);
         Ok(())
     }
 

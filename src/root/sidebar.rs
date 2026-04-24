@@ -186,6 +186,7 @@ impl AppRoot {
                                             .chain(
                                                 self.catalog.workspaces.iter().map(|workspace| {
                                                     let item_key = ItemKey::workspace(workspace.id);
+                                                    let workspace_name = workspace.name.clone();
                                                     let weak_root = weak_root.clone();
                                                     SidebarMenuItem::new(workspace.name.clone())
                                                         .icon(Icon::new(IconName::Inbox).small())
@@ -201,7 +202,29 @@ impl AppRoot {
                                                         ))
                                                         .context_menu(move |menu, _, _| {
                                                             let weak_root = weak_root.clone();
+                                                            let weak_root_rename = weak_root.clone();
+                                                            let workspace_name_for_rename =
+                                                                workspace_name.clone();
                                                             menu.item(
+                                                                PopupMenuItem::new(
+                                                                    es_fluent::localize(
+                                                                        "menu_rename",
+                                                                        None,
+                                                                    ),
+                                                                )
+                                                                .on_click(move |_, window, cx| {
+                                                                    let _ = weak_root_rename
+                                                                        .update(cx, |this, cx| {
+                                                                            this.open_rename_item_dialog(
+                                                                                item_key,
+                                                                                workspace_name_for_rename.clone(),
+                                                                                window,
+                                                                                cx,
+                                                                            );
+                                                                        });
+                                                                }),
+                                                            )
+                                                            .item(
                                                                 PopupMenuItem::new(
                                                                     es_fluent::localize(
                                                                         "menu_delete",
@@ -259,6 +282,8 @@ impl AppRoot {
                                             .child(SidebarMenu::new().children(
                                                 workspace.environments.iter().map(|environment| {
                                                     let environment_id = environment.id;
+                                                    let environment_name =
+                                                        environment.name.clone();
                                                     let item_key =
                                                         ItemKey::environment(environment_id);
                                                     let set_active_label = es_fluent::localize(
@@ -291,6 +316,10 @@ impl AppRoot {
                                                         let weak_root = weak_root.clone();
                                                         let weak_root_set_active =
                                                             weak_root.clone();
+                                                        let weak_root_rename = weak_root.clone();
+                                                        let weak_root_delete = weak_root.clone();
+                                                        let environment_name_for_rename =
+                                                            environment_name.clone();
                                                         menu.item(
                                                             PopupMenuItem::new(
                                                                 set_active_label.clone(),
@@ -304,6 +333,27 @@ impl AppRoot {
                                                                                     cx,
                                                                                 );
                                                                     });
+                                                                }),
+                                                        )
+                                                        .item(
+                                                            PopupMenuItem::new(
+                                                                es_fluent::localize(
+                                                                    "menu_rename",
+                                                                    None,
+                                                                ),
+                                                            )
+                                                            .on_click(move |_, window, cx| {
+                                                                let _ = weak_root_rename.update(
+                                                                    cx,
+                                                                    |this, cx| {
+                                                                        this.open_rename_item_dialog(
+                                                                            item_key,
+                                                                            environment_name_for_rename.clone(),
+                                                                            window,
+                                                                            cx,
+                                                                        );
+                                                                    },
+                                                                );
                                                             }),
                                                         )
                                                         .item(
@@ -315,7 +365,7 @@ impl AppRoot {
                                                             )
                                                             .icon(Icon::new(IconName::Close))
                                                             .on_click(move |_, window, cx| {
-                                                                let _ = weak_root.update(
+                                                                let _ = weak_root_delete.update(
                                                                     cx,
                                                                     |this, cx| {
                                                                         this.delete_item(
@@ -343,6 +393,7 @@ pub(super) fn render_collection_menu_item(
     cx: &mut gpui::Context<AppRoot>,
 ) -> SidebarMenuItem {
     let collection_key = ItemKey::collection(collection.collection.id);
+    let collection_name = collection.collection.name.clone();
     let collection_id_for_new = collection.collection.id;
     let weak_root = cx.entity().downgrade();
     let is_linked = collection.collection.storage_kind == CollectionStorageKind::Linked;
@@ -475,6 +526,9 @@ pub(super) fn render_collection_menu_item(
             let weak_root = weak_root.clone();
             let weak_root_new = weak_root.clone();
             let weak_root_new_folder = weak_root.clone();
+            let weak_root_rename = weak_root.clone();
+            let weak_root_delete = weak_root.clone();
+            let collection_name_for_rename = collection_name.clone();
             let menu = menu.item(
                 PopupMenuItem::new(es_fluent::localize("menu_new_request", None))
                     .icon(Icon::new(IconName::Plus))
@@ -495,6 +549,20 @@ pub(super) fn render_collection_menu_item(
                             }
                         });
                     }),
+            );
+            let menu = menu.item(
+                PopupMenuItem::new(es_fluent::localize("menu_rename", None)).on_click(
+                    move |_, window, cx| {
+                        let _ = weak_root_rename.update(cx, |this, cx| {
+                            this.open_rename_item_dialog(
+                                collection_key,
+                                collection_name_for_rename.clone(),
+                                window,
+                                cx,
+                            );
+                        });
+                    },
+                ),
             );
             let menu = if let Some(linked_root_path) = linked_root_path.clone() {
                 menu.item(
@@ -517,7 +585,7 @@ pub(super) fn render_collection_menu_item(
                 PopupMenuItem::new(es_fluent::localize("menu_delete", None))
                     .icon(Icon::new(IconName::Close))
                     .on_click(move |_, window, cx| {
-                        let _ = weak_root.update(cx, |this, cx| {
+                        let _ = weak_root_delete.update(cx, |this, cx| {
                             this.delete_item(collection_key, window, cx);
                         });
                     }),
@@ -587,6 +655,7 @@ fn render_folder_menu_item(
     cx: &mut gpui::Context<AppRoot>,
 ) -> SidebarMenuItem {
     let folder_key = ItemKey::folder(folder.folder.id);
+    let folder_name = folder.folder.name.clone();
     let collection_id_for_new = folder.folder.collection_id;
     let parent_folder_id_for_new = folder.folder.id;
     let weak_root = cx.entity().downgrade();
@@ -602,6 +671,9 @@ fn render_folder_menu_item(
             let weak_root = weak_root.clone();
             let weak_root_new_request = weak_root.clone();
             let weak_root_new = weak_root.clone();
+            let weak_root_rename = weak_root.clone();
+            let weak_root_delete = weak_root.clone();
+            let folder_name_for_rename = folder_name.clone();
             menu.item(
                 PopupMenuItem::new(es_fluent::localize("menu_new_request", None))
                     .icon(Icon::new(IconName::Plus))
@@ -633,10 +705,24 @@ fn render_folder_menu_item(
                     }),
             )
             .item(
+                PopupMenuItem::new(es_fluent::localize("menu_rename", None)).on_click(
+                    move |_, window, cx| {
+                        let _ = weak_root_rename.update(cx, |this, cx| {
+                            this.open_rename_item_dialog(
+                                folder_key,
+                                folder_name_for_rename.clone(),
+                                window,
+                                cx,
+                            );
+                        });
+                    },
+                ),
+            )
+            .item(
                 PopupMenuItem::new(es_fluent::localize("menu_delete", None))
                     .icon(Icon::new(IconName::Close))
                     .on_click(move |_, window, cx| {
-                        let _ = weak_root.update(cx, |this, cx| {
+                        let _ = weak_root_delete.update(cx, |this, cx| {
                             this.delete_item(folder_key, window, cx);
                         });
                     }),

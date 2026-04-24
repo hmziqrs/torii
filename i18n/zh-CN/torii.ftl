@@ -200,12 +200,19 @@ menu_delete = 删除
 menu_duplicate = 复制
 menu_new_request = 新建请求
 menu_new_folder = 新建文件夹
+menu_rename = 重命名
 menu_set_active_environment = 设为激活环境
 menu_copy_linked_root_path = 复制已链接根路径
 
 delete_success = 项目已删除。
 delete_failed = 删除失败。
 copy_linked_root_path_success = 已复制已链接根路径。
+rename_dialog_title = 重命名
+rename_dialog_name_label = 名称
+rename_dialog_name_required = 名称不能为空。
+rename_success = 项目已重命名。
+rename_failed = 重命名失败
+rename_unsupported = 该项目不支持重命名。
 
 ## TitleBar
 
