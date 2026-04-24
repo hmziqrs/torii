@@ -283,8 +283,7 @@ impl RequestTabView {
             Ok(resolved) => resolved,
             Err(e) => {
                 tracing::warn!(error = %e, "preflight rejected: variable resolution failed");
-                self.editor
-                    .set_preflight_error(format!("variable resolution failed: {e}"));
+                self.editor.set_preflight_error(e.to_string());
                 cx.notify();
                 return;
             }

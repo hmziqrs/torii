@@ -19,14 +19,10 @@ pub(super) fn render_request_tab(
 
     let response_panel = response_panel::render_response_panel(view, window, cx);
 
-    let preflight_panel = match view.editor.preflight_error() {
-        Some(err) => div().text_sm().text_color(gpui::red()).child(format!(
-            "{}: {}",
-            es_fluent::localize("request_tab_preflight", None),
-            err.message
-        )),
-        None => div(),
-    };
+    let preflight_notice = view
+        .editor
+        .preflight_error()
+        .map(|err| render_preflight_notice(&err.message, cx));
 
     let latest_run = latest_run_summary(view.editor.exec_status());
 
@@ -173,6 +169,8 @@ pub(super) fn render_request_tab(
                     )
                 })
         })
+        // Sticky preflight notice: rendered inline directly below URL bar.
+        .when_some(preflight_notice, |el, notice| el.child(notice))
         // Section tabs — never shrinks, no wrapping
         .child(
             h_flex()
@@ -310,8 +308,6 @@ pub(super) fn render_request_tab(
                                         el
                                     }
                                 })
-                                // Preflight error: pinned above scroll (empty div = no height).
-                                .child(preflight_panel.flex_shrink_0().px_4())
                                 // Scrollable section content.
                                 // flex_1 + min_h_0: gets the correct flex-allocated height
                                 // so overflow_y_scroll clips at exactly the panel boundary.
@@ -337,4 +333,63 @@ pub(super) fn render_request_tab(
                     ),
             ),
         )
+}
+
+fn render_preflight_notice(message: &str, cx: &App) -> gpui::Div {
+    let (missing_vars, scopes) = parse_preflight_message(message);
+
+    v_flex()
+        .mx_4()
+        .px_3()
+        .py_2()
+        .gap_1()
+        .rounded(cx.theme().radius)
+        .border_1()
+        .border_color(cx.theme().danger.opacity(0.6))
+        .bg(cx.theme().danger.opacity(0.08))
+        .child(
+            div()
+                .text_sm()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(cx.theme().danger)
+                .child(es_fluent::localize("request_tab_preflight", None)),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(cx.theme().foreground)
+                .child(match missing_vars {
+                    Some(vars) => format!(
+                        "{}: {vars}",
+                        es_fluent::localize("request_tab_preflight_missing_vars", None)
+                    ),
+                    None => message.to_string(),
+                }),
+        )
+        .when_some(scopes, |el, checked_scopes| {
+            el.child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(format!(
+                        "{}: {checked_scopes}",
+                        es_fluent::localize("request_tab_preflight_checked_scopes", None)
+                    )),
+            )
+        })
+}
+
+fn parse_preflight_message(message: &str) -> (Option<String>, Option<String>) {
+    let missing_prefix = "missing variables:";
+    let scopes_prefix = "; checked scopes:";
+    if let Some(start) = message.find(missing_prefix) {
+        let tail = message[start + missing_prefix.len()..].trim();
+        if let Some(split) = tail.find(scopes_prefix) {
+            let vars = tail[..split].trim();
+            let scopes = tail[split + scopes_prefix.len()..].trim();
+            return (Some(vars.to_string()), Some(scopes.to_string()));
+        }
+        return (Some(tail.to_string()), None);
+    }
+    (None, None)
 }

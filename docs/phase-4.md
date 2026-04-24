@@ -1186,7 +1186,7 @@ Required GPUI performance audit:
 - [x] Linked collections support workspace-scoped environment creation/selection flow from the UI
 - [x] Active environment is session-scoped per workspace and restored on reopen
 - [x] Request send path resolves variables with deterministic precedence
-- [ ] Missing variables fail preflight with a clear user-facing state shown inline below the URL bar
+- [x] Missing variables fail preflight with a clear user-facing state shown inline below the URL bar
 - [x] Parent deletion closes persisted and draft descendant tabs
 - [x] Deleting the active environment clears stale session state cleanly
 - [ ] All new strings are Fluent-based in both supported locales (`i18n/en/torii.ftl` and `i18n/zh-CN/torii.ftl`)

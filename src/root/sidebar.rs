@@ -423,7 +423,7 @@ pub(super) fn render_collection_menu_item(
                     let root_line = root_line.clone();
                     let status_line = status_line.clone();
                     let copy_button_path = copy_button_path.clone();
-                        move |_, _window, _cx| {
+                    move |_, _window, _cx| {
                         v_flex()
                             .w(px(320.))
                             .gap_2()
