@@ -119,7 +119,8 @@ impl ResolvedCollectionStore {
                 let mut state =
                     read_linked_collection(&store.root_path, &linked_collection_stub(store))?;
 
-                let next_sort = next_request_sort(&state.requests, parent_folder_id);
+                let next_sort =
+                    next_request_sort(&state.folders, &state.requests, parent_folder_id);
                 let request = RequestItem::new(
                     store.collection_id,
                     parent_folder_id,
@@ -189,11 +190,21 @@ impl ResolvedCollectionStore {
     }
 }
 
-fn next_request_sort(requests: &[RequestItem], parent_folder_id: Option<FolderId>) -> i64 {
-    requests
+fn next_request_sort(
+    folders: &[crate::domain::folder::Folder],
+    requests: &[RequestItem],
+    parent_folder_id: Option<FolderId>,
+) -> i64 {
+    folders
         .iter()
-        .filter(|request| request.parent_folder_id == parent_folder_id)
-        .map(|request| request.sort_order)
+        .filter(|folder| folder.parent_folder_id == parent_folder_id)
+        .map(|folder| folder.sort_order)
+        .chain(
+            requests
+                .iter()
+                .filter(|request| request.parent_folder_id == parent_folder_id)
+                .map(|request| request.sort_order),
+        )
         .max()
         .unwrap_or(-1)
         + 1

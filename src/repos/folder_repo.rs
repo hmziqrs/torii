@@ -70,15 +70,8 @@ impl FolderRepository for SqliteFolderRepository {
                 }
             }
 
-            let next_sort: i64 = sqlx::query_scalar(
-                "SELECT COALESCE(MAX(sort_order), -1) + 1
-                 FROM folders
-                 WHERE collection_id = ? AND parent_folder_id IS ?",
-            )
-            .bind(collection_id.to_string())
-            .bind(parent_folder_id.map(|it| it.to_string()))
-            .fetch_one(&mut *tx)
-            .await?;
+            let next_sort =
+                next_mixed_sibling_sort_order(&mut tx, collection_id, parent_folder_id).await?;
 
             let folder = Folder::new(collection_id, parent_folder_id, name.to_string(), next_sort);
             sqlx::query(
@@ -185,15 +178,8 @@ impl FolderRepository for SqliteFolderRepository {
                 }
             }
 
-            let next_sort: i64 = sqlx::query_scalar(
-                "SELECT COALESCE(MAX(sort_order), -1) + 1
-                 FROM folders
-                 WHERE collection_id = ? AND parent_folder_id IS ?",
-            )
-            .bind(collection_id.to_string())
-            .bind(parent_folder_id.map(|it| it.to_string()))
-            .fetch_one(&mut *tx)
-            .await?;
+            let next_sort =
+                next_mixed_sibling_sort_order(&mut tx, collection_id, parent_folder_id).await?;
 
             let ts = now_unix_ts();
             sqlx::query(
@@ -382,6 +368,33 @@ fn map_folder_row(row: sqlx::sqlite::SqliteRow) -> RepoResult<Folder> {
             revision: row.get("revision"),
         },
     })
+}
+
+async fn next_mixed_sibling_sort_order(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    collection_id: CollectionId,
+    parent_folder_id: Option<FolderId>,
+) -> RepoResult<i64> {
+    let parent = parent_folder_id.map(|it| it.to_string());
+    let next_sort: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(sort_order), -1) + 1
+         FROM (
+             SELECT sort_order
+             FROM folders
+             WHERE collection_id = ? AND parent_folder_id IS ?
+             UNION ALL
+             SELECT sort_order
+             FROM requests
+             WHERE collection_id = ? AND parent_folder_id IS ?
+         ) AS siblings",
+    )
+    .bind(collection_id.to_string())
+    .bind(parent.clone())
+    .bind(collection_id.to_string())
+    .bind(parent)
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok(next_sort)
 }
 
 pub type FolderRepoRef = Arc<dyn FolderRepository>;

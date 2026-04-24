@@ -160,32 +160,48 @@ fn build_tree_items(
     requests: &[RequestItem],
     parent_folder_id: Option<FolderId>,
 ) -> Vec<TreeItem> {
-    let mut child_folders = folders
-        .iter()
-        .filter(|folder| folder.parent_folder_id == parent_folder_id)
-        .cloned()
-        .collect::<Vec<_>>();
-    child_folders.sort_by_key(|folder| (folder.sort_order, folder.id.to_string()));
-
-    let mut child_requests = requests
-        .iter()
-        .filter(|request| request.parent_folder_id == parent_folder_id)
-        .cloned()
-        .collect::<Vec<_>>();
-    child_requests.sort_by_key(|request| (request.sort_order, request.id.to_string()));
-
-    let mut items = Vec::with_capacity(child_folders.len() + child_requests.len());
-    for folder in child_folders {
-        items.push(TreeItem::Folder(FolderTree {
-            folder: folder.clone(),
-            children: build_tree_items(folders, requests, Some(folder.id)),
-        }));
-    }
-    for request in child_requests {
-        items.push(TreeItem::Request(request));
+    enum Sibling {
+        Folder(Folder),
+        Request(RequestItem),
     }
 
-    items
+    let mut siblings = Vec::new();
+    siblings.extend(
+        folders
+            .iter()
+            .filter(|folder| folder.parent_folder_id == parent_folder_id)
+            .cloned()
+            .map(Sibling::Folder),
+    );
+    siblings.extend(
+        requests
+            .iter()
+            .filter(|request| request.parent_folder_id == parent_folder_id)
+            .cloned()
+            .map(Sibling::Request),
+    );
+    siblings.sort_by(|a, b| {
+        let (a_sort, a_kind, a_id) = match a {
+            Sibling::Folder(folder) => (folder.sort_order, 0, folder.id.to_string()),
+            Sibling::Request(request) => (request.sort_order, 1, request.id.to_string()),
+        };
+        let (b_sort, b_kind, b_id) = match b {
+            Sibling::Folder(folder) => (folder.sort_order, 0, folder.id.to_string()),
+            Sibling::Request(request) => (request.sort_order, 1, request.id.to_string()),
+        };
+        (a_sort, a_kind, a_id).cmp(&(b_sort, b_kind, b_id))
+    });
+
+    siblings
+        .into_iter()
+        .map(|sibling| match sibling {
+            Sibling::Folder(folder) => TreeItem::Folder(FolderTree {
+                folder: folder.clone(),
+                children: build_tree_items(folders, requests, Some(folder.id)),
+            }),
+            Sibling::Request(request) => TreeItem::Request(request),
+        })
+        .collect()
 }
 
 impl WorkspaceCatalog {
@@ -694,5 +710,51 @@ mod tests {
             discriminant(&catalog.find_icon(ItemKey::environment(environment_id))),
             discriminant(&IconName::Globe)
         );
+    }
+
+    #[test]
+    fn build_tree_items_interleaves_folders_and_requests_by_sort_order() {
+        let collection_id = CollectionId::new();
+        let root_folder = Folder::new(collection_id, None, "Root Folder", 0);
+        let nested_folder = Folder::new(collection_id, Some(root_folder.id), "Nested Folder", 0);
+        let mut root_request = RequestItem::new(
+            collection_id,
+            None,
+            "Root Request",
+            "GET",
+            "https://root",
+            1,
+        );
+        let mut nested_request = RequestItem::new(
+            collection_id,
+            Some(root_folder.id),
+            "Nested Request",
+            "GET",
+            "https://nested",
+            1,
+        );
+        root_request.id = RequestId::new();
+        nested_request.id = RequestId::new();
+
+        let tree = build_tree_items(
+            &[root_folder.clone(), nested_folder.clone()],
+            &[root_request.clone(), nested_request.clone()],
+            None,
+        );
+        assert_eq!(tree.len(), 2, "root should contain folder + request");
+        match &tree[0] {
+            TreeItem::Folder(folder) => {
+                assert_eq!(folder.folder.id, root_folder.id);
+                assert_eq!(
+                    folder.children.len(),
+                    2,
+                    "nested children should also interleave"
+                );
+                assert!(matches!(folder.children[0], TreeItem::Folder(_)));
+                assert!(matches!(folder.children[1], TreeItem::Request(_)));
+            }
+            TreeItem::Request(_) => panic!("folder should appear before request at root"),
+        }
+        assert!(matches!(tree[1], TreeItem::Request(_)));
     }
 }

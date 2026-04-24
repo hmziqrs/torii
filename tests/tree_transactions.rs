@@ -228,6 +228,62 @@ fn collection_and_request_mutations_compact_source_order() -> Result<()> {
 }
 
 #[test]
+fn mixed_sibling_sort_order_is_shared_across_folder_and_request_mutations() -> Result<()> {
+    let (_paths, db) = common::test_database("mixed-sibling-sort-order")?;
+    let db = Arc::new(db);
+
+    let workspace_repo = SqliteWorkspaceRepository::new(db.clone());
+    let collection_repo = SqliteCollectionRepository::new(db.clone());
+    let folder_repo = SqliteFolderRepository::new(db.clone());
+    let request_repo = SqliteRequestRepository::new(db.clone());
+
+    let workspace = workspace_repo.create("Workspace")?;
+    let collection = collection_repo.create(workspace.id, "Collection")?;
+
+    let root_request_a =
+        request_repo.create(collection.id, None, "Root A", "GET", "https://a.test")?;
+    let root_folder = folder_repo.create(collection.id, None, "Root Folder")?;
+    let root_request_b =
+        request_repo.create(collection.id, None, "Root B", "GET", "https://b.test")?;
+
+    assert_eq!(root_request_a.sort_order, 0);
+    assert_eq!(root_folder.sort_order, 1);
+    assert_eq!(root_request_b.sort_order, 2);
+
+    let target_parent = folder_repo.create(collection.id, None, "Target Parent")?;
+    let nested_folder = folder_repo.create(collection.id, Some(target_parent.id), "Nested")?;
+    let nested_request = request_repo.create(
+        collection.id,
+        Some(target_parent.id),
+        "Nested Request",
+        "GET",
+        "https://nested.test",
+    )?;
+    assert_eq!(nested_folder.sort_order, 0);
+    assert_eq!(nested_request.sort_order, 1);
+
+    request_repo.move_to(root_request_b.id, collection.id, Some(target_parent.id))?;
+    let moved_request = request_repo
+        .get(root_request_b.id)?
+        .expect("moved request should exist");
+    assert_eq!(
+        moved_request.sort_order, 2,
+        "moved request should append after existing folder+request siblings"
+    );
+
+    folder_repo.move_to(root_folder.id, collection.id, Some(target_parent.id))?;
+    let moved_folder = folder_repo
+        .get(root_folder.id)?
+        .expect("moved folder should exist");
+    assert_eq!(
+        moved_folder.sort_order, 3,
+        "moved folder should append after existing mixed siblings"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn deleting_collection_cascades_descendants_without_dangling_references() -> Result<()> {
     let (_paths, db) = common::test_database("delete-collection-cascade-dangling")?;
     let db = Arc::new(db);

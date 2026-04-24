@@ -129,8 +129,12 @@ impl RequestTabView {
             let mut saved = request.clone();
             saved.id = crate::domain::ids::RequestId::new();
             saved.collection_id = collection.id;
-            saved.sort_order =
-                next_linked_request_sort(&state.requests, saved.parent_folder_id, None);
+            saved.sort_order = next_linked_request_sort(
+                &state.folders,
+                &state.requests,
+                saved.parent_folder_id,
+                None,
+            );
             saved.meta = crate::domain::revision::RevisionMetadata::new_now();
             attach_request_order(&mut state, saved.id, saved.parent_folder_id);
             state.requests.push(saved.clone());
@@ -162,6 +166,7 @@ impl RequestTabView {
                 detach_request_order(&mut state, existing.id, existing.parent_folder_id);
                 attach_request_order(&mut state, saved.id, saved.parent_folder_id);
                 saved.sort_order = next_linked_request_sort(
+                    &state.folders,
                     &state.requests,
                     saved.parent_folder_id,
                     Some(saved.id),
@@ -695,17 +700,24 @@ fn ensure_parent_exists(
 }
 
 fn next_linked_request_sort(
+    folders: &[crate::domain::folder::Folder],
     requests: &[RequestItem],
     parent_folder_id: Option<crate::domain::ids::FolderId>,
     excluding: Option<crate::domain::ids::RequestId>,
 ) -> i64 {
-    requests
+    folders
         .iter()
-        .filter(|request| {
-            request.parent_folder_id == parent_folder_id
-                && excluding.is_none_or(|excluded| excluded != request.id)
-        })
-        .map(|request| request.sort_order)
+        .filter(|folder| folder.parent_folder_id == parent_folder_id)
+        .map(|folder| folder.sort_order)
+        .chain(
+            requests
+                .iter()
+                .filter(|request| {
+                    request.parent_folder_id == parent_folder_id
+                        && excluding.is_none_or(|excluded| excluded != request.id)
+                })
+                .map(|request| request.sort_order),
+        )
         .max()
         .unwrap_or(-1)
         + 1

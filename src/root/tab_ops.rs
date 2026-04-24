@@ -612,6 +612,13 @@ impl AppRoot {
                 .iter()
                 .filter(|folder| folder.parent_folder_id == parent_folder_id)
                 .map(|folder| folder.sort_order)
+                .chain(
+                    state
+                        .requests
+                        .iter()
+                        .filter(|request| request.parent_folder_id == parent_folder_id)
+                        .map(|request| request.sort_order),
+                )
                 .max()
                 .unwrap_or(-1)
                 + 1;

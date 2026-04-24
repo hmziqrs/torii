@@ -100,15 +100,8 @@ impl RequestRepository for SqliteRequestRepository {
                 }
             }
 
-            let next_sort: i64 = sqlx::query_scalar(
-                "SELECT COALESCE(MAX(sort_order), -1) + 1
-                 FROM requests
-                 WHERE collection_id = ? AND parent_folder_id IS ?",
-            )
-            .bind(collection_id.to_string())
-            .bind(parent_folder_id.map(|it| it.to_string()))
-            .fetch_one(&mut *tx)
-            .await?;
+            let next_sort =
+                next_mixed_sibling_sort_order(&mut tx, collection_id, parent_folder_id).await?;
 
             let request = RequestItem::new(
                 collection_id,
@@ -214,15 +207,8 @@ impl RequestRepository for SqliteRequestRepository {
                 }
             }
 
-            let next_sort: i64 = sqlx::query_scalar(
-                "SELECT COALESCE(MAX(sort_order), -1) + 1
-                 FROM requests
-                 WHERE collection_id = ? AND parent_folder_id IS ?",
-            )
-            .bind(collection_id.to_string())
-            .bind(parent_folder_id.map(|it| it.to_string()))
-            .fetch_one(&mut *tx)
-            .await?;
+            let next_sort =
+                next_mixed_sibling_sort_order(&mut tx, collection_id, parent_folder_id).await?;
 
             sqlx::query(
                 "UPDATE requests
@@ -428,14 +414,11 @@ impl RequestRepository for SqliteRequestRepository {
 
             let source = map_request_row(row)?;
 
-            let next_sort: i64 = sqlx::query_scalar(
-                "SELECT COALESCE(MAX(sort_order), -1) + 1
-                 FROM requests
-                 WHERE collection_id = ? AND parent_folder_id IS ?",
+            let next_sort = next_mixed_sibling_sort_order(
+                &mut tx,
+                source.collection_id,
+                source.parent_folder_id,
             )
-            .bind(source.collection_id.to_string())
-            .bind(source.parent_folder_id.map(|it| it.to_string()))
-            .fetch_one(&mut *tx)
             .await?;
 
             let mut dup = RequestItem::new(
@@ -591,6 +574,33 @@ fn map_request_row(row: sqlx::sqlite::SqliteRow) -> RepoResult<RequestItem> {
         settings: serde_json::from_str(&settings_json).unwrap_or_default(),
         variable_overrides_json,
     })
+}
+
+async fn next_mixed_sibling_sort_order(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    collection_id: CollectionId,
+    parent_folder_id: Option<FolderId>,
+) -> RepoResult<i64> {
+    let parent = parent_folder_id.map(|it| it.to_string());
+    let next_sort: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(sort_order), -1) + 1
+         FROM (
+             SELECT sort_order
+             FROM requests
+             WHERE collection_id = ? AND parent_folder_id IS ?
+             UNION ALL
+             SELECT sort_order
+             FROM folders
+             WHERE collection_id = ? AND parent_folder_id IS ?
+         ) AS siblings",
+    )
+    .bind(collection_id.to_string())
+    .bind(parent.clone())
+    .bind(collection_id.to_string())
+    .bind(parent)
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok(next_sort)
 }
 
 pub type RequestRepoRef = Arc<dyn RequestRepository>;
