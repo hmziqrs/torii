@@ -8,7 +8,8 @@ use crate::{
         item_id::ItemId,
     },
     infra::linked_collection_format::{
-        LinkedCollectionState, LinkedSiblingId, read_linked_collection, write_linked_collection,
+        LinkedCollectionState, LinkedSiblingId, linked_folder_paths, move_linked_folder_directory,
+        read_linked_collection, write_linked_collection,
     },
     session::{
         item_key::{ItemKey, ItemKind, TabKey},
@@ -796,16 +797,54 @@ impl AppRoot {
                             .ok_or_else(|| "linked collection is missing root path".to_string())?;
                         let mut state = read_linked_collection(&root_path, &collection)
                             .map_err(|err| format!("failed to load linked collection: {err}"))?;
-                        let folder = state
-                            .folders
-                            .iter_mut()
-                            .find(|folder| folder.id == id)
-                            .ok_or_else(|| "folder no longer exists".to_string())?;
-                        folder.name = new_name.to_string();
-                        folder.meta.updated_at = now_unix_ts();
-                        folder.meta.revision += 1;
-                        write_linked_collection(&root_path, &state)
-                            .map_err(|err| format!("failed to write linked collection: {err}"))?;
+                        let previous_paths = linked_folder_paths(&root_path, &state.folders)
+                            .map_err(|err| {
+                                format!("failed to resolve linked folder paths: {err}")
+                            })?;
+
+                        {
+                            let folder = state
+                                .folders
+                                .iter_mut()
+                                .find(|folder| folder.id == id)
+                                .ok_or_else(|| "folder no longer exists".to_string())?;
+                            folder.name = new_name.to_string();
+                            folder.meta.updated_at = now_unix_ts();
+                            folder.meta.revision += 1;
+                        }
+
+                        let next_paths =
+                            linked_folder_paths(&root_path, &state.folders).map_err(|err| {
+                                format!("failed to resolve linked folder paths: {err}")
+                            })?;
+                        let old_path = previous_paths
+                            .get(&id)
+                            .cloned()
+                            .ok_or_else(|| "folder path no longer exists".to_string())?;
+                        let new_path = next_paths.get(&id).cloned().ok_or_else(|| {
+                            "target folder path could not be resolved".to_string()
+                        })?;
+
+                        let mut moved_dir = false;
+                        if old_path != new_path {
+                            move_linked_folder_directory(&old_path, &new_path).map_err(|err| {
+                                format!("failed to move linked folder directory: {err}")
+                            })?;
+                            moved_dir = true;
+                        }
+
+                        if let Err(err) = write_linked_collection(&root_path, &state) {
+                            if moved_dir {
+                                if let Err(rollback_err) =
+                                    move_linked_folder_directory(&new_path, &old_path)
+                                {
+                                    tracing::error!(
+                                        "failed to rollback linked folder rename after write failure: {rollback_err}"
+                                    );
+                                }
+                            }
+                            return Err(format!("failed to write linked collection: {err}"));
+                        }
                     } else {
                         services
                             .repos

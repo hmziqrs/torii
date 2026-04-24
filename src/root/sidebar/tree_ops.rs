@@ -6,7 +6,8 @@ use crate::{
         ids::{CollectionId, FolderId, RequestId, WorkspaceId},
     },
     infra::linked_collection_format::{
-        LinkedCollectionState, LinkedSiblingId, read_linked_collection, write_linked_collection,
+        LinkedCollectionState, LinkedSiblingId, linked_folder_paths, move_linked_folder_directory,
+        read_linked_collection, write_linked_collection,
     },
     services::workspace_tree::{FolderTree, TreeItem},
 };
@@ -550,6 +551,8 @@ impl AppRoot {
             .ok_or_else(|| "linked collection is missing root path".to_string())?;
         let mut state = read_linked_collection(&root_path, &collection)
             .map_err(|err| format!("failed to read linked collection: {err}"))?;
+        let previous_folder_paths = linked_folder_paths(&root_path, &state.folders)
+            .map_err(|err| format!("failed to resolve linked folder paths: {err}"))?;
 
         let dragged_linked = dragged.to_linked();
         detach_linked_sibling(&mut state, source_parent, &dragged_linked);
@@ -590,13 +593,40 @@ impl AppRoot {
             }
         }
 
+        let mut moved_folder_dir = None;
+        if let MixedSibling::Folder(folder_id) = dragged {
+            let next_folder_paths = linked_folder_paths(&root_path, &state.folders)
+                .map_err(|err| format!("failed to resolve linked folder paths: {err}"))?;
+            let old_path = previous_folder_paths
+                .get(&folder_id)
+                .cloned()
+                .ok_or_else(|| "dragged folder path no longer exists".to_string())?;
+            let new_path = next_folder_paths
+                .get(&folder_id)
+                .cloned()
+                .ok_or_else(|| "target folder path could not be resolved".to_string())?;
+            if old_path != new_path {
+                move_linked_folder_directory(&old_path, &new_path)
+                    .map_err(|err| format!("failed to move linked folder directory: {err}"))?;
+                moved_folder_dir = Some((old_path, new_path));
+            }
+        }
+
         renumber_linked_parent(&mut state, source_parent);
         if target_parent != source_parent {
             renumber_linked_parent(&mut state, target_parent);
         }
 
-        write_linked_collection(&root_path, &state)
-            .map_err(|err| format!("failed to write linked collection: {err}"))?;
+        if let Err(err) = write_linked_collection(&root_path, &state) {
+            if let Some((old_path, new_path)) = moved_folder_dir {
+                if let Err(rollback_err) = move_linked_folder_directory(&new_path, &old_path) {
+                    tracing::error!(
+                        "failed to rollback linked folder move after write failure: {rollback_err}"
+                    );
+                }
+            }
+            return Err(format!("failed to write linked collection: {err}"));
+        }
         Ok(())
     }
 

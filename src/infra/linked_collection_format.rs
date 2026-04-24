@@ -71,7 +71,7 @@ pub fn write_linked_collection(root: &Path, state: &LinkedCollectionState) -> Re
     fs::create_dir_all(root)
         .with_context(|| format!("failed to create linked root {}", root.display()))?;
 
-    let folder_paths = build_folder_paths(root, &state.folders)?;
+    let folder_paths = linked_folder_paths(root, &state.folders)?;
     for folder in &state.folders {
         ensure_not_reserved_name(&folder.name)?;
         let path = folder_paths
@@ -171,7 +171,7 @@ pub fn read_linked_collection(
         folder_child_orders.entry(folder.id).or_default();
     }
 
-    let folder_paths = build_folder_paths(root, &folders)?;
+    let folder_paths = linked_folder_paths(root, &folders)?;
     let mut folder_by_path = HashMap::new();
     for (folder_id, path) in &folder_paths {
         folder_by_path.insert(path.clone(), *folder_id);
@@ -205,6 +205,55 @@ pub fn ensure_not_reserved_name(name: &str) -> Result<()> {
     if name.trim().is_empty() {
         return Err(anyhow!("name cannot be empty"));
     }
+    Ok(())
+}
+
+pub fn move_linked_folder_directory(old_path: &Path, new_path: &Path) -> Result<()> {
+    if old_path == new_path {
+        return Ok(());
+    }
+    if !old_path.exists() {
+        return Err(anyhow!(
+            "source linked folder path does not exist: {}",
+            old_path.display()
+        ));
+    }
+
+    if let Some(parent) = new_path.parent() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to create destination parent directory {}",
+                parent.display()
+            )
+        })?;
+    }
+
+    if new_path.exists() {
+        if !new_path.is_dir() {
+            return Err(anyhow!(
+                "destination path exists and is not a directory: {}",
+                new_path.display()
+            ));
+        }
+        let mut entries = fs::read_dir(new_path)
+            .with_context(|| format!("failed to inspect {}", new_path.display()))?;
+        if entries.next().transpose()?.is_some() {
+            return Err(anyhow!(
+                "destination directory already exists and is not empty: {}",
+                new_path.display()
+            ));
+        }
+        fs::remove_dir(new_path)
+            .with_context(|| format!("failed to remove empty dir {}", new_path.display()))?;
+    }
+
+    fs::rename(old_path, new_path).with_context(|| {
+        format!(
+            "failed to move linked folder '{}' -> '{}'",
+            old_path.display(),
+            new_path.display()
+        )
+    })?;
     Ok(())
 }
 
@@ -358,7 +407,7 @@ fn derive_folder_orders(state: &LinkedCollectionState) -> HashMap<FolderId, Vec<
     by_folder
 }
 
-fn build_folder_paths(root: &Path, folders: &[Folder]) -> Result<HashMap<FolderId, PathBuf>> {
+pub fn linked_folder_paths(root: &Path, folders: &[Folder]) -> Result<HashMap<FolderId, PathBuf>> {
     let mut map = HashMap::new();
     let by_id: HashMap<FolderId, &Folder> = folders.iter().map(|f| (f.id, f)).collect();
     let mut visiting = HashSet::new();
