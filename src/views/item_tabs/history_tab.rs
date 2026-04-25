@@ -1,7 +1,7 @@
 use gpui::{AnyElement, IntoElement, ParentElement, Styled as _, WeakEntity, div, px};
 use gpui_component::{
     button::{Button, ButtonVariants as _},
-    h_flex, v_flex, Sizable as _,
+    h_flex, v_flex, Selectable as _, Sizable as _,
 };
 
 use crate::{
@@ -15,9 +15,15 @@ use crate::{
 pub fn render(
     workspace_id: WorkspaceId,
     entries: &[HistoryEntry],
+    state_filter: Option<HistoryState>,
     root: WeakEntity<AppRoot>,
 ) -> AnyElement {
     let weak_root_refresh = root.clone();
+    let filtered_entries = entries
+        .iter()
+        .filter(|entry| state_filter.is_none_or(|state| entry.state == state))
+        .cloned()
+        .collect::<Vec<_>>();
     v_flex()
         .size_full()
         .p_6()
@@ -42,12 +48,58 @@ pub fn render(
                         }),
                 ),
         )
+        .child(
+            h_flex()
+                .gap_2()
+                .items_center()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(gpui::transparent_black())
+                        .child(es_fluent::localize("history_tab_filter_label", None)),
+                )
+                .child(filter_button(
+                    workspace_id,
+                    state_filter,
+                    None,
+                    es_fluent::localize("history_tab_filter_all", None),
+                    root.clone(),
+                ))
+                .child(filter_button(
+                    workspace_id,
+                    state_filter,
+                    Some(HistoryState::Completed),
+                    es_fluent::localize("history_tab_state_completed", None),
+                    root.clone(),
+                ))
+                .child(filter_button(
+                    workspace_id,
+                    state_filter,
+                    Some(HistoryState::Failed),
+                    es_fluent::localize("history_tab_state_failed", None),
+                    root.clone(),
+                ))
+                .child(filter_button(
+                    workspace_id,
+                    state_filter,
+                    Some(HistoryState::Cancelled),
+                    es_fluent::localize("history_tab_state_cancelled", None),
+                    root.clone(),
+                ))
+                .child(filter_button(
+                    workspace_id,
+                    state_filter,
+                    Some(HistoryState::Pending),
+                    es_fluent::localize("history_tab_state_pending", None),
+                    root.clone(),
+                )),
+        )
         .child(chip(format!(
             "{}: {}",
             es_fluent::localize("history_tab_total", None),
-            entries.len()
+            filtered_entries.len()
         )))
-        .children(if entries.is_empty() {
+        .children(if filtered_entries.is_empty() {
             Some(
                 div()
                     .text_color(gpui::transparent_black())
@@ -57,7 +109,7 @@ pub fn render(
             .into_iter()
             .collect::<Vec<_>>()
         } else {
-            entries
+            filtered_entries
                 .iter()
                 .map(|entry| {
                     let weak_root = root.clone();
@@ -143,4 +195,23 @@ fn status_chip(state: HistoryState, status_code: Option<i64>) -> impl IntoElemen
         .rounded(px(999.))
         .border_1()
         .child(label)
+}
+
+fn filter_button(
+    workspace_id: WorkspaceId,
+    active_filter: Option<HistoryState>,
+    button_filter: Option<HistoryState>,
+    label: String,
+    root: WeakEntity<AppRoot>,
+) -> impl IntoElement {
+    Button::new(format!("history-filter-{button_filter:?}"))
+        .ghost()
+        .xsmall()
+        .selected(active_filter == button_filter)
+        .label(label)
+        .on_click(move |_, _, cx| {
+            let _ = root.update(cx, |this, cx| {
+                this.set_history_state_filter_for_workspace(workspace_id, button_filter, cx);
+            });
+        })
 }

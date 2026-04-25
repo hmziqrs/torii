@@ -54,6 +54,8 @@ pub struct AppRoot {
     request_draft_pages:
         std::collections::HashMap<RequestDraftId, Entity<request_tab::RequestTabView>>,
     history_entries_by_workspace: std::collections::HashMap<WorkspaceId, Vec<HistoryEntry>>,
+    history_state_filter_by_workspace:
+        std::collections::HashMap<WorkspaceId, Option<crate::domain::history::HistoryState>>,
     _subscriptions: Vec<Subscription>,
     /// Tracks the previously active tab so we can release webviews on tab switch.
     previous_active_tab: Option<TabKey>,
@@ -221,6 +223,7 @@ impl AppRoot {
             request_pages: std::collections::HashMap::new(),
             request_draft_pages: std::collections::HashMap::new(),
             history_entries_by_workspace: std::collections::HashMap::new(),
+            history_state_filter_by_workspace: std::collections::HashMap::new(),
             _subscriptions: subscriptions,
             previous_active_tab: None,
             linked_collection_monitor: None,
@@ -445,6 +448,25 @@ impl AppRoot {
         }
     }
 
+    pub(crate) fn set_history_state_filter_for_workspace(
+        &mut self,
+        workspace_id: WorkspaceId,
+        filter: Option<crate::domain::history::HistoryState>,
+        cx: &mut Context<Self>,
+    ) {
+        let current = self
+            .history_state_filter_by_workspace
+            .get(&workspace_id)
+            .copied()
+            .flatten();
+        if current == filter {
+            return;
+        }
+        self.history_state_filter_by_workspace
+            .insert(workspace_id, filter);
+        cx.notify();
+    }
+
     fn render_active_tab_content(
         &mut self,
         active: TabKey,
@@ -534,7 +556,17 @@ impl AppRoot {
                         .get(&workspace_id)
                         .map(|rows| rows.as_slice())
                         .unwrap_or(&[]);
-                    history_tab::render(workspace_id, entries, cx.entity().downgrade())
+                    let state_filter = self
+                        .history_state_filter_by_workspace
+                        .get(&workspace_id)
+                        .copied()
+                        .flatten();
+                    history_tab::render(
+                        workspace_id,
+                        entries,
+                        state_filter,
+                        cx.entity().downgrade(),
+                    )
                 })
                 .unwrap_or_else(|| {
                     render_empty_state(
