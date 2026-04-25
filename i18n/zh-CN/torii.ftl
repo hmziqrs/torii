@@ -206,6 +206,10 @@ menu_copy_linked_root_path = 复制已链接根路径
 
 delete_success = 项目已删除。
 delete_failed = 删除失败。
+delete_confirm_title = 确认删除
+delete_confirm_body = 确定要删除此项目吗？此操作无法撤销。
+delete_confirm_ok = 删除
+delete_confirm_cancel = 取消
 copy_linked_root_path_success = 已复制已链接根路径。
 rename_dialog_title = 重命名
 rename_dialog_name_label = 名称

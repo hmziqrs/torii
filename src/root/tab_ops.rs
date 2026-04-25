@@ -1306,6 +1306,49 @@ impl AppRoot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let weak_root = cx.entity().downgrade();
+        window.open_dialog(cx, move |dialog, _, _| {
+            dialog
+                .title(es_fluent::localize("delete_confirm_title", None))
+                .overlay_closable(false)
+                .keyboard(false)
+                .child(es_fluent::localize("delete_confirm_body", None))
+                .footer(
+                    h_flex()
+                        .justify_end()
+                        .gap_2()
+                        .child(
+                            Button::new("delete-confirm-cancel")
+                                .outline()
+                                .label(es_fluent::localize("delete_confirm_cancel", None))
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                }),
+                        )
+                        .child(
+                            Button::new("delete-confirm-ok")
+                                .primary()
+                                .label(es_fluent::localize("delete_confirm_ok", None))
+                                .on_click({
+                                    let weak_root = weak_root.clone();
+                                    move |_, window, cx| {
+                                        let _ = weak_root.update(cx, |this, cx| {
+                                            this.perform_delete_item(item_key, window, cx);
+                                        });
+                                        window.close_dialog(cx);
+                                    }
+                                }),
+                        ),
+                )
+        });
+    }
+
+    fn perform_delete_item(
+        &mut self,
+        item_key: ItemKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let services = services(cx);
         let close_keys = self.catalog.delete_closure(item_key);
         let draft_close_keys = draft_descendant_close_keys(

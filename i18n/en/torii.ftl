@@ -206,6 +206,10 @@ menu_copy_linked_root_path = Copy Linked Root Path
 
 delete_success = Item deleted.
 delete_failed = Delete failed.
+delete_confirm_title = Confirm Deletion
+delete_confirm_body = Are you sure you want to delete this item? This action cannot be undone.
+delete_confirm_ok = Delete
+delete_confirm_cancel = Cancel
 copy_linked_root_path_success = Linked root path copied.
 rename_dialog_title = Rename
 rename_dialog_name_label = Name
