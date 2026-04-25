@@ -57,6 +57,7 @@ The following items were implemented on-the-fly during Phase 4 and are now the s
 - collection/folder expansion state is explicit per workspace and is persisted through `tab_session_workspace_state.expanded_items_json`
 - tree drag/drop now supports explicit `Before` / `Into` / `After` intents via row-level drop zones with legality gating
 - sidebar drag preview now anchors naturally to the drag cursor (no manual offset rendering)
+- drag/drop mutation logic is extracted into `services::tree_mutation::TreeMutationService`; sidebar orchestration now delegates to this service
 
 ## 2. Non-Negotiable GPUI Performance Rules
 
@@ -806,8 +807,8 @@ Notes:
   - done: core create flows (workspace/collection/environment/folder/request), linked Git badge tooltip, folder-level request creation
   - pending: full rename/edit parity and richer linked badge actions
 - Slice 4 — `Partially Done`
-  - done: explicit drop intents, intent-aware row drop zones, legality gating for disallowed targets, and before/after reorder path wiring
-  - pending: dedicated `TreeMutationService` extraction and optional auto-expand-on-hover behavior
+  - done: explicit drop intents, intent-aware row drop zones, legality gating for disallowed targets, before/after reorder path wiring, and dedicated `TreeMutationService` extraction
+  - pending: optional auto-expand-on-hover behavior
 - Slice 5 — `Done` (active environment selection + session persistence + clear-on-delete)
 - Slice 6 — `Mostly Done`
   - done: variable resolution pipeline and send-path integration

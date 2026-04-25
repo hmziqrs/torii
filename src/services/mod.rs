@@ -11,6 +11,7 @@ pub mod session_restore;
 pub mod startup;
 pub mod telemetry;
 pub mod tokio_runtime;
+pub mod tree_mutation;
 pub mod ui_preferences;
 pub mod variable_resolution;
 pub mod workspace_tree;
