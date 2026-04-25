@@ -2,6 +2,7 @@ use crate::{
     domain::{
         collection::{Collection, CollectionStorageKind},
         ids::{CollectionId, FolderId, RequestId, WorkspaceId},
+        revision::now_unix_ts,
     },
     infra::linked_collection_format::{
         LinkedCollectionState, LinkedSiblingId, linked_folder_paths, move_linked_folder_directory,
@@ -9,6 +10,7 @@ use crate::{
     },
     services::{app_services::Repositories, workspace_tree::WorkspaceTree},
 };
+use sqlx::Acquire as _;
 
 #[derive(Clone, Copy, Debug)]
 pub enum TreeDragPayload {
@@ -400,14 +402,8 @@ impl TreeMutationService {
             self.move_sibling_managed(dragged, target_collection_id, target_parent)?;
         }
 
-        let mut siblings = self
-            .mixed_siblings_for_parent(target_collection_id, target_parent)
-            .ok_or_else(|| "drop target parent no longer exists".to_string())?;
-
-        let Some(dragged_pos) = siblings.iter().position(|sibling| *sibling == dragged) else {
-            return Err("dragged item no longer exists after move".to_string());
-        };
-        siblings.remove(dragged_pos);
+        let mut siblings = self.mixed_siblings_for_parent_live(target_collection_id, target_parent)?;
+        siblings.retain(|sibling| *sibling != dragged);
 
         let Some(insert_idx) = siblings
             .iter()
@@ -417,19 +413,79 @@ impl TreeMutationService {
         };
         siblings.insert(insert_idx, dragged);
 
-        self.apply_mixed_order_managed(target_collection_id, target_parent, &siblings)
+        self.apply_mixed_order_managed_transactional(target_collection_id, target_parent, &siblings)
     }
 
-    fn apply_mixed_order_managed(
+    fn apply_mixed_order_managed_transactional(
         &self,
         collection_id: CollectionId,
         parent_folder_id: Option<FolderId>,
         ordered: &[MixedSibling],
     ) -> Result<(), String> {
-        for sibling in ordered {
-            self.move_sibling_managed(*sibling, collection_id, parent_folder_id)?;
-        }
-        Ok(())
+        let db = self.repos.db.clone();
+        let tx_db = db.clone();
+        let collection_id = collection_id.to_string();
+        let parent_folder_id = parent_folder_id.map(|id| id.to_string());
+        let ordered = ordered.to_vec();
+
+        db.block_on(async move {
+            let mut tx = tx_db
+                .pool()
+                .begin()
+                .await
+                .map_err(|err| format!("failed to start reorder transaction: {err}"))?;
+            let conn = tx
+                .acquire()
+                .await
+                .map_err(|err| format!("failed to acquire reorder transaction: {err}"))?;
+            let ts = now_unix_ts();
+
+            for (index, sibling) in ordered.iter().enumerate() {
+                let sort_order = index as i64;
+                let rows_affected = match sibling {
+                    MixedSibling::Folder(folder_id) => sqlx::query(
+                        "UPDATE folders
+                         SET sort_order = ?, updated_at = ?, revision = revision + 1
+                         WHERE id = ? AND collection_id = ? AND parent_folder_id IS ?",
+                    )
+                    .bind(sort_order)
+                    .bind(ts)
+                    .bind(folder_id.to_string())
+                    .bind(&collection_id)
+                    .bind(&parent_folder_id)
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(|err| format!("failed to reorder folder: {err}"))?
+                    .rows_affected(),
+                    MixedSibling::Request(request_id) => sqlx::query(
+                        "UPDATE requests
+                         SET sort_order = ?, updated_at = ?, revision = revision + 1
+                         WHERE id = ? AND collection_id = ? AND parent_folder_id IS ?",
+                    )
+                    .bind(sort_order)
+                    .bind(ts)
+                    .bind(request_id.to_string())
+                    .bind(&collection_id)
+                    .bind(&parent_folder_id)
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(|err| format!("failed to reorder request: {err}"))?
+                    .rows_affected(),
+                };
+
+                if rows_affected == 0 {
+                    return Err(
+                        "reorder target changed while processing; transaction rolled back"
+                            .to_string(),
+                    );
+                }
+            }
+
+            tx.commit()
+                .await
+                .map_err(|err| format!("failed to commit reorder transaction: {err}"))?;
+            Ok(())
+        })
     }
 
     fn move_sibling_managed(
@@ -544,6 +600,50 @@ impl TreeMutationService {
                 })
                 .collect(),
         )
+    }
+
+    fn mixed_siblings_for_parent_live(
+        &self,
+        collection_id: CollectionId,
+        parent_folder_id: Option<FolderId>,
+    ) -> Result<Vec<MixedSibling>, String> {
+        let mut siblings = Vec::new();
+        let mut folders = self
+            .repos
+            .folder
+            .list_by_collection(collection_id)
+            .map_err(|err| format!("failed to load folders for reorder: {err}"))?
+            .into_iter()
+            .filter(|folder| folder.parent_folder_id == parent_folder_id)
+            .map(|folder| {
+                (
+                    folder.sort_order,
+                    0_i32,
+                    folder.id.to_string(),
+                    MixedSibling::Folder(folder.id),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut requests = self
+            .repos
+            .request
+            .list_by_collection(collection_id)
+            .map_err(|err| format!("failed to load requests for reorder: {err}"))?
+            .into_iter()
+            .filter(|request| request.parent_folder_id == parent_folder_id)
+            .map(|request| {
+                (
+                    request.sort_order,
+                    1_i32,
+                    request.id.to_string(),
+                    MixedSibling::Request(request.id),
+                )
+            })
+            .collect::<Vec<_>>();
+        siblings.append(&mut folders);
+        siblings.append(&mut requests);
+        siblings.sort_by(|a, b| (a.0, a.1, &a.2).cmp(&(b.0, b.1, &b.2)));
+        Ok(siblings.into_iter().map(|(_, _, _, sibling)| sibling).collect())
     }
 
     fn next_sibling_after(

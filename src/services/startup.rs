@@ -118,13 +118,14 @@ fn build_app_services() -> Result<AppServices> {
 
     Ok(AppServices {
         paths,
-        db,
+        db: db.clone(),
         io_runtime,
         request_execution,
         blob_store,
         secret_store,
         secret_manager,
         repos: Repositories {
+            db: db.clone(),
             workspace: workspace_repo,
             collection: collection_repo,
             folder: folder_repo,
@@ -248,13 +249,14 @@ fn fallback_app_services() -> AppServices {
 
     AppServices {
         paths: fallback_paths,
-        db,
+        db: db.clone(),
         io_runtime,
         request_execution,
         blob_store,
         secret_store,
         secret_manager,
         repos: Repositories {
+            db: db.clone(),
             workspace: workspace_repo,
             collection: collection_repo,
             folder: folder_repo,

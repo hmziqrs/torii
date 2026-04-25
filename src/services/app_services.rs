@@ -23,6 +23,7 @@ use super::{
 
 #[derive(Clone)]
 pub struct Repositories {
+    pub db: Arc<Database>,
     pub workspace: WorkspaceRepoRef,
     pub collection: CollectionRepoRef,
     pub folder: FolderRepoRef,
