@@ -909,6 +909,11 @@ impl AppRoot {
         if item_key.is_persisted() {
             self.set_selected_workspace_for_item(item_key, cx);
         }
+        if matches!(item_key.kind, ItemKind::History)
+            && let Some(workspace_id) = self.catalog.selected_workspace_id()
+        {
+            self.refresh_history_cache_for_workspace(workspace_id, cx);
+        }
         self.session.update(cx, |session, cx| {
             session.open_or_focus(item_key, cx);
         });

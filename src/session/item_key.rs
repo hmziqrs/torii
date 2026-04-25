@@ -13,6 +13,7 @@ pub enum ItemKind {
     Folder,
     Environment,
     Request,
+    History,
     Settings,
     About,
     LayoutDebug,
@@ -33,6 +34,7 @@ impl ItemKind {
             Self::Folder => "folder",
             Self::Environment => "environment",
             Self::Request => "request",
+            Self::History => "history",
             Self::Settings => "settings",
             Self::About => "about",
             Self::LayoutDebug => "layout_debug",
@@ -56,6 +58,7 @@ impl FromStr for ItemKind {
             "folder" => Ok(Self::Folder),
             "environment" => Ok(Self::Environment),
             "request" => Ok(Self::Request),
+            "history" => Ok(Self::History),
             "settings" => Ok(Self::Settings),
             "about" => Ok(Self::About),
             "layout_debug" => Ok(Self::LayoutDebug),
@@ -102,6 +105,10 @@ impl ItemKey {
 
     pub fn settings() -> Self {
         Self::new(ItemKind::Settings, None)
+    }
+
+    pub fn history() -> Self {
+        Self::new(ItemKind::History, None)
     }
 
     pub fn about() -> Self {
@@ -155,7 +162,9 @@ impl ItemKey {
             ItemKind::Request => Some(ItemId::Request(RequestId::parse(
                 id.ok_or_else(|| anyhow!("missing request item id"))?,
             )?)),
-            ItemKind::Settings | ItemKind::About | ItemKind::LayoutDebug => None,
+            ItemKind::History | ItemKind::Settings | ItemKind::About | ItemKind::LayoutDebug => {
+                None
+            }
         };
 
         Ok(Self::new(kind, id))

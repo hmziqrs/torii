@@ -16,6 +16,7 @@ use gpui_component::{
 use crate::{
     domain::{
         collection::CollectionStorageKind,
+        history::HistoryEntry,
         ids::{RequestDraftId, RequestId, WorkspaceId},
         item_id::ItemId,
     },
@@ -34,7 +35,9 @@ use crate::{
     views::{
         AboutPage, LayoutDebugPage, SettingsPage,
         http_method::{RequestProtocol, protocol_badge},
-        item_tabs::{collection_tab, environment_tab, folder_tab, request_tab, workspace_tab},
+        item_tabs::{
+            collection_tab, environment_tab, folder_tab, history_tab, request_tab, workspace_tab,
+        },
         tab_host::{TabPresentation, render_empty_state, render_tab_bar},
     },
 };
@@ -50,6 +53,7 @@ pub struct AppRoot {
     request_pages: std::collections::HashMap<RequestId, Entity<request_tab::RequestTabView>>,
     request_draft_pages:
         std::collections::HashMap<RequestDraftId, Entity<request_tab::RequestTabView>>,
+    history_entries_by_workspace: std::collections::HashMap<WorkspaceId, Vec<HistoryEntry>>,
     _subscriptions: Vec<Subscription>,
     /// Tracks the previously active tab so we can release webviews on tab switch.
     previous_active_tab: Option<TabKey>,
@@ -216,6 +220,7 @@ impl AppRoot {
             layout_debug_page,
             request_pages: std::collections::HashMap::new(),
             request_draft_pages: std::collections::HashMap::new(),
+            history_entries_by_workspace: std::collections::HashMap::new(),
             _subscriptions: subscriptions,
             previous_active_tab: None,
             linked_collection_monitor: None,
@@ -423,6 +428,23 @@ impl AppRoot {
         )
     }
 
+    pub(crate) fn refresh_history_cache_for_workspace(
+        &mut self,
+        workspace_id: WorkspaceId,
+        cx: &mut Context<Self>,
+    ) {
+        let services = services(cx);
+        match services.repos.history.list_recent(workspace_id, 200) {
+            Ok(entries) => {
+                self.history_entries_by_workspace.insert(workspace_id, entries);
+                cx.notify();
+            }
+            Err(err) => {
+                tracing::error!("failed to load history rows for workspace {workspace_id}: {err}");
+            }
+        }
+    }
+
     fn render_active_tab_content(
         &mut self,
         active: TabKey,
@@ -497,6 +519,23 @@ impl AppRoot {
                 .request_draft_pages
                 .get(&draft_id)
                 .map(|page| page.clone().into_any_element())
+                .unwrap_or_else(|| {
+                    render_empty_state(
+                        es_fluent::localize("tab_missing_title", None).into(),
+                        es_fluent::localize("tab_missing_body", None).into(),
+                    )
+                }),
+            (ItemKind::History, None) => self
+                .catalog
+                .selected_workspace_id()
+                .map(|workspace_id| {
+                    let entries = self
+                        .history_entries_by_workspace
+                        .get(&workspace_id)
+                        .map(|rows| rows.as_slice())
+                        .unwrap_or(&[]);
+                    history_tab::render(workspace_id, entries, cx.entity().downgrade())
+                })
                 .unwrap_or_else(|| {
                     render_empty_state(
                         es_fluent::localize("tab_missing_title", None).into(),

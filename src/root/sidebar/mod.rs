@@ -185,6 +185,17 @@ impl AppRoot {
                                                     }
                                                 })),
                                             ))
+                                            .chain(std::iter::once(
+                                                SidebarMenuItem::new(es_fluent::localize(
+                                                    "sidebar_history",
+                                                    None,
+                                                ))
+                                                .icon(Icon::new(IconName::BookOpen).small())
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.focus_handle.focus(window, cx);
+                                                    this.open_item(ItemKey::history(), cx);
+                                                })),
+                                            ))
                                             .chain(
                                                 self.catalog.workspaces.iter().map(|workspace| {
                                                     let item_key = ItemKey::workspace(workspace.id);

@@ -312,6 +312,7 @@ impl WorkspaceCatalog {
                         .find_map(|collection| collection.find_request(id))
                 })
                 .map(|request| request.name.clone()),
+            (ItemKind::History, None) => Some(es_fluent::localize("tab_kind_history", None)),
             (ItemKind::Settings, None) => Some(es_fluent::localize("tab_kind_settings", None)),
             (ItemKind::About, None) => Some(es_fluent::localize("tab_kind_about", None)),
             (ItemKind::LayoutDebug, None) => {
@@ -328,6 +329,7 @@ impl WorkspaceCatalog {
             ItemKind::Folder => IconName::Folder,
             ItemKind::Environment => IconName::Globe,
             ItemKind::Request => IconName::File,
+            ItemKind::History => IconName::BookOpen,
             ItemKind::Settings => IconName::Settings2,
             ItemKind::About => IconName::Info,
             ItemKind::LayoutDebug => IconName::Settings2,
@@ -684,12 +686,20 @@ mod tests {
             Some(es_fluent::localize("tab_kind_about", None))
         );
         assert_eq!(
+            catalog.find_title(ItemKey::history()),
+            Some(es_fluent::localize("tab_kind_history", None))
+        );
+        assert_eq!(
             discriminant(&catalog.find_icon(ItemKey::settings())),
             discriminant(&IconName::Settings2)
         );
         assert_eq!(
             discriminant(&catalog.find_icon(ItemKey::about())),
             discriminant(&IconName::Info)
+        );
+        assert_eq!(
+            discriminant(&catalog.find_icon(ItemKey::history())),
+            discriminant(&IconName::BookOpen)
         );
     }
 
