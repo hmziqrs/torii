@@ -959,6 +959,44 @@ fn run_tree_drop(
         })
         .unwrap_or_else(|_| Err("workspace view was closed".to_string()));
     if let Err(err) = result {
-        window.push_notification(err, cx);
+        window.push_notification(localize_tree_drop_error(&err), cx);
     }
+}
+
+fn localize_tree_drop_error(err: &str) -> SharedString {
+    let key = if err == "workspace view was closed" {
+        "tree_drop_error_view_closed"
+    } else if err.contains("cross-storage drag/drop is not supported") {
+        "tree_drop_error_cross_storage"
+    } else if err.contains("cross-collection drag/drop for linked collections is not supported")
+    {
+        "tree_drop_error_linked_cross_collection"
+    } else if err.contains("cannot drop a folder into itself")
+        || err.contains("cannot drop a folder into its descendant")
+    {
+        "tree_drop_error_folder_cycle"
+    } else if err.contains("can only be dropped into a collection root")
+        || err.contains("cannot be dropped onto")
+        || err.contains("support before/after reorder only")
+        || err.contains("cannot be dropped into request rows")
+    {
+        "tree_drop_error_invalid_target"
+    } else if err.contains("dragged")
+        && err.contains("no longer exists")
+        && !err.contains("target")
+    {
+        "tree_drop_error_source_missing"
+    } else if err.contains("drop target")
+        && err.contains("no longer exists")
+        || err.contains("drop target no longer exists after move")
+        || err.contains("reorder target changed while processing")
+    {
+        "tree_drop_error_target_missing"
+    } else if err.starts_with("failed to ") {
+        "tree_drop_error_apply_failed"
+    } else {
+        tracing::warn!("unmapped tree drop error surfaced to user: {err}");
+        "tree_drop_error_apply_failed"
+    };
+    es_fluent::localize(key, None).into()
 }

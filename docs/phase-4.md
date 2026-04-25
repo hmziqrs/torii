@@ -1204,5 +1204,5 @@ Required GPUI performance audit:
 - [x] Missing variables fail preflight with a clear user-facing state shown inline below the URL bar
 - [x] Parent deletion closes persisted and draft descendant tabs
 - [x] Deleting the active environment clears stale session state cleanly
-- [ ] All new strings are Fluent-based in both supported locales (`i18n/en/torii.ftl` and `i18n/zh-CN/torii.ftl`)
-- [ ] Phase 4 passes the `docs/gpui-performance.md` render-loop checklist
+- [x] All new strings are Fluent-based in both supported locales (`i18n/en/torii.ftl` and `i18n/zh-CN/torii.ftl`)
+- [x] Phase 4 passes the `docs/gpui-performance.md` render-loop checklist
