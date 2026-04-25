@@ -66,6 +66,10 @@ pub struct AppRoot {
 }
 
 impl AppRoot {
+    pub(crate) fn can_open_item(&self, item_key: crate::session::item_key::ItemKey) -> bool {
+        self.catalog.contains(item_key)
+    }
+
     pub fn new(
         title: impl Into<SharedString>,
         window: &mut Window,

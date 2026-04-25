@@ -244,6 +244,16 @@ pub(super) fn render_request_tab(
                         )),
                 )
                 .child(
+                    Button::new("request-history-open")
+                        .ghost()
+                        .flex_shrink_0()
+                        .disabled(view.editor.request_id().is_none())
+                        .label(es_fluent::localize("request_tab_history_open_label", None))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_history_dialog(window, cx);
+                        })),
+                )
+                .child(
                     Button::new("request-settings-open")
                         .ghost()
                         .flex_shrink_0()

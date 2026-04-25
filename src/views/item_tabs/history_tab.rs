@@ -1,7 +1,7 @@
 use gpui::{AnyElement, IntoElement, ParentElement, Styled as _, WeakEntity, div, px};
 use gpui_component::{
     button::{Button, ButtonVariants as _},
-    h_flex, v_flex, Selectable as _, Sizable as _,
+    h_flex, v_flex, Selectable as _, Sizable as _, WindowExt as _,
 };
 
 use crate::{
@@ -147,22 +147,39 @@ pub fn render(
                                 .child(status_chip(entry.state, entry.status_code)),
                         )
                         .child(meta_row);
-                    if let Some(request_id) = request_id {
-                        card = card.child(
-                            Button::new(format!("history-open-request-{}", entry.id))
-                                .ghost()
-                                .xsmall()
-                                .label(es_fluent::localize("history_tab_open_request", None))
-                                .on_click(move |_, _window, cx| {
-                                    let _ = weak_root.update(cx, |this, cx| {
-                                        this.open_item(
-                                            crate::session::item_key::ItemKey::request(request_id),
+                    card = card.child(
+                        Button::new(format!("history-restore-request-{}", entry.id))
+                            .ghost()
+                            .xsmall()
+                            .label(es_fluent::localize("history_tab_restore", None))
+                            .on_click(move |_, window, cx| {
+                                let _ = weak_root.update(cx, |this, cx| {
+                                    let Some(request_id) = request_id else {
+                                        window.push_notification(
+                                            es_fluent::localize(
+                                                "history_tab_restore_no_request",
+                                                None,
+                                            ),
                                             cx,
                                         );
-                                    });
-                                }),
-                        );
-                    }
+                                        return;
+                                    };
+                                    let item_key =
+                                        crate::session::item_key::ItemKey::request(request_id);
+                                    if !this.can_open_item(item_key) {
+                                        window.push_notification(
+                                            es_fluent::localize(
+                                                "history_tab_restore_request_deleted",
+                                                None,
+                                            ),
+                                            cx,
+                                        );
+                                        return;
+                                    }
+                                    this.open_item(item_key, cx);
+                                });
+                            }),
+                    );
                     card.into_any_element()
                 })
                 .collect::<Vec<_>>()

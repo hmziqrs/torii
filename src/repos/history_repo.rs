@@ -46,6 +46,8 @@ pub trait HistoryRepository: Send + Sync {
     fn mark_pending_as_failed_on_startup(&self) -> RepoResult<usize>;
     fn list_recent(&self, workspace_id: WorkspaceId, limit: usize)
     -> RepoResult<Vec<HistoryEntry>>;
+    fn list_for_request(&self, request_id: RequestId, limit: usize)
+    -> RepoResult<Vec<HistoryEntry>>;
     fn get_latest_for_request(&self, request_id: RequestId) -> RepoResult<Option<HistoryEntry>>;
     fn referenced_blob_hashes(&self) -> RepoResult<HashSet<String>>;
 }
@@ -314,6 +316,23 @@ impl HistoryRepository for SqliteHistoryRepository {
             .await
             .context("failed to get latest history for request")?;
             row.map(map_history_row).transpose()
+        })
+    }
+
+    fn list_for_request(&self, request_id: RequestId, limit: usize) -> RepoResult<Vec<HistoryEntry>> {
+        self.db.block_on(async {
+            let rows = sqlx::query(
+                "SELECT * FROM history_index
+                 WHERE request_id = ?
+                 ORDER BY started_at DESC, id DESC
+                 LIMIT ?",
+            )
+            .bind(request_id.to_string())
+            .bind(limit as i64)
+            .fetch_all(self.db.pool())
+            .await
+            .context("failed to list history for request")?;
+            rows.into_iter().map(map_history_row).collect()
         })
     }
 
