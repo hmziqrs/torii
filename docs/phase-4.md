@@ -60,6 +60,9 @@ The following items were implemented on-the-fly during Phase 4 and are now the s
 - drag/drop mutation logic is extracted into `services::tree_mutation::TreeMutationService`; sidebar orchestration now delegates to this service
 - drag hover auto-expand is implemented with explicit delayed-task ownership and stale-target guards
 - tree keyboard parity now includes `Enter` (open selected sidebar item) and `Delete`/`Backspace` (delete selected tree item) at the `AppRoot` action layer
+- structured Slice 8 observability is now wired:
+  - spans: `tree.create`, `tree.rename`, `tree.move`, `tree.delete`, `environment.select`, `variable.resolve`, `linked_collection.reconcile`
+  - counters: `tree_catalog_reload_total`, `tree_illegal_drops_total`, `variable_resolution_missing_failures_total`
 
 ## 2. Non-Negotiable GPUI Performance Rules
 
@@ -818,7 +821,8 @@ Notes:
   - pending: full draft-descendant closure parity in all delete paths
 - Slice 8 — `Partially Done`
   - done: `Enter` open and `Delete`/`Backspace` destructive keyboard flows for selected sidebar items
-  - pending: context-menu keyboard gesture, tracing spans/counters, and focused GPUI performance audit
+  - done: core trace spans + required counters for tree/variable/reconcile observability
+  - pending: context-menu keyboard gesture and focused GPUI performance audit
 
 ## Slice 0: Persistence and Domain Contracts
 

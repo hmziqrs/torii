@@ -10,21 +10,21 @@ use crate::{
     services::{app_services::Repositories, workspace_tree::WorkspaceTree},
 };
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum TreeDragPayload {
     Collection(CollectionId),
     Folder(FolderId),
     Request(RequestId),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum TreeDropTarget {
     Collection(CollectionId),
     Folder(FolderId),
     Request(RequestId),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum TreeDropIntent {
     Before(TreeDropTarget),
     Into(TreeDropTarget),
@@ -61,6 +61,12 @@ impl TreeMutationService {
         dragged: TreeDragPayload,
         intent: TreeDropIntent,
     ) -> Result<(), String> {
+        let _span = tracing::info_span!(
+            "tree.move",
+            dragged = ?dragged,
+            intent = ?intent
+        )
+        .entered();
         match dragged {
             TreeDragPayload::Collection(id) => self.drop_collection(id, intent),
             TreeDragPayload::Folder(id) => self.drop_folder(id, intent),

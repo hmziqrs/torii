@@ -384,6 +384,12 @@ impl RequestTabView {
             .read()
             .ok()
             .and_then(|map| map.get(&workspace_id).copied());
+        let _variable_resolve_span = tracing::info_span!(
+            "variable.resolve",
+            workspace_id = %workspace_id,
+            request_id = ?self.editor.request_id()
+        )
+        .entered();
         let resolved_request = match services.variable_resolution.resolve_request(
             &draft,
             workspace_id,

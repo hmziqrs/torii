@@ -5,8 +5,9 @@ use super::tree_view::{
 };
 use crate::{
     domain::ids::{CollectionId, FolderId},
-    services::tree_mutation::{
-        TreeDragPayload, TreeDropIntent, TreeDropTarget, TreeMutationService,
+    services::{
+        telemetry,
+        tree_mutation::{TreeDragPayload, TreeDropIntent, TreeDropTarget, TreeMutationService},
     },
     session::workspace_session::ExpandableItem,
 };
@@ -70,7 +71,12 @@ impl AppRoot {
             .cloned()
             .ok_or_else(|| "no selected workspace".to_string())?;
         let service = TreeMutationService::new(workspace, services(cx).repos.clone());
-        service.apply_tree_drop(map_dragged(dragged), map_intent(intent))?;
+        if let Err(err) = service.apply_tree_drop(map_dragged(dragged), map_intent(intent)) {
+            if !err.starts_with("failed to ") {
+                telemetry::inc_tree_illegal_drops();
+            }
+            return Err(err);
+        }
         self.refresh_catalog(cx);
         self.persist_session_state(cx);
         Ok(())

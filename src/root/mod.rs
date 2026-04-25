@@ -23,6 +23,7 @@ use crate::{
     services::{
         app_services::{AppServices, AppServicesGlobal},
         linked_collection_reconcile::{LinkedCollectionEvent, LinkedCollectionMonitor},
+        telemetry,
         workspace_tree::{WorkspaceCatalog, load_workspace_catalog},
     },
     session::{
@@ -148,7 +149,10 @@ impl AppRoot {
                             &services.repos.environment,
                             selected_workspace_id,
                         ) {
-                            Ok(catalog) => this.catalog = catalog,
+                            Ok(catalog) => {
+                                telemetry::inc_tree_catalog_reload();
+                                this.catalog = catalog
+                            }
                             Err(err) => {
                                 tracing::error!("failed to refresh workspace catalog: {err}")
                             }
@@ -241,6 +245,8 @@ impl AppRoot {
         if events.is_empty() {
             return;
         }
+        let _span = tracing::info_span!("linked_collection.reconcile", event_count = events.len())
+            .entered();
 
         self.refresh_catalog(cx);
 

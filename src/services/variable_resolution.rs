@@ -10,6 +10,7 @@ use crate::{
     },
     infra::secrets::SecretStoreRef,
     repos::{environment_repo::EnvironmentRepoRef, workspace_repo::WorkspaceRepoRef},
+    services::telemetry,
 };
 
 #[derive(Clone)]
@@ -86,6 +87,7 @@ impl VariableResolutionService {
         resolved.body = resolve_body(&request.body, &vars);
         let missing = collect_missing_placeholders(&resolved);
         if !missing.is_empty() {
+            telemetry::inc_variable_resolution_missing_failures();
             let joined = missing.into_iter().collect::<Vec<_>>().join(", ");
             return Err(anyhow!(
                 "missing variables: {joined}; checked scopes: request overrides -> active environment -> workspace"

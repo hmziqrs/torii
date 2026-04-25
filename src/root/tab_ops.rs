@@ -11,6 +11,7 @@ use crate::{
         LinkedCollectionState, LinkedSiblingId, linked_folder_paths, move_linked_folder_directory,
         read_linked_collection, write_linked_collection,
     },
+    services::telemetry,
     session::{
         item_key::{ItemKey, ItemKind, TabKey},
         request_editor_state::EditorIdentity,
@@ -31,6 +32,7 @@ use gpui_component::{
 
 impl AppRoot {
     pub(crate) fn create_workspace(&mut self, cx: &mut Context<Self>) -> Result<(), String> {
+        let _span = tracing::info_span!("tree.create", entity = "workspace").entered();
         let services = services(cx);
         let workspaces = services
             .repos
@@ -60,6 +62,7 @@ impl AppRoot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
+        let _span = tracing::info_span!("tree.create", entity = "collection").entered();
         let workspace_id = self
             .session
             .read(cx)
@@ -293,6 +296,12 @@ impl AppRoot {
         linked_root_path: Option<std::path::PathBuf>,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
+        let _span = tracing::info_span!(
+            "tree.create",
+            entity = "collection",
+            storage_kind = ?storage_kind
+        )
+        .entered();
         let services = services(cx);
         let storage_config = CollectionStorageConfig {
             linked_root_path: linked_root_path.clone(),
@@ -334,6 +343,7 @@ impl AppRoot {
     }
 
     pub(crate) fn create_environment(&mut self, cx: &mut Context<Self>) -> Result<(), String> {
+        let _span = tracing::info_span!("tree.create", entity = "environment").entered();
         let workspace_id = self
             .session
             .read(cx)
@@ -574,6 +584,13 @@ impl AppRoot {
         parent_folder_id: Option<FolderId>,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
+        let _span = tracing::info_span!(
+            "tree.create",
+            entity = "folder",
+            collection_id = %collection_id,
+            parent_folder_id = ?parent_folder_id
+        )
+        .entered();
         let services = services(cx);
         let collection = services
             .repos
@@ -758,6 +775,12 @@ impl AppRoot {
         new_name: &str,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
+        let _span = tracing::info_span!(
+            "tree.rename",
+            item_kind = ?item_key.kind,
+            item_id = ?item_key.id
+        )
+        .entered();
         let services = services(cx);
         match (item_key.kind, item_key.id) {
             (ItemKind::Workspace, Some(ItemId::Workspace(id))) => services
@@ -1102,6 +1125,7 @@ impl AppRoot {
     }
 
     pub(super) fn refresh_catalog(&mut self, cx: &mut Context<Self>) {
+        telemetry::inc_tree_catalog_reload();
         let services = services(cx);
         let selected_workspace_id = self.session.read(cx).selected_workspace_id;
         match crate::services::workspace_tree::load_workspace_catalog(
@@ -1349,6 +1373,12 @@ impl AppRoot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let _span = tracing::info_span!(
+            "tree.delete",
+            item_kind = ?item_key.kind,
+            item_id = ?item_key.id
+        )
+        .entered();
         let services = services(cx);
         let close_keys = self.catalog.delete_closure(item_key);
         let draft_close_keys = draft_descendant_close_keys(
@@ -1450,6 +1480,11 @@ impl AppRoot {
         environment_id: EnvironmentId,
         cx: &mut Context<Self>,
     ) {
+        let _span = tracing::info_span!(
+            "environment.select",
+            environment_id = %environment_id
+        )
+        .entered();
         let services = services(cx);
         let workspace_id = match services
             .session_restore

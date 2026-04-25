@@ -6,6 +6,9 @@ static REQUESTS_CANCELLED_TOTAL: AtomicU64 = AtomicU64::new(0);
 static REQUESTS_FAILED_TOTAL: AtomicU64 = AtomicU64::new(0);
 static RESPONSES_TRUNCATED_TOTAL: AtomicU64 = AtomicU64::new(0);
 static ASYNC_UPDATE_FAILURES_TOTAL: AtomicU64 = AtomicU64::new(0);
+static TREE_ILLEGAL_DROPS_TOTAL: AtomicU64 = AtomicU64::new(0);
+static VARIABLE_RESOLUTION_MISSING_TOTAL: AtomicU64 = AtomicU64::new(0);
+static TREE_CATALOG_RELOAD_TOTAL: AtomicU64 = AtomicU64::new(0);
 
 pub fn inc_requests_completed() {
     let value = REQUESTS_COMPLETED_TOTAL.fetch_add(1, Ordering::Relaxed) + 1;
@@ -47,4 +50,25 @@ pub fn inc_async_update_failures(category: &'static str) {
         category,
         "async update failure observed"
     );
+}
+
+pub fn inc_tree_illegal_drops() {
+    let value = TREE_ILLEGAL_DROPS_TOTAL.fetch_add(1, Ordering::Relaxed) + 1;
+    counter!("tree_illegal_drops_total").increment(1);
+    tracing::warn!(tree_illegal_drops_total = value, "counter updated");
+}
+
+pub fn inc_variable_resolution_missing_failures() {
+    let value = VARIABLE_RESOLUTION_MISSING_TOTAL.fetch_add(1, Ordering::Relaxed) + 1;
+    counter!("variable_resolution_missing_failures_total").increment(1);
+    tracing::warn!(
+        variable_resolution_missing_failures_total = value,
+        "counter updated"
+    );
+}
+
+pub fn inc_tree_catalog_reload() {
+    let value = TREE_CATALOG_RELOAD_TOTAL.fetch_add(1, Ordering::Relaxed) + 1;
+    counter!("tree_catalog_reload_total").increment(1);
+    tracing::info!(tree_catalog_reload_total = value, "counter updated");
 }
