@@ -63,6 +63,7 @@ The following items were implemented on-the-fly during Phase 4 and are now the s
 - structured Slice 8 observability is now wired:
   - spans: `tree.create`, `tree.rename`, `tree.move`, `tree.delete`, `environment.select`, `variable.resolve`, `linked_collection.reconcile`
   - counters: `tree_catalog_reload_total`, `tree_illegal_drops_total`, `variable_resolution_missing_failures_total`
+- tree keyboard alternate menu gesture is wired: `Shift+F10` opens a selected-item actions dialog that exposes context actions (rename/delete and item-appropriate create/set-active actions)
 
 ## 2. Non-Negotiable GPUI Performance Rules
 
@@ -822,7 +823,8 @@ Notes:
 - Slice 8 — `Partially Done`
   - done: `Enter` open and `Delete`/`Backspace` destructive keyboard flows for selected sidebar items
   - done: core trace spans + required counters for tree/variable/reconcile observability
-  - pending: context-menu keyboard gesture and focused GPUI performance audit
+  - done: context-menu keyboard alternate gesture (`Shift+F10`)
+  - pending: focused GPUI performance audit
 
 ## Slice 0: Persistence and Domain Contracts
 

@@ -642,6 +642,7 @@ impl Render for AppRoot {
             .on_action(cx.listener(Self::on_toggle_sidebar_action))
             .on_action(cx.listener(Self::on_tree_open_selected_action))
             .on_action(cx.listener(Self::on_tree_delete_selected_action))
+            .on_action(cx.listener(Self::on_tree_open_item_menu_action))
             .child(self.title_bar.clone())
             .child(
                 div()

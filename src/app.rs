@@ -31,7 +31,8 @@ actions!(
         PrevTab,
         ToggleSidebar,
         TreeOpenSelected,
-        TreeDeleteSelected
+        TreeDeleteSelected,
+        TreeOpenItemMenu
     ]
 );
 
@@ -224,6 +225,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("enter", TreeOpenSelected, Some("AppRoot")),
         KeyBinding::new("backspace", TreeDeleteSelected, Some("AppRoot")),
         KeyBinding::new("delete", TreeDeleteSelected, Some("AppRoot")),
+        KeyBinding::new("shift-f10", TreeOpenItemMenu, Some("AppRoot")),
     ]);
 
     cx.on_action(|_: &Quit, cx| {
