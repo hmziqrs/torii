@@ -178,15 +178,6 @@ impl AppRoot {
                     cx.notify();
                 }
             }),
-            cx.observe_keystrokes(|_, event, _, _| {
-                let action_name = event.action.as_ref().map(|action| action.name());
-                tracing::info!(
-                    keystroke = ?event.keystroke,
-                    action = ?action_name,
-                    context_stack = ?event.context_stack,
-                    "key dispatch observed"
-                );
-            }),
         ];
 
         let io_runtime = services.io_runtime.clone();

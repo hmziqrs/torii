@@ -116,12 +116,7 @@ impl AppRoot {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        tracing::info!("tree keyboard: open-selected triggered");
         if let Some(item_key) = self.session.read(cx).sidebar_selection {
-            tracing::info!(
-                ?item_key,
-                "tree keyboard: open-selected has sidebar selection"
-            );
             match item_key.id {
                 Some(ItemId::Collection(collection_id)) => {
                     let has_children = self.catalog.selected_workspace().is_some_and(|workspace| {
@@ -132,10 +127,6 @@ impl AppRoot {
                             .is_some_and(|collection| !collection.children.is_empty())
                     });
                     if has_children {
-                        tracing::info!(
-                            collection_id = %collection_id,
-                            "tree keyboard: toggling collection expansion via Enter"
-                        );
                         if let Some(workspace_id) = self.catalog.selected_workspace_id() {
                             self.session.update(cx, |session, cx| {
                                 session.toggle_expanded_item(
@@ -157,10 +148,6 @@ impl AppRoot {
                         })
                     });
                     if has_children {
-                        tracing::info!(
-                            folder_id = %folder_id,
-                            "tree keyboard: toggling folder expansion via Enter"
-                        );
                         if let Some(workspace_id) = self.catalog.selected_workspace_id() {
                             self.session.update(cx, |session, cx| {
                                 session.toggle_expanded_item(
@@ -176,9 +163,6 @@ impl AppRoot {
                 _ => {}
             }
             self.open_item(item_key, cx);
-            tracing::info!(?item_key, "tree keyboard: open-selected completed");
-        } else {
-            tracing::warn!("tree keyboard: open-selected ignored (no sidebar selection)");
         }
     }
 
@@ -188,15 +172,9 @@ impl AppRoot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        tracing::info!("tree keyboard: delete-selected triggered");
         let Some(item_key) = self.session.read(cx).sidebar_selection else {
-            tracing::warn!("tree keyboard: delete-selected ignored (no sidebar selection)");
             return;
         };
-        tracing::info!(
-            ?item_key,
-            "tree keyboard: delete-selected has sidebar selection"
-        );
         match item_key.id {
             Some(
                 ItemId::Workspace(_)
@@ -204,16 +182,8 @@ impl AppRoot {
                 | ItemId::Folder(_)
                 | ItemId::Environment(_)
                 | ItemId::Request(_),
-            ) => {
-                self.delete_item(item_key, window, cx);
-                tracing::info!(?item_key, "tree keyboard: delete-selected completed");
-            }
-            _ => {
-                tracing::warn!(
-                    ?item_key,
-                    "tree keyboard: delete-selected ignored (unsupported selection)"
-                );
-            }
+            ) => self.delete_item(item_key, window, cx),
+            _ => {}
         }
     }
 
