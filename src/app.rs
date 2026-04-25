@@ -29,7 +29,9 @@ actions!(
         NewRequest,
         NextTab,
         PrevTab,
-        ToggleSidebar
+        ToggleSidebar,
+        TreeOpenSelected,
+        TreeDeleteSelected
     ]
 );
 
@@ -219,6 +221,9 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-b", ToggleSidebar, None),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-b", ToggleSidebar, None),
+        KeyBinding::new("enter", TreeOpenSelected, Some("AppRoot")),
+        KeyBinding::new("backspace", TreeDeleteSelected, Some("AppRoot")),
+        KeyBinding::new("delete", TreeDeleteSelected, Some("AppRoot")),
     ]);
 
     cx.on_action(|_: &Quit, cx| {

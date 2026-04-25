@@ -99,6 +99,7 @@ fn render_collection_row_only(
     let weak_root_toggle = weak_root.clone();
     let weak_root_drop = weak_root.clone();
     let weak_root_drop_into = weak_root.clone();
+    let weak_root_hover = weak_root.clone();
     let weak_root_menu_new = weak_root.clone();
     let weak_root_menu_new_folder = weak_root.clone();
     let weak_root_menu_rename = weak_root.clone();
@@ -124,13 +125,19 @@ fn render_collection_row_only(
                 cx.new(|_| DragTreePreview::new(title.clone(), IconName::BookOpen))
             }
         })
-        .drag_over::<TreeDragPayload>(move |style: StyleRefinement, dragged, _, _| {
+        .drag_over::<TreeDragPayload>(move |style: StyleRefinement, dragged, _, cx| {
             if matches!(
                 dragged,
                 TreeDragPayload::Folder(_) | TreeDragPayload::Request(_)
             ) {
+                let _ = weak_root_hover.update(cx, |this, cx| {
+                    this.schedule_tree_drag_auto_expand(dragged.clone(), drop_target, cx);
+                });
                 style.border_1().border_color(gpui::rgb(0x2563EB))
             } else {
+                let _ = weak_root_hover.update(cx, |this, _| {
+                    this.cancel_tree_drag_auto_expand();
+                });
                 style
             }
         })
@@ -281,6 +288,26 @@ fn render_collection_row_only(
         payload_can_drop_before_after_collection,
         payload_can_drop_before_after_collection,
         {
+            let weak_root_hover = weak_root.clone();
+            move |payload, _, cx| {
+                if matches!(payload, TreeDragPayload::Collection(_)) {
+                    let _ = weak_root_hover.update(cx, |this, _| {
+                        this.cancel_tree_drag_auto_expand();
+                    });
+                }
+            }
+        },
+        {
+            let weak_root_hover = weak_root.clone();
+            move |payload, _, cx| {
+                if matches!(payload, TreeDragPayload::Collection(_)) {
+                    let _ = weak_root_hover.update(cx, |this, _| {
+                        this.cancel_tree_drag_auto_expand();
+                    });
+                }
+            }
+        },
+        {
             let weak_root_drop = weak_root_drop.clone();
             move |dragged, window, cx| {
                 run_tree_drop(
@@ -323,6 +350,7 @@ fn render_folder_row_only(
     let weak_root_toggle = weak_root.clone();
     let weak_root_drop = weak_root.clone();
     let weak_root_drop_into = weak_root.clone();
+    let weak_root_hover = weak_root.clone();
     let weak_root_menu_new = weak_root.clone();
     let weak_root_menu_new_request = weak_root.clone();
     let weak_root_menu_rename = weak_root.clone();
@@ -348,7 +376,19 @@ fn render_folder_row_only(
                 cx.new(|_| DragTreePreview::new(title.clone(), IconName::Folder))
             }
         })
-        .drag_over::<TreeDragPayload>(move |style: StyleRefinement, _, _, _| {
+        .drag_over::<TreeDragPayload>(move |style: StyleRefinement, dragged, _, cx| {
+            if matches!(
+                dragged,
+                TreeDragPayload::Folder(_) | TreeDragPayload::Request(_)
+            ) {
+                let _ = weak_root_hover.update(cx, |this, cx| {
+                    this.schedule_tree_drag_auto_expand(dragged.clone(), drop_target, cx);
+                });
+            } else {
+                let _ = weak_root_hover.update(cx, |this, _| {
+                    this.cancel_tree_drag_auto_expand();
+                });
+            }
             style.border_1().border_color(gpui::rgb(0x2563EB))
         })
         .can_drop(|dragged, _, _| {
@@ -472,6 +512,32 @@ fn render_folder_row_only(
         payload_can_drop_before_after_non_collection,
         payload_can_drop_before_after_non_collection,
         {
+            let weak_root_hover = weak_root.clone();
+            move |payload, _, cx| {
+                if matches!(
+                    payload,
+                    TreeDragPayload::Folder(_) | TreeDragPayload::Request(_)
+                ) {
+                    let _ = weak_root_hover.update(cx, |this, _| {
+                        this.cancel_tree_drag_auto_expand();
+                    });
+                }
+            }
+        },
+        {
+            let weak_root_hover = weak_root.clone();
+            move |payload, _, cx| {
+                if matches!(
+                    payload,
+                    TreeDragPayload::Folder(_) | TreeDragPayload::Request(_)
+                ) {
+                    let _ = weak_root_hover.update(cx, |this, _| {
+                        this.cancel_tree_drag_auto_expand();
+                    });
+                }
+            }
+        },
+        {
             let weak_root_drop = weak_root_drop.clone();
             move |dragged, window, cx| {
                 run_tree_drop(
@@ -512,6 +578,7 @@ fn render_request_tree_row(
     let weak_root_menu_dup = weak_root.clone();
     let weak_root_menu_delete = weak_root.clone();
     let weak_root_drop = weak_root.clone();
+    let weak_root_hover = weak_root.clone();
     let payload = TreeDragPayload::Request(request_id);
     let drop_target = TreeDropTarget::Request(request_id);
     let request_name = request.name.clone();
@@ -526,6 +593,23 @@ fn render_request_tree_row(
             move |_, _, _, cx: &mut App| {
                 cx.new(|_| DragTreePreview::new(title.clone(), IconName::File))
             }
+        })
+        .can_drop(|dragged, _, _| {
+            dragged.is::<TreeDragPayload>()
+                && dragged
+                    .downcast_ref::<TreeDragPayload>()
+                    .is_some_and(|payload| {
+                        matches!(
+                            payload,
+                            TreeDragPayload::Folder(_) | TreeDragPayload::Request(_)
+                        )
+                    })
+        })
+        .drag_over::<TreeDragPayload>(move |style: StyleRefinement, _, _, cx| {
+            let _ = weak_root_hover.update(cx, |this, _| {
+                this.cancel_tree_drag_auto_expand();
+            });
+            style
         })
         .context_menu(move |menu: PopupMenu, _, _| {
             menu.item(
@@ -571,6 +655,32 @@ fn render_request_tree_row(
         content.into_any_element(),
         payload_can_drop_before_after_non_collection,
         payload_can_drop_before_after_non_collection,
+        {
+            let weak_root_hover = weak_root.clone();
+            move |payload, _, cx| {
+                if matches!(
+                    payload,
+                    TreeDragPayload::Folder(_) | TreeDragPayload::Request(_)
+                ) {
+                    let _ = weak_root_hover.update(cx, |this, _| {
+                        this.cancel_tree_drag_auto_expand();
+                    });
+                }
+            }
+        },
+        {
+            let weak_root_hover = weak_root.clone();
+            move |payload, _, cx| {
+                if matches!(
+                    payload,
+                    TreeDragPayload::Folder(_) | TreeDragPayload::Request(_)
+                ) {
+                    let _ = weak_root_hover.update(cx, |this, _| {
+                        this.cancel_tree_drag_auto_expand();
+                    });
+                }
+            }
+        },
         {
             let weak_root_drop = weak_root_drop.clone();
             move |dragged, window, cx| {
@@ -767,6 +877,8 @@ fn tree_row_with_drop_slots(
     content: AnyElement,
     can_drop_top: fn(&TreeDragPayload) -> bool,
     can_drop_bottom: fn(&TreeDragPayload) -> bool,
+    on_drag_over_top: impl Fn(&TreeDragPayload, &mut Window, &mut App) + 'static,
+    on_drag_over_bottom: impl Fn(&TreeDragPayload, &mut Window, &mut App) + 'static,
     on_drop_top: impl Fn(&TreeDragPayload, &mut Window, &mut App) + 'static,
     on_drop_bottom: impl Fn(&TreeDragPayload, &mut Window, &mut App) + 'static,
 ) -> gpui::Div {
@@ -784,8 +896,9 @@ fn tree_row_with_drop_slots(
                             .downcast_ref::<TreeDragPayload>()
                             .is_some_and(can_drop_top)
                 })
-                .drag_over::<TreeDragPayload>(move |style: StyleRefinement, payload, _, _| {
+                .drag_over::<TreeDragPayload>(move |style: StyleRefinement, payload, window, cx| {
                     if can_drop_top(payload) {
+                        on_drag_over_top(payload, window, cx);
                         style.bg(gpui::rgb(0x2563EB))
                     } else {
                         style
@@ -805,8 +918,9 @@ fn tree_row_with_drop_slots(
                             .downcast_ref::<TreeDragPayload>()
                             .is_some_and(can_drop_bottom)
                 })
-                .drag_over::<TreeDragPayload>(move |style: StyleRefinement, payload, _, _| {
+                .drag_over::<TreeDragPayload>(move |style: StyleRefinement, payload, window, cx| {
                     if can_drop_bottom(payload) {
+                        on_drag_over_bottom(payload, window, cx);
                         style.bg(gpui::rgb(0x2563EB))
                     } else {
                         style

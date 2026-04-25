@@ -2,6 +2,7 @@ use super::AppRoot;
 use crate::{
     app::{
         About, CloseTab, NewRequest, NextTab, OpenLayoutDebug, OpenSettings, PrevTab, ToggleSidebar,
+        TreeDeleteSelected, TreeOpenSelected,
     },
     domain::item_id::ItemId,
     session::item_key::ItemKey,
@@ -102,6 +103,38 @@ impl AppRoot {
                 es_fluent::localize("request_tab_shortcut_no_collection", None),
                 cx,
             );
+        }
+    }
+
+    pub(super) fn on_tree_open_selected_action(
+        &mut self,
+        _: &TreeOpenSelected,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(item_key) = self.session.read(cx).sidebar_selection {
+            self.open_item(item_key, cx);
+        }
+    }
+
+    pub(super) fn on_tree_delete_selected_action(
+        &mut self,
+        _: &TreeDeleteSelected,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(item_key) = self.session.read(cx).sidebar_selection else {
+            return;
+        };
+        match item_key.id {
+            Some(
+                ItemId::Workspace(_)
+                | ItemId::Collection(_)
+                | ItemId::Folder(_)
+                | ItemId::Environment(_)
+                | ItemId::Request(_),
+            ) => self.delete_item(item_key, window, cx),
+            _ => {}
         }
     }
 }

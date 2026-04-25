@@ -58,6 +58,8 @@ The following items were implemented on-the-fly during Phase 4 and are now the s
 - tree drag/drop now supports explicit `Before` / `Into` / `After` intents via row-level drop zones with legality gating
 - sidebar drag preview now anchors naturally to the drag cursor (no manual offset rendering)
 - drag/drop mutation logic is extracted into `services::tree_mutation::TreeMutationService`; sidebar orchestration now delegates to this service
+- drag hover auto-expand is implemented with explicit delayed-task ownership and stale-target guards
+- tree keyboard parity now includes `Enter` (open selected sidebar item) and `Delete`/`Backspace` (delete selected tree item) at the `AppRoot` action layer
 
 ## 2. Non-Negotiable GPUI Performance Rules
 
@@ -806,9 +808,7 @@ Notes:
 - Slice 3 — `Partially Done`
   - done: core create flows (workspace/collection/environment/folder/request), linked Git badge tooltip, folder-level request creation
   - pending: full rename/edit parity and richer linked badge actions
-- Slice 4 — `Partially Done`
-  - done: explicit drop intents, intent-aware row drop zones, legality gating for disallowed targets, before/after reorder path wiring, and dedicated `TreeMutationService` extraction
-  - pending: optional auto-expand-on-hover behavior
+- Slice 4 — `Done`
 - Slice 5 — `Done` (active environment selection + session persistence + clear-on-delete)
 - Slice 6 — `Mostly Done`
   - done: variable resolution pipeline and send-path integration
@@ -816,7 +816,9 @@ Notes:
 - Slice 7 — `Partially Done`
   - done: delete cleanup for active environment/session state and persisted closures
   - pending: full draft-descendant closure parity in all delete paths
-- Slice 8 — `Pending`
+- Slice 8 — `Partially Done`
+  - done: `Enter` open and `Delete`/`Backspace` destructive keyboard flows for selected sidebar items
+  - pending: context-menu keyboard gesture, tracing spans/counters, and focused GPUI performance audit
 
 ## Slice 0: Persistence and Domain Contracts
 

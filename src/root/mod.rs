@@ -54,6 +54,8 @@ pub struct AppRoot {
     previous_active_tab: Option<TabKey>,
     linked_collection_monitor: Option<LinkedCollectionMonitor>,
     linked_monitor_workspace_id: Option<WorkspaceId>,
+    drag_auto_expand_target: Option<crate::session::workspace_session::ExpandableItem>,
+    drag_auto_expand_epoch: u64,
 }
 
 impl AppRoot {
@@ -210,6 +212,8 @@ impl AppRoot {
             previous_active_tab: None,
             linked_collection_monitor: None,
             linked_monitor_workspace_id: None,
+            drag_auto_expand_target: None,
+            drag_auto_expand_epoch: 0,
         };
         root.sync_expansion_state_with_catalog(cx);
         root.sync_linked_collection_monitor(selected_workspace_id, cx);
@@ -617,6 +621,8 @@ impl Render for AppRoot {
             .on_action(cx.listener(Self::on_next_tab_action))
             .on_action(cx.listener(Self::on_prev_tab_action))
             .on_action(cx.listener(Self::on_toggle_sidebar_action))
+            .on_action(cx.listener(Self::on_tree_open_selected_action))
+            .on_action(cx.listener(Self::on_tree_delete_selected_action))
             .child(self.title_bar.clone())
             .child(
                 div()
