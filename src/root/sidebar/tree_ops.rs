@@ -1,5 +1,5 @@
 use super::super::{AppRoot, services};
-use super::tree_view::{TreeDragPayload, TreeDropTarget};
+use super::tree_view::{TreeDragPayload, TreeDropIntent, TreeDropTarget};
 use crate::{
     domain::{
         collection::{Collection, CollectionStorageKind},
@@ -76,24 +76,29 @@ impl AppRoot {
     pub(super) fn apply_tree_drop(
         &mut self,
         dragged: TreeDragPayload,
-        target: TreeDropTarget,
+        intent: TreeDropIntent,
         cx: &mut gpui::Context<Self>,
     ) -> Result<(), String> {
         match dragged {
-            TreeDragPayload::Collection(id) => self.drop_collection(id, target, cx),
-            TreeDragPayload::Folder(id) => self.drop_folder(id, target, cx),
-            TreeDragPayload::Request(id) => self.drop_request(id, target, cx),
+            TreeDragPayload::Collection(id) => self.drop_collection(id, intent, cx),
+            TreeDragPayload::Folder(id) => self.drop_folder(id, intent, cx),
+            TreeDragPayload::Request(id) => self.drop_request(id, intent, cx),
         }
     }
 
     fn drop_collection(
         &mut self,
         dragged: CollectionId,
-        target: TreeDropTarget,
+        intent: TreeDropIntent,
         cx: &mut gpui::Context<Self>,
     ) -> Result<(), String> {
-        let TreeDropTarget::Collection(target_collection_id) = target else {
-            return Err("collection can only be dropped onto another collection".to_string());
+        let target_collection_id = match intent {
+            TreeDropIntent::Before(TreeDropTarget::Collection(id))
+            | TreeDropIntent::After(TreeDropTarget::Collection(id)) => id,
+            TreeDropIntent::Into(TreeDropTarget::Collection(_)) => {
+                return Err("collections support before/after reorder only".to_string());
+            }
+            _ => return Err("collection can only be dropped onto another collection".to_string()),
         };
         if dragged == target_collection_id {
             return Ok(());
@@ -115,11 +120,15 @@ impl AppRoot {
             return Err("drop target collection no longer exists".to_string());
         };
         let moved = ordered.remove(source_idx);
-        let insert_at = if source_idx < target_idx {
-            target_idx.saturating_sub(1)
-        } else {
-            target_idx
+        let mut insert_at = match intent {
+            TreeDropIntent::Before(_) => target_idx,
+            TreeDropIntent::After(_) => target_idx.saturating_add(1),
+            TreeDropIntent::Into(_) => target_idx,
         };
+        if source_idx < insert_at {
+            insert_at = insert_at.saturating_sub(1);
+        }
+        insert_at = insert_at.min(ordered.len());
         ordered.insert(insert_at, moved);
 
         services(cx)
@@ -135,7 +144,7 @@ impl AppRoot {
     fn drop_folder(
         &mut self,
         dragged_folder_id: FolderId,
-        target: TreeDropTarget,
+        intent: TreeDropIntent,
         cx: &mut gpui::Context<Self>,
     ) -> Result<(), String> {
         let Some((source_collection_id, source_parent)) =
@@ -144,9 +153,11 @@ impl AppRoot {
             return Err("dragged folder no longer exists".to_string());
         };
 
-        let (target_collection_id, target_parent, insert_before) = match target {
-            TreeDropTarget::Collection(collection_id) => (collection_id, None, None),
-            TreeDropTarget::Folder(target_folder_id) => {
+        let (target_collection_id, target_parent, insert_before) = match intent {
+            TreeDropIntent::Into(TreeDropTarget::Collection(collection_id)) => {
+                (collection_id, None, None)
+            }
+            TreeDropIntent::Into(TreeDropTarget::Folder(target_folder_id)) => {
                 if target_folder_id == dragged_folder_id {
                     return Ok(());
                 }
@@ -165,8 +176,51 @@ impl AppRoot {
                     (collection_id, Some(target_folder_id), None)
                 }
             }
-            TreeDropTarget::Request(_) => {
+            TreeDropIntent::Into(TreeDropTarget::Request(_)) => {
                 return Err("folders cannot be dropped onto requests".to_string());
+            }
+            TreeDropIntent::Before(TreeDropTarget::Collection(_))
+            | TreeDropIntent::After(TreeDropTarget::Collection(_)) => {
+                return Err("folders can only be dropped into a collection root".to_string());
+            }
+            TreeDropIntent::Before(TreeDropTarget::Folder(target_folder_id))
+            | TreeDropIntent::After(TreeDropTarget::Folder(target_folder_id)) => {
+                if target_folder_id == dragged_folder_id {
+                    return Ok(());
+                }
+                let Some((collection_id, target_folder_parent)) =
+                    self.find_folder_location(target_folder_id)
+                else {
+                    return Err("drop target folder no longer exists".to_string());
+                };
+                let insert_before = match intent {
+                    TreeDropIntent::Before(_) => Some(MixedSibling::Folder(target_folder_id)),
+                    TreeDropIntent::After(_) => self.next_sibling_after(
+                        collection_id,
+                        target_folder_parent,
+                        MixedSibling::Folder(target_folder_id),
+                    ),
+                    TreeDropIntent::Into(_) => None,
+                };
+                (collection_id, target_folder_parent, insert_before)
+            }
+            TreeDropIntent::Before(TreeDropTarget::Request(target_request_id))
+            | TreeDropIntent::After(TreeDropTarget::Request(target_request_id)) => {
+                let Some((collection_id, target_parent)) =
+                    self.find_request_location(target_request_id)
+                else {
+                    return Err("drop target request no longer exists".to_string());
+                };
+                let insert_before = match intent {
+                    TreeDropIntent::Before(_) => Some(MixedSibling::Request(target_request_id)),
+                    TreeDropIntent::After(_) => self.next_sibling_after(
+                        collection_id,
+                        target_parent,
+                        MixedSibling::Request(target_request_id),
+                    ),
+                    TreeDropIntent::Into(_) => None,
+                };
+                (collection_id, target_parent, insert_before)
             }
         };
 
@@ -234,7 +288,7 @@ impl AppRoot {
     fn drop_request(
         &mut self,
         dragged_request_id: RequestId,
-        target: TreeDropTarget,
+        intent: TreeDropIntent,
         cx: &mut gpui::Context<Self>,
     ) -> Result<(), String> {
         let Some((source_collection_id, source_parent)) =
@@ -243,9 +297,11 @@ impl AppRoot {
             return Err("dragged request no longer exists".to_string());
         };
 
-        let (target_collection_id, target_parent, insert_before) = match target {
-            TreeDropTarget::Collection(collection_id) => (collection_id, None, None),
-            TreeDropTarget::Folder(target_folder_id) => {
+        let (target_collection_id, target_parent, insert_before) = match intent {
+            TreeDropIntent::Into(TreeDropTarget::Collection(collection_id)) => {
+                (collection_id, None, None)
+            }
+            TreeDropIntent::Into(TreeDropTarget::Folder(target_folder_id)) => {
                 let Some((collection_id, target_folder_parent)) =
                     self.find_folder_location(target_folder_id)
                 else {
@@ -261,7 +317,11 @@ impl AppRoot {
                     (collection_id, Some(target_folder_id), None)
                 }
             }
-            TreeDropTarget::Request(target_request_id) => {
+            TreeDropIntent::Into(TreeDropTarget::Request(_)) => {
+                return Err("requests cannot be dropped into request rows".to_string());
+            }
+            TreeDropIntent::Before(TreeDropTarget::Request(target_request_id))
+            | TreeDropIntent::After(TreeDropTarget::Request(target_request_id)) => {
                 if target_request_id == dragged_request_id {
                     return Ok(());
                 }
@@ -270,11 +330,38 @@ impl AppRoot {
                 else {
                     return Err("drop target request no longer exists".to_string());
                 };
-                (
-                    collection_id,
-                    target_request_parent,
-                    Some(MixedSibling::Request(target_request_id)),
-                )
+                let insert_before = match intent {
+                    TreeDropIntent::Before(_) => Some(MixedSibling::Request(target_request_id)),
+                    TreeDropIntent::After(_) => self.next_sibling_after(
+                        collection_id,
+                        target_request_parent,
+                        MixedSibling::Request(target_request_id),
+                    ),
+                    TreeDropIntent::Into(_) => None,
+                };
+                (collection_id, target_request_parent, insert_before)
+            }
+            TreeDropIntent::Before(TreeDropTarget::Folder(target_folder_id))
+            | TreeDropIntent::After(TreeDropTarget::Folder(target_folder_id)) => {
+                let Some((collection_id, target_folder_parent)) =
+                    self.find_folder_location(target_folder_id)
+                else {
+                    return Err("drop target folder no longer exists".to_string());
+                };
+                let insert_before = match intent {
+                    TreeDropIntent::Before(_) => Some(MixedSibling::Folder(target_folder_id)),
+                    TreeDropIntent::After(_) => self.next_sibling_after(
+                        collection_id,
+                        target_folder_parent,
+                        MixedSibling::Folder(target_folder_id),
+                    ),
+                    TreeDropIntent::Into(_) => None,
+                };
+                (collection_id, target_folder_parent, insert_before)
+            }
+            TreeDropIntent::Before(TreeDropTarget::Collection(_))
+            | TreeDropIntent::After(TreeDropTarget::Collection(_)) => {
+                return Err("requests can only be dropped into a collection root".to_string());
             }
         };
 
@@ -496,6 +583,17 @@ impl AppRoot {
                 })
                 .collect(),
         )
+    }
+
+    fn next_sibling_after(
+        &self,
+        collection_id: CollectionId,
+        parent_folder_id: Option<FolderId>,
+        sibling: MixedSibling,
+    ) -> Option<MixedSibling> {
+        let siblings = self.mixed_siblings_for_parent(collection_id, parent_folder_id)?;
+        let current_idx = siblings.iter().position(|candidate| *candidate == sibling)?;
+        siblings.get(current_idx + 1).copied()
     }
 
     fn folder_is_descendant_of(&self, candidate: FolderId, ancestor: FolderId) -> bool {
