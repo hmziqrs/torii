@@ -116,8 +116,11 @@ fn render_collection_row_only(
 
     let content = tree_row_base(depth, active_key == Some(item_key), cx)
         .id(format!("tree-collection-row-{}", collection_id))
-        .on_click(move |_, _, cx| {
-            let _ = weak_root_click.update(cx, |this, cx| this.open_item(item_key, cx));
+        .on_click(move |_, window, cx| {
+            let _ = weak_root_click.update(cx, |this, cx| {
+                this.focus_handle.focus(window, cx);
+                this.open_item(item_key, cx);
+            });
         })
         .on_drag(payload.clone(), {
             let title = collection.collection.name.clone();
@@ -268,7 +271,12 @@ fn render_collection_row_only(
                                     .on_click(
                                         move |_, _, cx| {
                                             let _ = weak_root_toggle.update(cx, |this, cx| {
+                                                this.session.update(cx, |session, cx| {
+                                                    session
+                                                        .set_sidebar_selection(Some(item_key), cx);
+                                                });
                                                 this.toggle_collection_expanded(collection_id, cx);
+                                                this.persist_session_state(cx);
                                             });
                                         },
                                     ),
@@ -362,8 +370,9 @@ fn render_folder_row_only(
 
     let content = tree_row_base(depth, active_key == Some(item_key), cx)
         .id(format!("tree-folder-row-{}", folder_id))
-        .on_click(move |_, _, cx| {
+        .on_click(move |_, window, cx| {
             let _ = weak_root_click.update(cx, |this, cx| {
+                this.focus_handle.focus(window, cx);
                 if has_children {
                     this.toggle_folder_expanded(folder_id, cx);
                 }
@@ -497,7 +506,11 @@ fn render_folder_row_only(
                                     )
                                     .on_click(move |_, _, cx| {
                                         let _ = weak_root_toggle.update(cx, |this, cx| {
+                                            this.session.update(cx, |session, cx| {
+                                                session.set_sidebar_selection(Some(item_key), cx);
+                                            });
                                             this.toggle_folder_expanded(folder_id, cx);
+                                            this.persist_session_state(cx);
                                         });
                                     }),
                             )
@@ -585,8 +598,11 @@ fn render_request_tree_row(
 
     let content = tree_row_base(depth, active_key == Some(item_key), cx)
         .id(format!("tree-request-row-{}", request_id))
-        .on_click(move |_, _, cx| {
-            let _ = weak_root_click.update(cx, |this, cx| this.open_item(item_key, cx));
+        .on_click(move |_, window, cx| {
+            let _ = weak_root_click.update(cx, |this, cx| {
+                this.focus_handle.focus(window, cx);
+                this.open_item(item_key, cx);
+            });
         })
         .on_drag(payload, {
             let title = request.name.clone();

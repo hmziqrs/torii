@@ -43,7 +43,7 @@ impl AppRoot {
         self.persist_session_state(cx);
     }
 
-    pub(super) fn toggle_folder_expanded(
+    pub(crate) fn toggle_folder_expanded(
         &mut self,
         folder_id: FolderId,
         cx: &mut gpui::Context<Self>,

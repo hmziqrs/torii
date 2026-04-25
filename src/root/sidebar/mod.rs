@@ -198,7 +198,8 @@ impl AppRoot {
                                                                     == Some(workspace.id),
                                                         )
                                                         .on_click(cx.listener(
-                                                            move |this, _, _, cx| {
+                                                            move |this, _, window, cx| {
+                                                                this.focus_handle.focus(window, cx);
                                                                 this.open_item(item_key, cx);
                                                             },
                                                         ))
@@ -315,9 +316,12 @@ impl AppRoot {
                                                     })
                                                     .icon(Icon::new(IconName::Globe).small())
                                                     .active(active_key == Some(item_key))
-                                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                                    .on_click(cx.listener(
+                                                        move |this, _, window, cx| {
+                                                            this.focus_handle.focus(window, cx);
                                                         this.open_item(item_key, cx);
-                                                    }))
+                                                        },
+                                                    ))
                                                     .context_menu(move |menu, _, _| {
                                                         let weak_root = weak_root.clone();
                                                         let weak_root_set_active =

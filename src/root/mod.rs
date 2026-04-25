@@ -128,49 +128,62 @@ impl AppRoot {
         )
         .unwrap_or(catalog);
 
-        let subscriptions = vec![cx.observe(&session, {
-            let services = services.clone();
-            let mut last_workspace_id = selected_workspace_id;
-            move |this, session, cx| {
-                let selected_workspace_id = session.read(cx).selected_workspace_id;
-                // Reload the catalog only when the selected workspace actually changed.
-                // The session observer fires for every session mutation (tab open/close,
-                // sidebar selection, etc.) — reloading on all of those runs 5 SQLite
-                // queries per interaction unnecessarily.
-                if selected_workspace_id != last_workspace_id {
-                    last_workspace_id = selected_workspace_id;
-                    match load_workspace_catalog(
-                        &services.repos.workspace,
-                        &services.repos.collection,
-                        &services.repos.folder,
-                        &services.repos.request,
-                        &services.repos.environment,
-                        selected_workspace_id,
-                    ) {
-                        Ok(catalog) => this.catalog = catalog,
-                        Err(err) => tracing::error!("failed to refresh workspace catalog: {err}"),
+        let subscriptions = vec![
+            cx.observe(&session, {
+                let services = services.clone();
+                let mut last_workspace_id = selected_workspace_id;
+                move |this, session, cx| {
+                    let selected_workspace_id = session.read(cx).selected_workspace_id;
+                    // Reload the catalog only when the selected workspace actually changed.
+                    // The session observer fires for every session mutation (tab open/close,
+                    // sidebar selection, etc.) — reloading on all of those runs 5 SQLite
+                    // queries per interaction unnecessarily.
+                    if selected_workspace_id != last_workspace_id {
+                        last_workspace_id = selected_workspace_id;
+                        match load_workspace_catalog(
+                            &services.repos.workspace,
+                            &services.repos.collection,
+                            &services.repos.folder,
+                            &services.repos.request,
+                            &services.repos.environment,
+                            selected_workspace_id,
+                        ) {
+                            Ok(catalog) => this.catalog = catalog,
+                            Err(err) => {
+                                tracing::error!("failed to refresh workspace catalog: {err}")
+                            }
+                        }
+                        this.sync_expansion_state_with_catalog(cx);
+                        this.sync_linked_collection_monitor(selected_workspace_id, cx);
                     }
-                    this.sync_expansion_state_with_catalog(cx);
-                    this.sync_linked_collection_monitor(selected_workspace_id, cx);
-                }
 
-                // Release the HTML preview webview when switching away from a request tab.
-                // Moved here from render() to avoid entity.update() inside render —
-                // see idle-cpu-audit-claude.md Bug 5.
-                let active_tab = session.read(cx).tab_manager.active();
-                if this.previous_active_tab != active_tab {
-                    this.release_html_webview_for_tab(this.previous_active_tab, cx);
-                    this.previous_active_tab = active_tab;
-                }
+                    // Release the HTML preview webview when switching away from a request tab.
+                    // Moved here from render() to avoid entity.update() inside render —
+                    // see idle-cpu-audit-claude.md Bug 5.
+                    let active_tab = session.read(cx).tab_manager.active();
+                    if this.previous_active_tab != active_tab {
+                        this.release_html_webview_for_tab(this.previous_active_tab, cx);
+                        this.previous_active_tab = active_tab;
+                    }
 
-                // cx.notify() must fire unconditionally — all session mutations (tab switch,
-                // sidebar toggle, reorder, etc.) need AppRoot to re-render.
-                if let Ok(mut shared) = services.active_environments_by_workspace.write() {
-                    *shared = session.read(cx).active_environments_by_workspace.clone();
+                    // cx.notify() must fire unconditionally — all session mutations (tab switch,
+                    // sidebar toggle, reorder, etc.) need AppRoot to re-render.
+                    if let Ok(mut shared) = services.active_environments_by_workspace.write() {
+                        *shared = session.read(cx).active_environments_by_workspace.clone();
+                    }
+                    cx.notify();
                 }
-                cx.notify();
-            }
-        })];
+            }),
+            cx.observe_keystrokes(|_, event, _, _| {
+                let action_name = event.action.as_ref().map(|action| action.name());
+                tracing::info!(
+                    keystroke = ?event.keystroke,
+                    action = ?action_name,
+                    context_stack = ?event.context_stack,
+                    "key dispatch observed"
+                );
+            }),
+        ];
 
         let io_runtime = services.io_runtime.clone();
         cx.spawn(async move |this, cx| {
@@ -627,6 +640,7 @@ impl Render for AppRoot {
             .child(
                 div()
                     .track_focus(&self.focus_handle)
+                    .key_context("AppRoot")
                     .flex_1()
                     .overflow_hidden()
                     .child(
