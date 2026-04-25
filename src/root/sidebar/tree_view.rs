@@ -8,8 +8,8 @@ use crate::{
     session::item_key::ItemKey,
 };
 use gpui::{
-    AnyElement, App, InteractiveElement as _, Render, SharedString, StatefulInteractiveElement as _,
-    StyleRefinement, Window, div, prelude::*, px,
+    AnyElement, App, InteractiveElement as _, Render, SharedString,
+    StatefulInteractiveElement as _, StyleRefinement, Window, div, prelude::*, px,
 };
 use gpui_component::{
     ActiveTheme as _, Icon, IconName, Sizable as _, StyledExt as _, WindowExt as _,
@@ -98,6 +98,7 @@ fn render_collection_row_only(
     let weak_root_click = weak_root.clone();
     let weak_root_toggle = weak_root.clone();
     let weak_root_drop = weak_root.clone();
+    let weak_root_drop_into = weak_root.clone();
     let weak_root_menu_new = weak_root.clone();
     let weak_root_menu_new_folder = weak_root.clone();
     let weak_root_menu_rename = weak_root.clone();
@@ -119,7 +120,9 @@ fn render_collection_row_only(
         })
         .on_drag(payload.clone(), {
             let title = collection.collection.name.clone();
-            move |_, _, _, cx: &mut App| cx.new(|_| DragTreePreview::new(title.clone(), IconName::BookOpen))
+            move |_, _, _, cx: &mut App| {
+                cx.new(|_| DragTreePreview::new(title.clone(), IconName::BookOpen))
+            }
         })
         .drag_over::<TreeDragPayload>(move |style: StyleRefinement, dragged, _, _| {
             if matches!(
@@ -143,9 +146,10 @@ fn render_collection_row_only(
                     })
         })
         .on_drop(move |dragged: &TreeDragPayload, window, cx| {
-            let result = weak_root_drop.update(cx, |this, cx| {
-                this.apply_tree_drop(dragged.clone(), TreeDropIntent::Into(drop_target), cx)
-            })
+            let result = weak_root_drop_into
+                .update(cx, |this, cx| {
+                    this.apply_tree_drop(dragged.clone(), TreeDropIntent::Into(drop_target), cx)
+                })
                 .unwrap_or_else(|_| Err("workspace view was closed".to_string()));
             if let Err(err) = result {
                 window.push_notification(err, cx);
@@ -273,7 +277,7 @@ fn render_collection_row_only(
         );
 
     tree_row_with_drop_slots(
-        content,
+        content.into_any_element(),
         payload_can_drop_before_after_collection,
         payload_can_drop_before_after_collection,
         {
@@ -318,6 +322,7 @@ fn render_folder_row_only(
     let weak_root_click = weak_root.clone();
     let weak_root_toggle = weak_root.clone();
     let weak_root_drop = weak_root.clone();
+    let weak_root_drop_into = weak_root.clone();
     let weak_root_menu_new = weak_root.clone();
     let weak_root_menu_new_request = weak_root.clone();
     let weak_root_menu_rename = weak_root.clone();
@@ -339,7 +344,9 @@ fn render_folder_row_only(
         })
         .on_drag(payload.clone(), {
             let title = folder.folder.name.clone();
-            move |_, _, _, cx: &mut App| cx.new(|_| DragTreePreview::new(title.clone(), IconName::Folder))
+            move |_, _, _, cx: &mut App| {
+                cx.new(|_| DragTreePreview::new(title.clone(), IconName::Folder))
+            }
         })
         .drag_over::<TreeDragPayload>(move |style: StyleRefinement, _, _, _| {
             style.border_1().border_color(gpui::rgb(0x2563EB))
@@ -357,7 +364,7 @@ fn render_folder_row_only(
         })
         .on_drop(move |dragged: &TreeDragPayload, window, cx| {
             run_tree_drop(
-                &weak_root_drop,
+                &weak_root_drop_into,
                 dragged,
                 TreeDropIntent::Into(drop_target),
                 window,
@@ -461,7 +468,7 @@ fn render_folder_row_only(
         );
 
     tree_row_with_drop_slots(
-        content,
+        content.into_any_element(),
         payload_can_drop_before_after_non_collection,
         payload_can_drop_before_after_non_collection,
         {
@@ -516,7 +523,9 @@ fn render_request_tree_row(
         })
         .on_drag(payload, {
             let title = request.name.clone();
-            move |_, _, _, cx: &mut App| cx.new(|_| DragTreePreview::new(title.clone(), IconName::File))
+            move |_, _, _, cx: &mut App| {
+                cx.new(|_| DragTreePreview::new(title.clone(), IconName::File))
+            }
         })
         .context_menu(move |menu: PopupMenu, _, _| {
             menu.item(
@@ -559,7 +568,7 @@ fn render_request_tree_row(
         );
 
     tree_row_with_drop_slots(
-        content,
+        content.into_any_element(),
         payload_can_drop_before_after_non_collection,
         payload_can_drop_before_after_non_collection,
         {
@@ -755,7 +764,7 @@ fn payload_can_drop_before_after_non_collection(payload: &TreeDragPayload) -> bo
 }
 
 fn tree_row_with_drop_slots(
-    content: gpui::Div,
+    content: AnyElement,
     can_drop_top: fn(&TreeDragPayload) -> bool,
     can_drop_bottom: fn(&TreeDragPayload) -> bool,
     on_drop_top: impl Fn(&TreeDragPayload, &mut Window, &mut App) + 'static,
@@ -815,7 +824,9 @@ fn run_tree_drop(
     cx: &mut App,
 ) {
     let result = weak_root
-        .update(cx, |this, cx| this.apply_tree_drop(dragged.clone(), intent, cx))
+        .update(cx, |this, cx| {
+            this.apply_tree_drop(dragged.clone(), intent, cx)
+        })
         .unwrap_or_else(|_| Err("workspace view was closed".to_string()));
     if let Err(err) = result {
         window.push_notification(err, cx);

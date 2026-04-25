@@ -592,7 +592,9 @@ impl AppRoot {
         sibling: MixedSibling,
     ) -> Option<MixedSibling> {
         let siblings = self.mixed_siblings_for_parent(collection_id, parent_folder_id)?;
-        let current_idx = siblings.iter().position(|candidate| *candidate == sibling)?;
+        let current_idx = siblings
+            .iter()
+            .position(|candidate| *candidate == sibling)?;
         siblings.get(current_idx + 1).copied()
     }
 
