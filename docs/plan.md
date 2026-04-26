@@ -563,6 +563,8 @@ Exit criteria:
 
 Goal: expand protocol coverage without violating V2 memory and streaming constraints.
 
+Detailed execution document: [docs/phase-5.md](docs/phase-5.md)
+
 Scope:
 
 - Global history panel with filtering, search, grouping, and virtualization
