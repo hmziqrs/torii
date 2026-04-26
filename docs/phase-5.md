@@ -257,9 +257,9 @@ Explicitly deferred:
 - gRPC load testing beyond correctness/performance gates needed for local streaming safety
 - WebSocket/gRPC stream pause/resume controls
 
-## 5.1 Dependencies Added in Phase 5
+## 5.1 Dependency Families to Evaluate
 
-Candidate dependencies are part of the Phase 5 design, not late implementation guesses:
+Candidate dependency families are part of the Phase 5 design, but exact versions must be chosen in the slice that lands each family:
 
 ```toml
 graphql-parser = "..."       # GraphQL operation parsing for the operation picker
@@ -376,6 +376,14 @@ CREATE INDEX IF NOT EXISTS idx_history_workspace_status_started
 ON history_index (workspace_id, status_code, started_at DESC, id DESC);
 ```
 
+Timestamp migration:
+
+- `history_index.started_at`, `completed_at`, `dispatched_at`, `first_byte_at`, and `cancelled_at` must use one unit for all rows before cursor pagination ships.
+- The 0005 migration must normalize existing second-precision values in those columns to Unix milliseconds in place.
+- New Phase 5 writes must store Unix milliseconds in the same columns.
+- The migration must be idempotent by updating only plausible second-precision values, using the same threshold as `normalize_unix_ms`.
+- After 0005, query ordering and time filters operate on raw millisecond values; readers may keep normalization helpers only for defensive compatibility.
+
 Index cleanup notes:
 
 - `idx_history_workspace_started` from `0001_initial.sql` is superseded by `idx_history_workspace_started_id` for the baseline workspace-only cursor query.
@@ -426,6 +434,7 @@ Reference kinds:
 
 Rules:
 
+- `CreateHistoryRun` and every finalizer input must carry a `Vec<HistoryBlobRefInput>` for all blob references introduced by that write.
 - `history_index.blob_hash`, `request_snapshot_blob_hash`, and `transcript_blob_hash` remain denormalized display/detail columns.
 - `history_blob_refs` is the authoritative recovery source for all history-owned blobs, including blobs nested inside `request_snapshot_json`.
 - Snapshot creation and finalization must populate `history_blob_refs` in the same repository transaction that writes the history row update.
@@ -583,9 +592,14 @@ Add history query types:
 pub struct HistoryQuery {
     pub workspace_id: WorkspaceId,
     pub request_id: Option<RequestId>,
+    pub collection_id: Option<CollectionId>,
     pub protocol: Option<RequestProtocolKind>,
     pub state: Option<HistoryState>,
     pub status_family: Option<StatusFamily>,
+    pub status_min: Option<u16>,
+    pub status_max: Option<u16>,
+    pub method: Option<String>,
+    pub url_search: Option<String>,
     pub search: Option<String>,
     pub started_after: Option<i64>,
     pub started_before: Option<i64>,
@@ -603,10 +617,20 @@ pub struct HistoryPage {
 
 `HistoryQuery.limit` must be clamped by the repository. UI callers do not control unbounded row counts.
 
+Filter semantics:
+
+- `workspace_id` is always required.
+- `request_id` narrows to one persisted source request when present.
+- `collection_id` matches the denormalized `request_collection_id` captured at run time.
+- `method` is an exact case-insensitive method/action filter.
+- `url_search` searches only the URL/endpoint field.
+- `search` is the general text search across method/action, URL/endpoint, request name, and error summary.
+- `status_family` is convenience syntax for `status_min/status_max`; repository code must reject contradictory status filters.
+
 Timestamp and cursor precision:
 
-- New Phase 5 history rows should write `started_at`, `completed_at`, `dispatched_at`, `first_byte_at`, and `cancelled_at` in Unix milliseconds.
-- Legacy second-precision rows remain readable through the existing timestamp normalization helpers.
+- After the 0005 migration, all history timestamp columns used for ordering and filtering are Unix milliseconds.
+- New Phase 5 history rows must write `started_at`, `completed_at`, `dispatched_at`, `first_byte_at`, and `cancelled_at` in Unix milliseconds.
 - Cursor stability still uses `(started_at, id)` because multiple rows can share the same millisecond.
 - `HistoryEntryId` is UUIDv7 today; lexicographic `id DESC` is a valid tie-breaker as long as the ID type remains time-sortable. If the ID type changes, the cursor contract must be revisited or replaced with an explicit monotonic sequence column.
 
@@ -632,6 +656,32 @@ pub trait HistoryRepository: Send + Sync {
     fn referenced_blob_hashes(&self) -> RepoResult<HashSet<String>>;
 }
 ```
+
+History write inputs:
+
+```rust
+pub struct HistoryBlobRefInput {
+    pub blob_hash: String,
+    pub ref_kind: HistoryBlobRefKind,
+}
+
+pub struct CreateHistoryRun {
+    pub workspace_id: WorkspaceId,
+    pub request_id: Option<RequestId>,
+    pub protocol_kind: RequestProtocolKind,
+    pub method: String,
+    pub url: String,
+    pub request_name: Option<String>,
+    pub request_collection_id: Option<CollectionId>,
+    pub request_parent_folder_id: Option<FolderId>,
+    pub request_snapshot_json: Option<String>,
+    pub request_snapshot_blob_hash: Option<String>,
+    pub redacted_snapshot: RequestSnapshot,
+    pub blob_refs: Vec<HistoryBlobRefInput>,
+}
+```
+
+Every finalizer input must also include `blob_refs: Vec<HistoryBlobRefInput>` so response bodies, transcript blobs, snapshot overflow blobs, snapshot body blobs, and descriptor blobs are inserted into `history_blob_refs` transactionally with the terminal update.
 
 Cursor ordering:
 
@@ -662,6 +712,13 @@ Add `src/services/history.rs` for orchestration:
 - loads response/transcript previews for details panes
 - owns retention/delete-history operations
 
+Ownership rule:
+
+- Phase 5 moves pending-history creation and finalization ownership into `HistoryService`.
+- `RequestExecutionService::create_pending_history` and `RequestExecutionService::finalize_history` must either be removed or become private helpers called only by `HistoryService`/`HttpExecutor`.
+- Request-tab UI code must call the protocol dispatcher, not create or finalize history rows directly.
+- `ProtocolExecutionService` receives a history operation ID from `HistoryService`, passes it through executor events, and asks `HistoryService` to finalize once.
+
 Delete and retention operations:
 
 - delete selected history row with confirmation
@@ -674,7 +731,7 @@ Restore destination rules use the history row's `workspace_id`, not whichever wo
 
 1. If the original request still exists, open/focus it and restore the selected history response state.
 2. If the original request is deleted but the snapshot collection still exists, create an unsaved draft in that collection. Use the original parent folder only if it still exists.
-3. If the snapshot collection is gone but the history row's workspace has a selected/default collection, create the draft there.
+3. If the snapshot collection is gone, create the draft in the first managed collection in the history row's workspace ordered by `sort_order ASC, id ASC`.
 4. If no usable collection exists in the history row's workspace, create a managed collection named `Restored History` in that workspace and create the draft at its root.
 
 The auto-created `Restored History` collection is normal user-owned data: it can be renamed, moved, or deleted like any other managed collection and must not create orphan blob references.
@@ -779,9 +836,10 @@ Keep protocol-specific network code in `services/`. Views own presentation and e
 Tasks:
 
 - add `0005_phase5_history_protocols.sql`
-- add request protocol persistence
+- add request protocol schema columns only; repository read/write support lands in Slice 4
 - add `idx_history_workspace_started_id`
 - add `history_blob_refs`
+- normalize existing history timestamp columns to Unix milliseconds
 - extend `HistoryEntry`
 - add `HistoryQuery`, `HistoryCursor`, `HistoryPage`
 - implement cursor-paginated `HistoryRepository::query`
@@ -795,20 +853,26 @@ Acceptance:
 - query returns stable cursor pages with no duplicate rows
 - query clamps `limit`
 - workspace filter is mandatory
+- method, URL search, collection, status range, time range, request, protocol, state, and general text search filters are represented in `HistoryQuery`
 - baseline workspace-only query uses `idx_history_workspace_started_id`
 - request filter uses `idx_history_request_started`
 - protocol/state/status filters are covered by indexes
+- history timestamp columns are all milliseconds after migration
 - `finalize_*` methods are no-ops when the row is already in a terminal state, with a logged warning
 - migration round-trip passes from old DB state
 - recovery does not delete transcript, snapshot, snapshot-body, descriptor, response-body, or existing request-body blobs
+- create/finalize repository writes insert their `history_blob_refs` in the same transaction
 
 Tests:
 
 - `history_query_cursor_is_stable_with_same_started_at`
 - `history_query_filters_by_workspace_protocol_state_status`
+- `history_query_supports_method_url_collection_status_and_time_filters`
 - `history_query_clamps_limit`
+- `history_migration_normalizes_timestamps_to_millis`
 - `history_finalize_terminal_row_is_idempotent`
 - `history_blob_refs_are_authoritative_for_recovery`
+- `history_write_inserts_blob_refs_transactionally`
 - `migration_0005_adds_protocol_history_fields`
 - `recovery_preserves_phase5_history_blob_refs`
 
@@ -937,7 +1001,8 @@ Tasks:
 Acceptance:
 
 - invalid variables JSON blocks send with preflight error
-- operation picker lists named query/mutation/subscription operations
+- operation picker lists named query/mutation operations
+- subscription operations are visible but disabled, and attempting to send one returns a preflight error that GraphQL subscriptions over WebSocket are out of Phase 5 scope
 - selected operation name is included in the request body
 - headers/auth/environment variable resolution reuse existing HTTP behavior
 - response panel and history restore work exactly like HTTP
