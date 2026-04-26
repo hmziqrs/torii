@@ -249,6 +249,7 @@ Blob/file storage should cover:
 - `Phase 2`: completed on 2026-04-11
 - `Phase 3`: completed on 2026-04-12
 - `Phase 3.5`: completed on 2026-04-13
+- `Phase 4`: completed
 
 Phase 2 completion summary:
 
@@ -525,7 +526,7 @@ Exit criteria:
 
 Goal: complete the core Postman information architecture.
 
-Detailed execution document: [docs/phase-4.md](docs/phase-4.md)
+Detailed execution document: [docs/completed/phase-4.md](docs/completed/phase-4.md)
 
 Scope:
 
