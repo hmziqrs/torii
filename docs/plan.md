@@ -566,6 +566,9 @@ Scope:
 
 - Global history panel with filtering, search, grouping, and virtualization
 - Per-request history panel with quick compare/reopen
+- History restore behavior for deleted/missing requests:
+  - if original `request_id` still exists, `Restore` reopens/focuses that request tab
+  - if original `request_id` is deleted, `Restore` creates a new draft request from the history snapshot instead of failing
 - GraphQL:
   - query editor
   - variables editor
@@ -586,6 +589,7 @@ Scope:
 Exit criteria:
 
 - Global history and per-request history stay performant at large row counts
+- Restoring a history entry never dead-ends because of deleted source requests; deleted-source restores rehydrate into a draft request
 - WS and gRPC streaming do not use unbounded in-memory vectors
 - Batch-notify behavior exists for stream rendering
 - Protocol-specific editors reuse the shared tab, lifecycle, persistence, and history contracts

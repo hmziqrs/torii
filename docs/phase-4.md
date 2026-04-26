@@ -65,6 +65,21 @@ The following items were implemented on-the-fly during Phase 4 and are now the s
   - counters: `tree_catalog_reload_total`, `tree_illegal_drops_total`, `variable_resolution_missing_failures_total`
 - tree keyboard alternate menu gesture is wired: `Shift+F10` opens a selected-item actions dialog that exposes context actions (rename/delete and item-appropriate create/set-active actions)
 
+## 1.2 Phase 4 Closeout Verification
+
+Closeout verification was run against the current Phase 4 implementation:
+
+- full package verification passes:
+  - `cargo test --package torii`
+- all Phase 4 acceptance checklist items in this document are marked complete
+- localization coverage for Phase 4 UI paths is Fluent-backed in both supported locales
+- GPUI render-loop constraints from `docs/gpui-performance.md` are satisfied for Phase 4 surfaces
+
+Explicitly deferred (not Phase 4 scope):
+
+- history-driven restore that recreates a deleted source request as a new draft request
+  - this belongs to Phase 5 history behavior and is tracked in `docs/plan.md` Phase 5 scope
+
 ## 2. Non-Negotiable GPUI Performance Rules
 
 `docs/gpui-performance.md` applies directly to this phase. The tree, drag/drop, and variable editors are exactly the kind of surfaces that create idle CPU regressions if they are implemented carelessly.
