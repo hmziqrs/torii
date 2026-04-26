@@ -17,8 +17,8 @@ use gpui_component::{
 use crate::{
     domain::{
         collection::CollectionStorageKind,
-        history::{HistoryCursor, HistoryEntry, HistoryQuery, HistoryState},
-        ids::{RequestDraftId, RequestId, WorkspaceId},
+        history::{HistoryCursor, HistoryEntry, HistoryQuery, HistoryState, StatusFamily},
+        ids::{HistoryEntryId, RequestDraftId, RequestId, WorkspaceId},
         item_id::ItemId,
     },
     repos::tab_session_repo::{TabSessionMetadata, TabSessionWorkspaceState},
@@ -98,6 +98,8 @@ enum HistoryTextFilterKind {
     Search,
     Method,
     Url,
+    StartedAfter,
+    StartedBefore,
 }
 
 #[derive(Debug, Clone)]
@@ -108,7 +110,11 @@ pub(crate) struct HistoryWorkspaceView {
     pub method_filter: Option<String>,
     pub url_search: Option<String>,
     pub search: Option<String>,
+    pub status_family_filter: Option<StatusFamily>,
+    pub started_after: Option<i64>,
+    pub started_before: Option<i64>,
     pub group_by: HistoryGroupBy,
+    pub selected_history_id: Option<HistoryEntryId>,
     pub next_cursor: Option<HistoryCursor>,
     pub has_loaded_once: bool,
 }
@@ -122,7 +128,11 @@ impl Default for HistoryWorkspaceView {
             method_filter: None,
             url_search: None,
             search: None,
+            status_family_filter: None,
+            started_after: None,
+            started_before: None,
             group_by: HistoryGroupBy::None,
+            selected_history_id: None,
             next_cursor: None,
             has_loaded_once: false,
         }
@@ -624,8 +634,46 @@ impl AppRoot {
         view.method_filter = None;
         view.url_search = None;
         view.search = None;
+        view.status_family_filter = None;
+        view.started_after = None;
+        view.started_before = None;
         view.group_by = HistoryGroupBy::None;
+        view.selected_history_id = None;
         self.refresh_history_for_workspace(workspace_id, cx);
+    }
+
+    pub(crate) fn set_history_status_family_filter_for_workspace(
+        &mut self,
+        workspace_id: WorkspaceId,
+        filter: Option<StatusFamily>,
+        cx: &mut Context<Self>,
+    ) {
+        let view = self
+            .history_views_by_workspace
+            .entry(workspace_id)
+            .or_default();
+        if view.status_family_filter == filter {
+            return;
+        }
+        view.status_family_filter = filter;
+        self.refresh_history_for_workspace(workspace_id, cx);
+    }
+
+    pub(crate) fn set_selected_history_entry_for_workspace(
+        &mut self,
+        workspace_id: WorkspaceId,
+        selected: Option<HistoryEntryId>,
+        cx: &mut Context<Self>,
+    ) {
+        let view = self
+            .history_views_by_workspace
+            .entry(workspace_id)
+            .or_default();
+        if view.selected_history_id == selected {
+            return;
+        }
+        view.selected_history_id = selected;
+        cx.notify();
     }
 
     pub(crate) fn open_history_search_dialog(
@@ -691,6 +739,50 @@ impl AppRoot {
         );
     }
 
+    pub(crate) fn open_history_started_after_dialog(
+        &mut self,
+        workspace_id: WorkspaceId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let current = self
+            .history_views_by_workspace
+            .get(&workspace_id)
+            .and_then(|view| view.started_after)
+            .map(|ms| ms.to_string())
+            .unwrap_or_default();
+        self.open_history_filter_dialog(
+            workspace_id,
+            current,
+            "history_tab_started_after_dialog_title",
+            HistoryTextFilterKind::StartedAfter,
+            window,
+            cx,
+        );
+    }
+
+    pub(crate) fn open_history_started_before_dialog(
+        &mut self,
+        workspace_id: WorkspaceId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let current = self
+            .history_views_by_workspace
+            .get(&workspace_id)
+            .and_then(|view| view.started_before)
+            .map(|ms| ms.to_string())
+            .unwrap_or_default();
+        self.open_history_filter_dialog(
+            workspace_id,
+            current,
+            "history_tab_started_before_dialog_title",
+            HistoryTextFilterKind::StartedBefore,
+            window,
+            cx,
+        );
+    }
+
     fn open_history_filter_dialog(
         &mut self,
         workspace_id: WorkspaceId,
@@ -750,6 +842,16 @@ impl AppRoot {
                                             HistoryTextFilterKind::Url => {
                                                 view.url_search = next_value;
                                             }
+                                            HistoryTextFilterKind::StartedAfter => {
+                                                view.started_after = next_value
+                                                    .as_deref()
+                                                    .and_then(parse_history_time_filter_ms);
+                                            }
+                                            HistoryTextFilterKind::StartedBefore => {
+                                                view.started_before = next_value
+                                                    .as_deref()
+                                                    .and_then(parse_history_time_filter_ms);
+                                            }
                                         }
                                         this.refresh_history_for_workspace(workspace_id, cx);
                                     });
@@ -778,6 +880,9 @@ impl AppRoot {
         query.search = view.and_then(|state| state.search.clone());
         query.method = view.and_then(|state| state.method_filter.clone());
         query.url_search = view.and_then(|state| state.url_search.clone());
+        query.status_family = view.and_then(|state| state.status_family_filter);
+        query.started_after = view.and_then(|state| state.started_after);
+        query.started_before = view.and_then(|state| state.started_before);
 
         match services.repos.history.query(query) {
             Ok(page) => Some((page.rows, page.next_cursor)),
@@ -900,6 +1005,24 @@ impl Focusable for AppRoot {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
+}
+
+fn parse_history_time_filter_ms(raw: &str) -> Option<i64> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Ok(value) = trimmed.parse::<i64>() {
+        return Some(crate::domain::response::normalize_unix_ms(value));
+    }
+    if let Ok(date) = time::Date::parse(
+        trimmed,
+        &time::format_description::well_known::Iso8601::DATE,
+    ) {
+        let dt = date.with_time(time::Time::MIDNIGHT).assume_utc();
+        return Some(dt.unix_timestamp() * 1000);
+    }
+    None
 }
 
 impl Render for AppRoot {

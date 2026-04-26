@@ -7,7 +7,7 @@ use gpui_component::{
 
 use crate::{
     domain::{
-        history::{HistoryEntry, HistoryState},
+        history::{HistoryEntry, HistoryState, StatusFamily},
         ids::WorkspaceId,
     },
     root::{AppRoot, HistoryGroupBy, HistoryProtocolFilter, HistoryWorkspaceView},
@@ -27,13 +27,21 @@ pub(crate) fn render(
         || protocol_filter != HistoryProtocolFilter::All
         || view.method_filter.is_some()
         || view.url_search.is_some()
-        || view.search.is_some();
+        || view.search.is_some()
+        || view.status_family_filter.is_some()
+        || view.started_after.is_some()
+        || view.started_before.is_some();
     let grouped = group_entries(entries, view.group_by);
     let weak_root_search = root.clone();
     let weak_root_method = root.clone();
     let weak_root_url = root.clone();
     let weak_root_clear = root.clone();
     let weak_root_load_more = root.clone();
+    let weak_root_after = root.clone();
+    let weak_root_before = root.clone();
+    let selected_entry = view
+        .selected_history_id
+        .and_then(|selected| entries.iter().find(|it| it.id == selected).cloned());
 
     let mut quick_filter_row = h_flex()
         .gap_2()
@@ -68,6 +76,28 @@ pub(crate) fn render(
                 .on_click(move |_, window, cx| {
                     let _ = weak_root_url.update(cx, |this, cx| {
                         this.open_history_url_filter_dialog(workspace_id, window, cx);
+                    });
+                }),
+        )
+        .child(
+            Button::new("history-open-started-after-dialog")
+                .ghost()
+                .xsmall()
+                .label(es_fluent::localize("history_tab_started_after", None))
+                .on_click(move |_, window, cx| {
+                    let _ = weak_root_after.update(cx, |this, cx| {
+                        this.open_history_started_after_dialog(workspace_id, window, cx);
+                    });
+                }),
+        )
+        .child(
+            Button::new("history-open-started-before-dialog")
+                .ghost()
+                .xsmall()
+                .label(es_fluent::localize("history_tab_started_before", None))
+                .on_click(move |_, window, cx| {
+                    let _ = weak_root_before.update(cx, |this, cx| {
+                        this.open_history_started_before_dialog(workspace_id, window, cx);
                     });
                 }),
         );
@@ -182,6 +212,42 @@ pub(crate) fn render(
                 .gap_2()
                 .items_center()
                 .child(div().text_sm().text_color(gpui::transparent_black()).child(
+                    es_fluent::localize("history_tab_status_family_filter_label", None),
+                ))
+                .child(status_family_filter_button(
+                    workspace_id,
+                    view.status_family_filter,
+                    None,
+                    es_fluent::localize("history_tab_filter_all", None),
+                    root.clone(),
+                ))
+                .child(status_family_filter_button(
+                    workspace_id,
+                    view.status_family_filter,
+                    Some(StatusFamily::Success),
+                    es_fluent::localize("history_tab_status_family_2xx", None),
+                    root.clone(),
+                ))
+                .child(status_family_filter_button(
+                    workspace_id,
+                    view.status_family_filter,
+                    Some(StatusFamily::ClientError),
+                    es_fluent::localize("history_tab_status_family_4xx", None),
+                    root.clone(),
+                ))
+                .child(status_family_filter_button(
+                    workspace_id,
+                    view.status_family_filter,
+                    Some(StatusFamily::ServerError),
+                    es_fluent::localize("history_tab_status_family_5xx", None),
+                    root.clone(),
+                )),
+        )
+        .child(
+            h_flex()
+                .gap_2()
+                .items_center()
+                .child(div().text_sm().text_color(gpui::transparent_black()).child(
                     es_fluent::localize("history_tab_protocol_filter_label", None),
                 ))
                 .child(protocol_filter_button(
@@ -264,115 +330,195 @@ pub(crate) fn render(
             es_fluent::localize("history_tab_total", None),
             entries.len()
         )))
-        .children(if entries.is_empty() {
-            Some(
-                div()
-                    .text_color(gpui::transparent_black())
-                    .child(if has_filters {
-                        es_fluent::localize("history_tab_no_results", None)
-                    } else {
-                        es_fluent::localize("history_tab_empty", None)
-                    })
-                    .into_any_element(),
-            )
-            .into_iter()
-            .collect::<Vec<_>>()
-        } else {
-            grouped
-                .iter()
-                .flat_map(|(group_title, rows)| {
-                    let group_header = Some(
-                        div()
-                            .text_sm()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(gpui::transparent_black())
-                            .child(group_title.clone())
-                            .into_any_element(),
-                    );
-                    let group_rows = rows.iter().map(|entry| {
-                        let weak_root = root.clone();
-                        let request_id = entry.request_id;
-                        let meta_row = {
-                            let mut row = h_flex()
-                                .gap_3()
-                                .text_sm()
-                                .text_color(gpui::transparent_black())
-                                .child(format!(
-                                    "{}: {}",
-                                    es_fluent::localize("history_tab_started_at", None),
-                                    entry.started_at
-                                ));
-                            if let Some(completed_at) = entry.completed_at {
-                                row = row.child(format!(
-                                    "{}: {}",
-                                    es_fluent::localize("history_tab_completed_at", None),
-                                    completed_at
-                                ));
-                            }
-                            row
-                        };
-
-                        let mut card = v_flex()
-                            .gap_1()
-                            .p_3()
-                            .rounded(px(6.))
-                            .border_1()
-                            .child(
-                                h_flex()
-                                    .justify_between()
-                                    .items_center()
-                                    .child(format!(
-                                        "[{}] {} {}",
-                                        protocol_label(entry),
-                                        entry.method,
-                                        entry.url
-                                    ))
-                                    .child(status_chip(entry.state, entry.status_code)),
-                            )
-                            .child(meta_row);
-                        card = card.child(
-                            Button::new(format!("history-restore-request-{}", entry.id))
-                                .ghost()
-                                .xsmall()
-                                .label(es_fluent::localize("history_tab_restore", None))
-                                .on_click(move |_, window, cx| {
-                                    let _ = weak_root.update(cx, |this, cx| {
-                                        let Some(request_id) = request_id else {
-                                            window.push_notification(
-                                                es_fluent::localize(
-                                                    "history_tab_restore_no_request",
-                                                    None,
-                                                ),
-                                                cx,
-                                            );
-                                            return;
-                                        };
-                                        let item_key =
-                                            crate::session::item_key::ItemKey::request(request_id);
-                                        if !this.can_open_item(item_key) {
-                                            window.push_notification(
-                                                es_fluent::localize(
-                                                    "history_tab_restore_request_deleted",
-                                                    None,
-                                                ),
-                                                cx,
-                                            );
-                                            return;
-                                        }
-                                        this.open_item(item_key, cx);
-                                    });
-                                }),
-                        );
-                        card.into_any_element()
-                    });
-                    group_header
-                        .into_iter()
-                        .chain(group_rows)
-                        .collect::<Vec<_>>()
-                })
-                .collect::<Vec<_>>()
-        })
+        .children(
+            active_filter_chips(view)
+                .into_iter()
+                .map(|label| chip(label).into_any_element()),
+        )
+        .children(history_rows_elements(
+            workspace_id,
+            &grouped,
+            selected_entry.as_ref().map(|it| it.id),
+            has_filters,
+            root.clone(),
+        ))
+        .child(render_details_panel(
+            workspace_id,
+            selected_entry,
+            root.clone(),
+        ))
         .into_any_element()
+}
+
+fn history_rows_elements(
+    workspace_id: WorkspaceId,
+    grouped: &[(String, Vec<HistoryEntry>)],
+    selected_id: Option<crate::domain::ids::HistoryEntryId>,
+    has_filters: bool,
+    root: WeakEntity<AppRoot>,
+) -> Vec<AnyElement> {
+    if grouped.is_empty() {
+        return vec![
+            div()
+                .text_color(gpui::transparent_black())
+                .child(if has_filters {
+                    es_fluent::localize("history_tab_no_results", None)
+                } else {
+                    es_fluent::localize("history_tab_empty", None)
+                })
+                .into_any_element(),
+        ];
+    }
+
+    let mut elements = Vec::new();
+    for (group_title, rows) in grouped {
+        elements.push(
+            div()
+                .text_sm()
+                .font_weight(gpui::FontWeight::BOLD)
+                .text_color(gpui::transparent_black())
+                .child(group_title.clone())
+                .into_any_element(),
+        );
+
+        for entry in rows {
+            let entry = entry.clone();
+            let weak_root = root.clone();
+            let weak_root_select = root.clone();
+            let weak_root_open = root.clone();
+            let request_id = entry.request_id;
+            let entry_id = entry.id;
+            let is_selected = selected_id.is_some_and(|selected| selected == entry.id);
+            let meta_row = {
+                let mut row = h_flex()
+                    .gap_3()
+                    .text_sm()
+                    .text_color(gpui::transparent_black())
+                    .child(format!(
+                        "{}: {}",
+                        es_fluent::localize("history_tab_started_at", None),
+                        entry.started_at
+                    ));
+                if let Some(completed_at) = entry.completed_at {
+                    row = row.child(format!(
+                        "{}: {}",
+                        es_fluent::localize("history_tab_completed_at", None),
+                        completed_at
+                    ));
+                }
+                row
+            };
+
+            let mut card = v_flex()
+                .gap_1()
+                .p_3()
+                .rounded(px(6.))
+                .border_1()
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .items_center()
+                        .child(format!(
+                            "[{}] {} {}",
+                            protocol_label(&entry),
+                            entry.method,
+                            entry.url
+                        ))
+                        .child(status_chip(entry.state, entry.status_code)),
+                )
+                .child(meta_row);
+            if is_selected {
+                card = card.bg(gpui::hsla(210.0 / 360.0, 0.20, 0.18, 1.0));
+            }
+            card = card.child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new(format!("history-select-entry-{entry_id}"))
+                            .ghost()
+                            .xsmall()
+                            .label(es_fluent::localize("history_tab_details", None))
+                            .on_click(move |_, _, cx| {
+                                let _ = weak_root_select.update(cx, |this, cx| {
+                                    this.set_selected_history_entry_for_workspace(
+                                        workspace_id,
+                                        Some(entry_id),
+                                        cx,
+                                    );
+                                });
+                            }),
+                    )
+                    .child(
+                        Button::new(format!("history-open-request-{entry_id}"))
+                            .ghost()
+                            .xsmall()
+                            .label(es_fluent::localize("history_tab_open_request", None))
+                            .on_click(move |_, window, cx| {
+                                let _ = weak_root_open.update(cx, |this, cx| {
+                                    let Some(request_id) = request_id else {
+                                        window.push_notification(
+                                            es_fluent::localize(
+                                                "history_tab_restore_no_request",
+                                                None,
+                                            ),
+                                            cx,
+                                        );
+                                        return;
+                                    };
+                                    let item_key =
+                                        crate::session::item_key::ItemKey::request(request_id);
+                                    if !this.can_open_item(item_key) {
+                                        window.push_notification(
+                                            es_fluent::localize(
+                                                "history_tab_restore_request_deleted",
+                                                None,
+                                            ),
+                                            cx,
+                                        );
+                                        return;
+                                    }
+                                    this.open_item(item_key, cx);
+                                });
+                            }),
+                    )
+                    .child(
+                        Button::new(format!("history-restore-request-{entry_id}"))
+                            .ghost()
+                            .xsmall()
+                            .label(es_fluent::localize("history_tab_restore", None))
+                            .on_click(move |_, window, cx| {
+                                let _ = weak_root.update(cx, |this, cx| {
+                                    let Some(request_id) = request_id else {
+                                        window.push_notification(
+                                            es_fluent::localize(
+                                                "history_tab_restore_no_request",
+                                                None,
+                                            ),
+                                            cx,
+                                        );
+                                        return;
+                                    };
+                                    let item_key =
+                                        crate::session::item_key::ItemKey::request(request_id);
+                                    if !this.can_open_item(item_key) {
+                                        window.push_notification(
+                                            es_fluent::localize(
+                                                "history_tab_restore_request_deleted",
+                                                None,
+                                            ),
+                                            cx,
+                                        );
+                                        return;
+                                    }
+                                    this.open_item(item_key, cx);
+                                });
+                            }),
+                    ),
+            );
+            elements.push(card.into_any_element());
+        }
+    }
+    elements
 }
 
 fn chip(label: String) -> impl IntoElement {
@@ -443,6 +589,183 @@ fn protocol_filter_button(
                 this.set_history_protocol_filter_for_workspace(workspace_id, button_filter, cx);
             });
         })
+}
+
+fn status_family_filter_button(
+    workspace_id: WorkspaceId,
+    active_filter: Option<StatusFamily>,
+    button_filter: Option<StatusFamily>,
+    label: String,
+    root: WeakEntity<AppRoot>,
+) -> impl IntoElement {
+    Button::new(format!("history-status-family-filter-{button_filter:?}"))
+        .ghost()
+        .xsmall()
+        .selected(active_filter == button_filter)
+        .label(label)
+        .on_click(move |_, _, cx| {
+            let _ = root.update(cx, |this, cx| {
+                this.set_history_status_family_filter_for_workspace(
+                    workspace_id,
+                    button_filter,
+                    cx,
+                );
+            });
+        })
+}
+
+fn active_filter_chips(view: &HistoryWorkspaceView) -> Vec<String> {
+    let mut chips = Vec::new();
+    if let Some(method) = &view.method_filter {
+        chips.push(format!(
+            "{}: {method}",
+            es_fluent::localize("history_tab_method_filter", None)
+        ));
+    }
+    if let Some(url) = &view.url_search {
+        chips.push(format!(
+            "{}: {url}",
+            es_fluent::localize("history_tab_url_filter", None)
+        ));
+    }
+    if let Some(search) = &view.search {
+        chips.push(format!(
+            "{}: {search}",
+            es_fluent::localize("history_tab_search", None)
+        ));
+    }
+    if let Some(status_family) = view.status_family_filter {
+        chips.push(format!(
+            "{}: {}",
+            es_fluent::localize("history_tab_status_family_filter_label", None),
+            status_family_label(match status_family {
+                StatusFamily::Informational => Some(100),
+                StatusFamily::Success => Some(200),
+                StatusFamily::Redirection => Some(300),
+                StatusFamily::ClientError => Some(400),
+                StatusFamily::ServerError => Some(500),
+            })
+        ));
+    }
+    if let Some(after) = view.started_after {
+        chips.push(format!(
+            "{}: {after}",
+            es_fluent::localize("history_tab_started_after", None)
+        ));
+    }
+    if let Some(before) = view.started_before {
+        chips.push(format!(
+            "{}: {before}",
+            es_fluent::localize("history_tab_started_before", None)
+        ));
+    }
+    chips
+}
+
+fn render_details_panel(
+    workspace_id: WorkspaceId,
+    selected_entry: Option<HistoryEntry>,
+    root: WeakEntity<AppRoot>,
+) -> impl IntoElement {
+    let Some(entry) = selected_entry else {
+        return v_flex()
+            .gap_1()
+            .p_3()
+            .rounded(px(6.))
+            .border_1()
+            .child(es_fluent::localize("history_tab_details_empty", None));
+    };
+    let weak_root_open = root.clone();
+    let request_id = entry.request_id;
+    let url = entry.url.clone();
+    let details = v_flex()
+        .gap_1()
+        .child(format!(
+            "{}: {}",
+            es_fluent::localize("history_tab_protocol_filter_label", None),
+            protocol_label(&entry)
+        ))
+        .child(format!(
+            "{}: {}",
+            es_fluent::localize("history_tab_method_filter", None),
+            entry.method
+        ))
+        .child(format!(
+            "{}: {}",
+            es_fluent::localize("history_tab_url_filter", None),
+            entry.url
+        ))
+        .child(format!(
+            "{}: {}",
+            es_fluent::localize("history_tab_started_at", None),
+            entry.started_at
+        ));
+
+    v_flex()
+        .gap_2()
+        .p_3()
+        .rounded(px(6.))
+        .border_1()
+        .child(
+            div()
+                .font_weight(gpui::FontWeight::BOLD)
+                .child(es_fluent::localize("history_tab_details", None)),
+        )
+        .child(details)
+        .child(
+            h_flex()
+                .gap_2()
+                .child(
+                    Button::new("history-details-open-request")
+                        .ghost()
+                        .xsmall()
+                        .label(es_fluent::localize("history_tab_open_request", None))
+                        .on_click(move |_, window, cx| {
+                            let _ = weak_root_open.update(cx, |this, cx| {
+                                let Some(request_id) = request_id else {
+                                    window.push_notification(
+                                        es_fluent::localize("history_tab_restore_no_request", None),
+                                        cx,
+                                    );
+                                    return;
+                                };
+                                let item_key =
+                                    crate::session::item_key::ItemKey::request(request_id);
+                                if !this.can_open_item(item_key) {
+                                    window.push_notification(
+                                        es_fluent::localize(
+                                            "history_tab_restore_request_deleted",
+                                            None,
+                                        ),
+                                        cx,
+                                    );
+                                    return;
+                                }
+                                this.open_item(item_key, cx);
+                            });
+                        }),
+                )
+                .child(
+                    Button::new("history-details-copy-url")
+                        .ghost()
+                        .xsmall()
+                        .label(es_fluent::localize("history_tab_copy_url", None))
+                        .on_click(move |_, _, cx| {
+                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(url.clone()));
+                        }),
+                ),
+        )
+        .child(
+            Button::new("history-details-clear-selection")
+                .ghost()
+                .xsmall()
+                .label(es_fluent::localize("history_tab_clear_selection", None))
+                .on_click(move |_, _, cx| {
+                    let _ = root.update(cx, |this, cx| {
+                        this.set_selected_history_entry_for_workspace(workspace_id, None, cx);
+                    });
+                }),
+        )
 }
 
 fn protocol_label(entry: &HistoryEntry) -> String {
