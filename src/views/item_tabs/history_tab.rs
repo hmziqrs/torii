@@ -1,6 +1,6 @@
 use gpui::{AnyElement, IntoElement, ParentElement, Styled as _, WeakEntity, div, px};
 use gpui_component::{
-    Selectable as _, Sizable as _, WindowExt as _,
+    Disableable as _, Selectable as _, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex, v_flex,
 };
@@ -10,21 +10,20 @@ use crate::{
         history::{HistoryEntry, HistoryState},
         ids::WorkspaceId,
     },
-    root::AppRoot,
+    root::{AppRoot, HistoryProtocolFilter, HistoryWorkspaceView},
 };
 
-pub fn render(
+pub(crate) fn render(
     workspace_id: WorkspaceId,
-    entries: &[HistoryEntry],
-    state_filter: Option<HistoryState>,
+    view: &HistoryWorkspaceView,
     root: WeakEntity<AppRoot>,
 ) -> AnyElement {
     let weak_root_refresh = root.clone();
-    let filtered_entries = entries
-        .iter()
-        .filter(|entry| state_filter.is_none_or(|state| entry.state == state))
-        .cloned()
-        .collect::<Vec<_>>();
+    let state_filter = view.state_filter;
+    let protocol_filter = view.protocol_filter;
+    let entries = view.entries.as_slice();
+    let has_more = view.next_cursor.is_some();
+
     v_flex()
         .size_full()
         .p_6()
@@ -44,7 +43,7 @@ pub fn render(
                         .label(es_fluent::localize("history_tab_refresh", None))
                         .on_click(move |_, _, cx| {
                             let _ = weak_root_refresh.update(cx, |this, cx| {
-                                this.refresh_history_cache_for_workspace(workspace_id, cx);
+                                this.refresh_history_for_workspace(workspace_id, cx);
                             });
                         }),
                 ),
@@ -95,12 +94,55 @@ pub fn render(
                     root.clone(),
                 )),
         )
+        .child(
+            h_flex()
+                .gap_2()
+                .items_center()
+                .child(div().text_sm().text_color(gpui::transparent_black()).child(
+                    es_fluent::localize("history_tab_protocol_filter_label", None),
+                ))
+                .child(protocol_filter_button(
+                    workspace_id,
+                    protocol_filter,
+                    HistoryProtocolFilter::All,
+                    es_fluent::localize("history_tab_filter_all", None),
+                    root.clone(),
+                ))
+                .child(protocol_filter_button(
+                    workspace_id,
+                    protocol_filter,
+                    HistoryProtocolFilter::Http,
+                    es_fluent::localize("history_tab_protocol_http", None),
+                    root.clone(),
+                ))
+                .child(protocol_filter_button(
+                    workspace_id,
+                    protocol_filter,
+                    HistoryProtocolFilter::Graphql,
+                    es_fluent::localize("history_tab_protocol_graphql", None),
+                    root.clone(),
+                ))
+                .child(protocol_filter_button(
+                    workspace_id,
+                    protocol_filter,
+                    HistoryProtocolFilter::WebSocket,
+                    es_fluent::localize("history_tab_protocol_websocket", None),
+                    root.clone(),
+                ))
+                .child(protocol_filter_button(
+                    workspace_id,
+                    protocol_filter,
+                    HistoryProtocolFilter::Grpc,
+                    es_fluent::localize("history_tab_protocol_grpc", None),
+                    root.clone(),
+                )),
+        )
         .child(chip(format!(
             "{}: {}",
             es_fluent::localize("history_tab_total", None),
-            filtered_entries.len()
+            entries.len()
         )))
-        .children(if filtered_entries.is_empty() {
+        .children(if entries.is_empty() {
             Some(
                 div()
                     .text_color(gpui::transparent_black())
@@ -110,7 +152,7 @@ pub fn render(
             .into_iter()
             .collect::<Vec<_>>()
         } else {
-            filtered_entries
+            entries
                 .iter()
                 .map(|entry| {
                     let weak_root = root.clone();
@@ -144,7 +186,12 @@ pub fn render(
                             h_flex()
                                 .justify_between()
                                 .items_center()
-                                .child(format!("{} {}", entry.method, entry.url))
+                                .child(format!(
+                                    "[{}] {} {}",
+                                    protocol_label(entry),
+                                    entry.method,
+                                    entry.url
+                                ))
                                 .child(status_chip(entry.state, entry.status_code)),
                         )
                         .child(meta_row);
@@ -185,6 +232,24 @@ pub fn render(
                 })
                 .collect::<Vec<_>>()
         })
+        .child(
+            h_flex().justify_center().items_center().child(
+                Button::new("history-load-more")
+                    .ghost()
+                    .xsmall()
+                    .disabled(!has_more)
+                    .label(if has_more {
+                        es_fluent::localize("history_tab_load_more", None)
+                    } else {
+                        es_fluent::localize("history_tab_no_more", None)
+                    })
+                    .on_click(move |_, _, cx| {
+                        let _ = root.update(cx, |this, cx| {
+                            this.load_more_history_for_workspace(workspace_id, cx);
+                        });
+                    }),
+            ),
+        )
         .into_any_element()
 }
 
@@ -237,4 +302,33 @@ fn filter_button(
                 this.set_history_state_filter_for_workspace(workspace_id, button_filter, cx);
             });
         })
+}
+
+fn protocol_filter_button(
+    workspace_id: WorkspaceId,
+    active_filter: HistoryProtocolFilter,
+    button_filter: HistoryProtocolFilter,
+    label: String,
+    root: WeakEntity<AppRoot>,
+) -> impl IntoElement {
+    Button::new(format!("history-protocol-filter-{button_filter:?}"))
+        .ghost()
+        .xsmall()
+        .selected(active_filter == button_filter)
+        .label(label)
+        .on_click(move |_, _, cx| {
+            let _ = root.update(cx, |this, cx| {
+                this.set_history_protocol_filter_for_workspace(workspace_id, button_filter, cx);
+            });
+        })
+}
+
+fn protocol_label(entry: &HistoryEntry) -> String {
+    match entry.protocol_kind.as_str() {
+        "http" => es_fluent::localize("history_tab_protocol_http", None),
+        "graphql" => es_fluent::localize("history_tab_protocol_graphql", None),
+        "websocket" => es_fluent::localize("history_tab_protocol_websocket", None),
+        "grpc" => es_fluent::localize("history_tab_protocol_grpc", None),
+        _ => es_fluent::localize("history_tab_protocol_http", None),
+    }
 }

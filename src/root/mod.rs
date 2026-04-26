@@ -477,7 +477,10 @@ impl AppRoot {
         workspace_id: WorkspaceId,
         cx: &mut Context<Self>,
     ) {
-        let view = self.history_views_by_workspace.entry(workspace_id).or_default();
+        let view = self
+            .history_views_by_workspace
+            .entry(workspace_id)
+            .or_default();
         if !view.has_loaded_once {
             self.refresh_history_for_workspace(workspace_id, cx);
         }
@@ -488,15 +491,16 @@ impl AppRoot {
         workspace_id: WorkspaceId,
         cx: &mut Context<Self>,
     ) {
-        let Some((entries, next_cursor)) = self.query_history_page_for_workspace(
-            workspace_id,
-            None,
-            cx,
-        ) else {
+        let Some((entries, next_cursor)) =
+            self.query_history_page_for_workspace(workspace_id, None, cx)
+        else {
             return;
         };
 
-        let view = self.history_views_by_workspace.entry(workspace_id).or_default();
+        let view = self
+            .history_views_by_workspace
+            .entry(workspace_id)
+            .or_default();
         view.entries = entries;
         view.next_cursor = next_cursor;
         view.has_loaded_once = true;
@@ -515,15 +519,16 @@ impl AppRoot {
         let Some(cursor) = cursor else {
             return;
         };
-        let Some((new_entries, next_cursor)) = self.query_history_page_for_workspace(
-            workspace_id,
-            Some(cursor),
-            cx,
-        ) else {
+        let Some((new_entries, next_cursor)) =
+            self.query_history_page_for_workspace(workspace_id, Some(cursor), cx)
+        else {
             return;
         };
 
-        let view = self.history_views_by_workspace.entry(workspace_id).or_default();
+        let view = self
+            .history_views_by_workspace
+            .entry(workspace_id)
+            .or_default();
         view.entries.extend(new_entries);
         view.next_cursor = next_cursor;
         view.has_loaded_once = true;
@@ -536,7 +541,10 @@ impl AppRoot {
         filter: Option<HistoryState>,
         cx: &mut Context<Self>,
     ) {
-        let view = self.history_views_by_workspace.entry(workspace_id).or_default();
+        let view = self
+            .history_views_by_workspace
+            .entry(workspace_id)
+            .or_default();
         if view.state_filter == filter {
             return;
         }
@@ -550,7 +558,10 @@ impl AppRoot {
         filter: HistoryProtocolFilter,
         cx: &mut Context<Self>,
     ) {
-        let view = self.history_views_by_workspace.entry(workspace_id).or_default();
+        let view = self
+            .history_views_by_workspace
+            .entry(workspace_id)
+            .or_default();
         if view.protocol_filter == filter {
             return;
         }
@@ -672,11 +683,7 @@ impl AppRoot {
                         .history_views_by_workspace
                         .entry(workspace_id)
                         .or_default();
-                    history_tab::render(
-                        workspace_id,
-                        view,
-                        cx.entity().downgrade(),
-                    )
+                    history_tab::render(workspace_id, view, cx.entity().downgrade())
                 })
                 .unwrap_or_else(|| {
                     render_empty_state(
