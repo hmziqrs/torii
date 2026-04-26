@@ -126,6 +126,7 @@ What already exists:
 - `BodyRef` and `ResponseBudgets` already enforce preview and per-tab memory limits for HTTP responses.
 - The sidebar can open the History tab for the selected workspace.
 - `views/http_method.rs` has a `RequestProtocol` badge type for HTTP, WS, and gRPC, but it is inferred from method sentinel strings.
+- Startup recovery already treats `requests.body_blob_hash` as a live blob reference in addition to `history_index.blob_hash`.
 
 What is not ready for Phase 5:
 
@@ -143,7 +144,7 @@ What is not ready for Phase 5:
 - GraphQL has no editor model.
 - WebSocket has no transport, tab state, transcript model, or lifecycle state.
 - gRPC has no descriptor/source model, dynamic message encoding, transport, or transcript model.
-- History blob cleanup only considers `history_index.blob_hash`; Phase 5 will introduce additional blob references.
+- History/transcript/snapshot blob cleanup needs a normalized way to discover all Phase 5 history-owned blob references without JSON-scanning every history row.
 
 ## 4. Phase 5 Deliverables
 
@@ -165,8 +166,10 @@ History:
   - restores completed/failed/cancelled response state where available
   - never fails solely because the source request row was deleted
 - response compare for two history entries of the same request/protocol:
-  - status/timing/header/body-summary diff in Phase 5
-  - full body diff only for bounded text bodies
+  - status, timing, headers, cookies, size, and body-summary diff
+  - JSON-aware structured diff when both bodies are valid JSON and fit within `ResponseBudgets::PREVIEW_CAP_BYTES`
+  - unified text diff when both bodies are text-like and fit within `ResponseBudgets::PREVIEW_CAP_BYTES`
+  - metadata-only fallback for binary, missing, truncated, or disk-backed bodies that exceed the preview cap
 - retention and cleanup hooks for history rows and all referenced blobs
 
 Protocol foundation:
@@ -247,10 +250,32 @@ Explicitly deferred:
 - OAuth 2.0, AWS Signature, mTLS setup UI, and advanced auth flows
 - GraphQL schema explorer, schema docs, and autocomplete driven by introspection
 - full visual body diff for large disk-backed bodies
+- GraphQL subscriptions over WebSocket
 - collection import/export changes for protocol-specific request types beyond preserving the new persisted fields
 - Git UI and linked-collection reconcile hardening
 - mock servers, monitors, cloud sync, team collaboration, and publishing
 - gRPC load testing beyond correctness/performance gates needed for local streaming safety
+- WebSocket/gRPC stream pause/resume controls
+
+## 5.1 Dependencies Added in Phase 5
+
+Candidate dependencies are part of the Phase 5 design, not late implementation guesses:
+
+```toml
+graphql-parser = "..."       # GraphQL operation parsing for the operation picker
+tokio-tungstenite = "..."    # WebSocket client transport on the existing tokio runtime
+tonic = "..."                # gRPC transport
+prost = "..."                # protobuf message support
+prost-reflect = "..."        # dynamic descriptors/messages for user-supplied schemas
+tonic-reflection = "..."     # optional server reflection client support
+```
+
+Before landing them:
+
+- confirm versions against the current Rust toolchain and dependency graph
+- check licenses and transitive dependency size
+- keep WebSocket and gRPC dependencies feature-scoped where practical
+- add only the dependencies needed by the slice currently being implemented
 
 ## 6. Data Model and Migration
 
@@ -281,6 +306,7 @@ Rules:
 - gRPC uses `protocol_kind = 'grpc'`.
 - The old `RequestProtocol::from_method()` sentinel behavior remains only as a compatibility fallback.
 - New UI must not encode WS/gRPC by setting `method = 'WS'` or `method = 'GRPC'`.
+- The repository currently has no writer that creates sentinel-method requests, so the 0005 migration intentionally does not rewrite existing rows based on `method`.
 
 Add indexes:
 
@@ -334,6 +360,9 @@ ADD COLUMN close_reason TEXT;
 Add indexes:
 
 ```sql
+CREATE INDEX IF NOT EXISTS idx_history_workspace_started_id
+ON history_index (workspace_id, started_at DESC, id DESC);
+
 CREATE INDEX IF NOT EXISTS idx_history_workspace_protocol_started
 ON history_index (workspace_id, protocol_kind, started_at DESC, id DESC);
 
@@ -347,30 +376,68 @@ CREATE INDEX IF NOT EXISTS idx_history_workspace_status_started
 ON history_index (workspace_id, status_code, started_at DESC, id DESC);
 ```
 
+Index cleanup notes:
+
+- `idx_history_workspace_started` from `0001_initial.sql` is superseded by `idx_history_workspace_started_id` for the baseline workspace-only cursor query.
+- `idx_history_state` from `0001_initial.sql` is not useful for the new workspace-scoped query model.
+- The migration may leave old indexes in place for compatibility, but query planning and performance gates must verify the new composite indexes are used.
+
 Search implementation:
 
 - First implementation may use bounded `LIKE` search over `method`, `url`, `request_name`, and `error_message` after indexed workspace/time/protocol/state narrowing.
-- If large-history performance misses the gate, add a SQLite FTS table in the same phase:
+- Search result ordering remains `started_at DESC, id DESC`, not relevance order.
+- Do not add an FTS virtual table to the 0005 migration. `Database::connect` runs migrations at startup, so an unsupported FTS5 build would break app launch.
+- If large-history search performance misses the gate, create the FTS table lazily on first search-index use after checking `PRAGMA compile_options` for FTS5 support:
 
 ```sql
 CREATE VIRTUAL TABLE IF NOT EXISTS history_search_fts
 USING fts5(history_id UNINDEXED, workspace_id UNINDEXED, method, url, request_name, error_message);
 ```
 
-Do not add FTS unless the bundled SQLite build and migration test confirm support.
+If FTS5 is unavailable, keep the indexed narrowing plus bounded `LIKE` path and show no user-visible error.
 
-### 6.3 Stream Transcript References
+### 6.3 History Blob References
 
-`history_index.transcript_blob_hash` references the full persisted transcript artifact. It is separate from `blob_hash`, which remains the HTTP/GraphQL response-body artifact.
+Phase 5 must normalize history-owned blob references instead of discovering nested snapshot refs by parsing `request_snapshot_json` during startup recovery.
 
-Blob cleanup must treat all of these as live references:
+Add a live-reference table:
 
-- `history_index.blob_hash`
-- `history_index.request_snapshot_blob_hash`
-- `history_index.transcript_blob_hash`
-- request body blobs referenced by restored request snapshots
+```sql
+CREATE TABLE IF NOT EXISTS history_blob_refs (
+    history_id TEXT NOT NULL REFERENCES history_index (id) ON DELETE CASCADE,
+    blob_hash TEXT NOT NULL,
+    ref_kind TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (history_id, blob_hash, ref_kind)
+);
 
-Update `HistoryRepository::referenced_blob_hashes()` or split it into a `BlobReferenceRepository` so startup recovery cannot delete valid Phase 5 artifacts.
+CREATE INDEX IF NOT EXISTS idx_history_blob_refs_blob_hash
+ON history_blob_refs (blob_hash);
+```
+
+Reference kinds:
+
+- `response_body`
+- `request_snapshot`
+- `request_snapshot_body`
+- `stream_transcript`
+- `grpc_descriptor`
+- `other`
+
+Rules:
+
+- `history_index.blob_hash`, `request_snapshot_blob_hash`, and `transcript_blob_hash` remain denormalized display/detail columns.
+- `history_blob_refs` is the authoritative recovery source for all history-owned blobs, including blobs nested inside `request_snapshot_json`.
+- Snapshot creation and finalization must populate `history_blob_refs` in the same repository transaction that writes the history row update.
+- Startup recovery continues to include existing `requests.body_blob_hash` refs; Phase 5 extends that sweep with `SELECT DISTINCT blob_hash FROM history_blob_refs`.
+- The existing `HistoryRepository::referenced_blob_hashes()` should either read from `history_blob_refs` plus legacy `history_index.blob_hash`, or be replaced by a dedicated `BlobReferenceRepository`.
+
+Blob reference concepts:
+
+- `request_snapshot_blob_hash` stores the snapshot JSON itself when the snapshot is too large for `history_index.request_snapshot_json`.
+- `request_snapshot_body` refs point to request body artifacts mentioned inside the snapshot JSON.
+- `transcript_blob_hash` stores the WebSocket/gRPC transcript artifact.
+- `blob_hash` remains the HTTP/GraphQL response-body artifact.
 
 ### 6.4 Request Snapshot Format
 
@@ -407,6 +474,7 @@ Rules:
 - Never store resolved Basic/Bearer/API-key secret values.
 - Do not inline large bodies in `request_snapshot_json`.
 - Body snapshots may reference a blob hash when the body is large or file-backed.
+- Every blob hash mentioned by a snapshot body must also have a `history_blob_refs` row with `ref_kind = 'request_snapshot_body'`.
 - If a body artifact cannot be retained, the snapshot must mark the body as missing and restore the draft with a visible missing-body state.
 - Keep the existing redacted summary fields for list display and backwards compatibility.
 
@@ -507,6 +575,8 @@ pub struct StreamSummary {
 }
 ```
 
+Stream pause/resume is explicitly out of scope for Phase 5. Streaming requests can connect, send where applicable, receive, cancel, and disconnect, but cannot pause the network reader and resume it later.
+
 Add history query types:
 
 ```rust
@@ -533,6 +603,13 @@ pub struct HistoryPage {
 
 `HistoryQuery.limit` must be clamped by the repository. UI callers do not control unbounded row counts.
 
+Timestamp and cursor precision:
+
+- New Phase 5 history rows should write `started_at`, `completed_at`, `dispatched_at`, `first_byte_at`, and `cancelled_at` in Unix milliseconds.
+- Legacy second-precision rows remain readable through the existing timestamp normalization helpers.
+- Cursor stability still uses `(started_at, id)` because multiple rows can share the same millisecond.
+- `HistoryEntryId` is UUIDv7 today; lexicographic `id DESC` is a valid tie-breaker as long as the ID type remains time-sortable. If the ID type changes, the cursor contract must be revisited or replaced with an explicit monotonic sequence column.
+
 ## 8. Repository and Service Contracts
 
 ### 8.1 HistoryRepository
@@ -545,7 +622,10 @@ pub trait HistoryRepository: Send + Sync {
     fn finalize_completed(&self, input: FinalizeCompletedRun) -> RepoResult<()>;
     fn finalize_failed(&self, input: FinalizeFailedRun) -> RepoResult<()>;
     fn finalize_cancelled(&self, input: FinalizeCancelledRun) -> RepoResult<()>;
-    fn finalize_stream(&self, input: FinalizeStreamRun) -> RepoResult<()>;
+    fn finalize_stream_completed(&self, input: FinalizeStreamCompletedRun) -> RepoResult<()>;
+    fn finalize_stream_failed(&self, input: FinalizeStreamFailedRun) -> RepoResult<()>;
+    fn finalize_stream_cancelled(&self, input: FinalizeStreamCancelledRun) -> RepoResult<()>;
+    fn mark_pending_as_failed_on_startup(&self) -> RepoResult<usize>;
     fn query(&self, query: HistoryQuery) -> RepoResult<HistoryPage>;
     fn get(&self, id: HistoryEntryId) -> RepoResult<Option<HistoryEntry>>;
     fn get_latest_for_request(&self, request_id: RequestId) -> RepoResult<Option<HistoryEntry>>;
@@ -564,6 +644,13 @@ Cursor ordering:
 
 This prevents duplicates and missing rows when several requests start in the same second.
 
+Finalization rules:
+
+- `finalize_*` methods update only `pending` rows.
+- If the row is already in a terminal state, the method is a no-op and logs a warning with the current state and attempted state.
+- A late cancel must never overwrite completed, failed, or already-cancelled history.
+- Entity-level operation ID checks still apply before calling the repository. Repository idempotence is a second safety layer, not a replacement.
+
 ### 8.2 HistoryService
 
 Add `src/services/history.rs` for orchestration:
@@ -575,14 +662,24 @@ Add `src/services/history.rs` for orchestration:
 - loads response/transcript previews for details panes
 - owns retention/delete-history operations
 
-Restore destination rules:
+Delete and retention operations:
+
+- delete selected history row with confirmation
+- delete all rows matching the current filter with confirmation and a count preview
+- delete rows older than a configured cutoff for retention cleanup
+- delete operations remove `history_index` rows and their `history_blob_refs` rows transactionally
+- blob files are removed by the existing recovery/cleanup path only after they are no longer referenced by requests or history
+
+Restore destination rules use the history row's `workspace_id`, not whichever workspace is currently active in the window:
 
 1. If the original request still exists, open/focus it and restore the selected history response state.
 2. If the original request is deleted but the snapshot collection still exists, create an unsaved draft in that collection. Use the original parent folder only if it still exists.
-3. If the snapshot collection is gone but the selected workspace has a selected collection, create the draft there.
-4. If no usable collection exists, create a managed collection named `Restored History` in the workspace and create the draft at its root.
+3. If the snapshot collection is gone but the history row's workspace has a selected/default collection, create the draft there.
+4. If no usable collection exists in the history row's workspace, create a managed collection named `Restored History` in that workspace and create the draft at its root.
 
-The restore action must report any missing body artifacts or missing secret refs through a notification and a visible warning in the restored draft.
+The auto-created `Restored History` collection is normal user-owned data: it can be renamed, moved, or deleted like any other managed collection and must not create orphan blob references.
+
+The restore action must report any missing body artifacts or missing secret refs through a notification and a visible warning banner at the top of the restored draft tab.
 
 ### 8.3 ProtocolExecutionService
 
@@ -614,6 +711,8 @@ The dispatcher should live in `src/services/protocol_execution.rs` and compose e
 - `HistoryService` for pending/final history rows
 - `SecretManager`/`SecretStoreRef` for auth resolution
 - `VariableResolutionService` for Phase 4 variables
+
+`HttpExecutor` is a thin adapter around the existing `RequestExecutionService`; HTTP sends must route through `ProtocolExecutionService` before GraphQL lands. GraphQL then plugs into the same dispatcher by transforming GraphQL config into an HTTP execution input rather than re-implementing HTTP history/finalization.
 
 ## 9. Proposed Module Layout
 
@@ -681,11 +780,14 @@ Tasks:
 
 - add `0005_phase5_history_protocols.sql`
 - add request protocol persistence
+- add `idx_history_workspace_started_id`
+- add `history_blob_refs`
 - extend `HistoryEntry`
 - add `HistoryQuery`, `HistoryCursor`, `HistoryPage`
 - implement cursor-paginated `HistoryRepository::query`
 - preserve `list_recent` and `list_for_request` temporarily as wrappers
 - update startup recovery blob reference collection
+- keep `mark_pending_as_failed_on_startup` available for `RecoveryCoordinator`
 - add indexes and migration tests
 
 Acceptance:
@@ -693,16 +795,20 @@ Acceptance:
 - query returns stable cursor pages with no duplicate rows
 - query clamps `limit`
 - workspace filter is mandatory
+- baseline workspace-only query uses `idx_history_workspace_started_id`
 - request filter uses `idx_history_request_started`
 - protocol/state/status filters are covered by indexes
+- `finalize_*` methods are no-ops when the row is already in a terminal state, with a logged warning
 - migration round-trip passes from old DB state
-- recovery does not delete transcript or snapshot blobs
+- recovery does not delete transcript, snapshot, snapshot-body, descriptor, response-body, or existing request-body blobs
 
 Tests:
 
 - `history_query_cursor_is_stable_with_same_started_at`
 - `history_query_filters_by_workspace_protocol_state_status`
 - `history_query_clamps_limit`
+- `history_finalize_terminal_row_is_idempotent`
+- `history_blob_refs_are_authoritative_for_recovery`
 - `migration_0005_adds_protocol_history_fields`
 - `recovery_preserves_phase5_history_blob_refs`
 
@@ -711,7 +817,9 @@ Tests:
 Tasks:
 
 - replace eager card rendering with a history view state entity
-- add virtualized row delegate using `gpui-component` table/list primitives
+- verify whether `gpui-component` exposes a virtualized table/list primitive suitable for history rows
+- add virtualized row delegate using `gpui-component` table/list primitives if available
+- if `gpui-component` does not provide a suitable primitive, build or extract a minimal virtualized list primitive inside Phase 5 with its own row-height, selection, scroll, and keyboard acceptance tests
 - move filtering/search/group state out of `AppRoot`
 - debounce search input
 - fetch next pages explicitly when scroll nears end
@@ -729,6 +837,7 @@ Acceptance:
 - opening History does not load more than the first page
 - changing filters does not query from `render()`
 - search debounce avoids per-keystroke DB churn
+- search results are ordered by `started_at DESC, id DESC`, not relevance
 - 10,000 generated rows remain scrollable
 - row selection loads details asynchronously and tolerates dropped window/entity
 - response body preview uses existing budget constants
@@ -744,7 +853,7 @@ Tests:
 
 Tasks:
 
-- replace or augment the current fixed-size modal with `request_tab/history_panel.rs`
+- replace the current fixed-size modal with `request_tab/history_panel.rs`
 - reuse `HistoryQuery { request_id: Some(...) }`
 - add compare selection for two rows
 - add `HistoryService::restore_entry`
@@ -757,11 +866,15 @@ Acceptance:
 
 - restoring an existing-source row focuses the existing request tab
 - restoring a deleted-source row creates a draft request from snapshot
+- restored drafts are session-only until the user saves them; closing the window before save loses the draft but not the history row
 - restoring after collection deletion uses deterministic destination rules
 - pending rows cannot be restored as completed responses
-- missing body blob produces a visible warning, not a panic
+- missing body blob produces a visible warning banner, not a panic
 - secret refs are not resolved or copied as plaintext
-- compare works for bounded text responses and metadata-only fallback works for large/disk bodies
+- compare uses structured status/timing/header/body-summary tables
+- compare uses JSON-aware structured diff for JSON bodies under `ResponseBudgets::PREVIEW_CAP_BYTES`
+- compare uses unified text diff for text bodies under `ResponseBudgets::PREVIEW_CAP_BYTES`
+- compare falls back to metadata-only for large, binary, truncated, missing, or non-text bodies
 
 Tests:
 
@@ -783,6 +896,8 @@ Tasks:
 - add protocol selector to request tab
 - split protocol-specific editor panels behind a shared request tab shell
 - make save/send/dirty-state protocol-aware
+- wrap `RequestExecutionService` in an `HttpExecutor` adapter
+- route HTTP sends through `ProtocolExecutionService`
 - keep existing HTTP editor behavior unchanged for `protocol_kind = Http`
 
 Acceptance:
@@ -792,6 +907,7 @@ Acceptance:
 - saved protocol fields round-trip through SQLite
 - linked collection round-trip preserves protocol fields
 - tab title and breadcrumbs remain stable
+- existing HTTP send still works through the protocol dispatcher
 - method sentinel fallback is read-only compatibility, not the new write path
 
 Tests:
@@ -800,6 +916,7 @@ Tests:
 - `request_protocol_config_roundtrip`
 - `linked_collection_preserves_protocol_config`
 - `protocol_switch_marks_draft_dirty_once`
+- `http_send_routes_through_protocol_dispatcher`
 
 ### Slice 5: GraphQL over HTTP
 
@@ -837,7 +954,7 @@ Tests:
 
 Tasks:
 
-- add WebSocket transport dependency after version/license check
+- add `tokio-tungstenite` after the Phase 5 dependency/version/license check
 - add `WebSocketExecutor`
 - add `WebSocketSessionState`
 - add connect/disconnect/send actions
@@ -879,15 +996,16 @@ Tests:
 - `websocket_transcript_writer_roundtrip`
 - `websocket_cancel_finalizes_history_once`
 - `websocket_batch_flush_limits_notify_frequency`
+- `websocket_history_snapshot_redacts_handshake_headers`
 
 ### Slice 7: gRPC Unary
 
 Tasks:
 
-- add gRPC dependencies after version/license check:
-  - tonic transport
-  - prost/prost-reflect for descriptors and dynamic messages
-  - tonic reflection support if used
+- add gRPC dependencies after the Phase 5 dependency/version/license check:
+  - `tonic` transport
+  - `prost` / `prost-reflect` for descriptors and dynamic messages
+  - `tonic-reflection` for server reflection support
 - add schema source model:
   - server reflection
   - descriptor set file/blob
@@ -949,7 +1067,7 @@ Tasks:
 
 - unify protocol badges in sidebar, breadcrumbs, history, and tab chrome
 - add history details for stream transcripts
-- add retention cleanup UI or service hook
+- add retention cleanup service hooks
 - add structured telemetry
 - add security/redaction audit
 - run performance gates
@@ -968,6 +1086,8 @@ Acceptance:
 
 ### 11.1 Global History
 
+`ItemKind::History` is a non-persisted singleton tab key, so each window has one History tab. Workspace switching reuses that tab; the History view state must key filters, cursor state, selected row, and grouping by workspace ID.
+
 Layout:
 
 - top toolbar:
@@ -977,6 +1097,8 @@ Layout:
   - date range
   - grouping menu
   - refresh action
+  - delete selected row
+  - delete all rows matching current filter
 - main area:
   - virtualized history rows
   - details pane for selected row
@@ -1002,7 +1124,8 @@ Required actions:
 - compare two selected runs
 - open in global history
 - copy URL/endpoint
-- save response/transcript artifact where applicable
+- save response artifact through the existing response save-to-file flow
+- save transcript artifact as JSON Lines (`.jsonl`) through a native save dialog
 
 ### 11.3 Protocol Editor
 
@@ -1069,7 +1192,7 @@ Completion fields:
   - partial size/transcript info where available
   - terminal state
 
-Finalizers should be idempotent where practical:
+Finalizers must be idempotent:
 
 - no panic if the row is already terminal
 - log duplicate finalization as a warning
@@ -1090,6 +1213,8 @@ pub enum HistoryRestoreOutcome {
 ```
 
 Views use this result to open/focus tabs and show warnings. Views do not hand-assemble draft requests from JSON.
+
+Restored deleted-source requests are unsaved draft tabs until the user explicitly saves them. This matches the current draft model: closing the window before saving loses the draft, but the source history row remains available for another restore attempt.
 
 ## 13. Stream Transcript Format
 
@@ -1143,15 +1268,21 @@ Add counters:
 - `history_restore_missing_artifact_total`
 - `graphql_send_total`
 - `websocket_connect_total`
-- `websocket_message_in_total`
-- `websocket_message_out_total`
-- `websocket_visible_drop_total`
+- `websocket_messages_in_total`
+- `websocket_messages_out_total`
+- `websocket_visible_messages_dropped_total`
 - `grpc_unary_total`
-- `grpc_stream_message_in_total`
-- `grpc_stream_message_out_total`
+- `grpc_stream_messages_in_total`
+- `grpc_stream_messages_out_total`
 - `stream_transcript_bytes_written_total`
 - `stream_batch_flush_total`
 - `protocol_cancel_total`
+
+Counter naming convention:
+
+- use plural nouns for counted items, e.g. `messages`
+- use `_total` for monotonic counters
+- use `_bytes_written_total` for byte accumulators
 
 Add structured fields where useful:
 
@@ -1180,9 +1311,11 @@ cargo test --test websocket_streaming
 cargo test --test grpc_unary
 cargo test --test grpc_streaming
 cargo test --test stream_transcript
-cargo test --test phase5_large_history
+cargo test --test phase5_large_history -- --ignored
 cargo clippy --package torii
 ```
+
+`phase5_large_history.rs` should mark 100,000-row scenarios with `#[ignore]` so default `cargo test --package torii` stays practical. Smaller cursor and query-shape tests stay in the normal test suite.
 
 Performance gates:
 
@@ -1229,7 +1362,7 @@ Compatibility rules:
 - Existing HTTP requests remain valid.
 - Existing history rows with missing `protocol_kind` read as HTTP.
 - Existing rows without request snapshots can restore response state but cannot reconstruct deleted request input. The UI should say the request snapshot is unavailable instead of failing generically.
-- Existing method-sentinel protocol badges remain read-only fallback until all rows are migrated.
+- Existing method-sentinel protocol badges remain a permanent read-only compatibility fallback. New writers must use `protocol_kind`; no follow-up sentinel migration is planned unless real sentinel-authored rows are discovered.
 - New protocol fields are included in linked collection serialization.
 
 Rollout strategy:
@@ -1293,11 +1426,13 @@ Mitigation:
 
 - [ ] `docs/plan.md` links to this document
 - [ ] `0005_phase5_history_protocols.sql` exists and migration tests pass
+- [ ] `history_blob_refs` is authoritative for Phase 5 history-owned blob cleanup
 - [ ] history query API replaces eager fixed-limit list usage
 - [ ] global history is virtualized
 - [ ] per-request history uses the same query model
 - [ ] deleted-source restore creates a draft from snapshot
 - [ ] protocol kind/config persist for requests
+- [ ] HTTP sends route through `ProtocolExecutionService`
 - [ ] GraphQL editor and execution are complete
 - [ ] WebSocket lifecycle and transcript persistence are complete
 - [ ] gRPC unary is complete
