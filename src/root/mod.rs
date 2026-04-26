@@ -8,6 +8,7 @@ use gpui_component::{
     ActiveTheme as _, Icon, IconName, Root, Sizable as _, WindowExt as _,
     button::{Button, ButtonRounded, ButtonVariants as _},
     h_flex,
+    input::{Input, InputState},
     resizable::{h_resizable, resizable_panel},
     scroll::ScrollableElement as _,
     v_flex,
@@ -84,11 +85,30 @@ impl HistoryProtocolFilter {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HistoryGroupBy {
+    None,
+    Date,
+    Protocol,
+    StatusFamily,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HistoryTextFilterKind {
+    Search,
+    Method,
+    Url,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct HistoryWorkspaceView {
     pub entries: Vec<HistoryEntry>,
     pub state_filter: Option<HistoryState>,
     pub protocol_filter: HistoryProtocolFilter,
+    pub method_filter: Option<String>,
+    pub url_search: Option<String>,
+    pub search: Option<String>,
+    pub group_by: HistoryGroupBy,
     pub next_cursor: Option<HistoryCursor>,
     pub has_loaded_once: bool,
 }
@@ -99,6 +119,10 @@ impl Default for HistoryWorkspaceView {
             entries: Vec::new(),
             state_filter: None,
             protocol_filter: HistoryProtocolFilter::All,
+            method_filter: None,
+            url_search: None,
+            search: None,
+            group_by: HistoryGroupBy::None,
             next_cursor: None,
             has_loaded_once: false,
         }
@@ -569,6 +593,173 @@ impl AppRoot {
         self.refresh_history_for_workspace(workspace_id, cx);
     }
 
+    pub(crate) fn set_history_group_by_for_workspace(
+        &mut self,
+        workspace_id: WorkspaceId,
+        group_by: HistoryGroupBy,
+        cx: &mut Context<Self>,
+    ) {
+        let view = self
+            .history_views_by_workspace
+            .entry(workspace_id)
+            .or_default();
+        if view.group_by == group_by {
+            return;
+        }
+        view.group_by = group_by;
+        cx.notify();
+    }
+
+    pub(crate) fn clear_history_filters_for_workspace(
+        &mut self,
+        workspace_id: WorkspaceId,
+        cx: &mut Context<Self>,
+    ) {
+        let view = self
+            .history_views_by_workspace
+            .entry(workspace_id)
+            .or_default();
+        view.state_filter = None;
+        view.protocol_filter = HistoryProtocolFilter::All;
+        view.method_filter = None;
+        view.url_search = None;
+        view.search = None;
+        view.group_by = HistoryGroupBy::None;
+        self.refresh_history_for_workspace(workspace_id, cx);
+    }
+
+    pub(crate) fn open_history_search_dialog(
+        &mut self,
+        workspace_id: WorkspaceId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let current = self
+            .history_views_by_workspace
+            .get(&workspace_id)
+            .and_then(|view| view.search.clone())
+            .unwrap_or_default();
+        self.open_history_filter_dialog(
+            workspace_id,
+            current,
+            "history_tab_search_dialog_title",
+            HistoryTextFilterKind::Search,
+            window,
+            cx,
+        );
+    }
+
+    pub(crate) fn open_history_method_filter_dialog(
+        &mut self,
+        workspace_id: WorkspaceId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let current = self
+            .history_views_by_workspace
+            .get(&workspace_id)
+            .and_then(|view| view.method_filter.clone())
+            .unwrap_or_default();
+        self.open_history_filter_dialog(
+            workspace_id,
+            current,
+            "history_tab_method_filter_dialog_title",
+            HistoryTextFilterKind::Method,
+            window,
+            cx,
+        );
+    }
+
+    pub(crate) fn open_history_url_filter_dialog(
+        &mut self,
+        workspace_id: WorkspaceId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let current = self
+            .history_views_by_workspace
+            .get(&workspace_id)
+            .and_then(|view| view.url_search.clone())
+            .unwrap_or_default();
+        self.open_history_filter_dialog(
+            workspace_id,
+            current,
+            "history_tab_url_filter_dialog_title",
+            HistoryTextFilterKind::Url,
+            window,
+            cx,
+        );
+    }
+
+    fn open_history_filter_dialog(
+        &mut self,
+        workspace_id: WorkspaceId,
+        current: String,
+        title_key: &'static str,
+        filter_kind: HistoryTextFilterKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let input = cx.new(|cx| InputState::new(window, cx));
+        input.update(cx, |state, cx| {
+            state.set_value(&current, window, cx);
+        });
+        let weak_root = cx.entity().downgrade();
+
+        window.open_dialog(cx, move |dialog, _, _cx| {
+            let input_for_apply = input.clone();
+            let weak_root_for_apply = weak_root.clone();
+            dialog
+                .title(es_fluent::localize(title_key, None))
+                .overlay_closable(true)
+                .keyboard(true)
+                .child(div().w_full().child(Input::new(&input).w_full()))
+                .footer(
+                    h_flex()
+                        .justify_end()
+                        .gap_2()
+                        .child(
+                            Button::new("history-filter-cancel")
+                                .ghost()
+                                .label(es_fluent::localize("history_tab_dialog_cancel", None))
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                }),
+                        )
+                        .child(
+                            Button::new("history-filter-apply")
+                                .primary()
+                                .label(es_fluent::localize("history_tab_dialog_apply", None))
+                                .on_click(move |_, window, cx| {
+                                    let value = input_for_apply.read(cx).value().trim().to_string();
+                                    let next_value =
+                                        if value.is_empty() { None } else { Some(value) };
+                                    let _ = weak_root_for_apply.update(cx, |this, cx| {
+                                        let view = this
+                                            .history_views_by_workspace
+                                            .entry(workspace_id)
+                                            .or_default();
+                                        match filter_kind {
+                                            HistoryTextFilterKind::Search => {
+                                                view.search = next_value
+                                            }
+                                            HistoryTextFilterKind::Method => {
+                                                view.method_filter =
+                                                    next_value.map(|v| v.to_ascii_uppercase());
+                                            }
+                                            HistoryTextFilterKind::Url => {
+                                                view.url_search = next_value;
+                                            }
+                                        }
+                                        this.refresh_history_for_workspace(workspace_id, cx);
+                                    });
+                                    window.close_dialog(cx);
+                                }),
+                        ),
+                )
+        });
+    }
+
     fn query_history_page_for_workspace(
         &self,
         workspace_id: WorkspaceId,
@@ -584,6 +775,9 @@ impl AppRoot {
         query.protocol = view
             .and_then(|state| state.protocol_filter.as_query_value())
             .map(ToOwned::to_owned);
+        query.search = view.and_then(|state| state.search.clone());
+        query.method = view.and_then(|state| state.method_filter.clone());
+        query.url_search = view.and_then(|state| state.url_search.clone());
 
         match services.repos.history.query(query) {
             Ok(page) => Some((page.rows, page.next_cursor)),
