@@ -121,6 +121,38 @@ fn history_query_clamps_limit() -> Result<()> {
 }
 
 #[test]
+fn history_query_url_search_filters_case_insensitively() -> Result<()> {
+    let (_paths, db) = common::test_database("history-query-url-search")?;
+    let db = Arc::new(db);
+    let workspace_repo = SqliteWorkspaceRepository::new(db.clone());
+    let history_repo = SqliteHistoryRepository::new(db.clone());
+
+    let workspace = workspace_repo.create("Main")?;
+    let keep = history_repo.create_pending(
+        workspace.id,
+        None,
+        "GET",
+        "https://Example.COM/API/Users",
+        None,
+    )?;
+    let _drop = history_repo.create_pending(
+        workspace.id,
+        None,
+        "GET",
+        "https://service.local/health",
+        None,
+    )?;
+
+    let mut query = HistoryQuery::for_workspace(workspace.id);
+    query.url_search = Some("example.com/api".to_string());
+    let page = history_repo.query(query)?;
+    assert_eq!(page.rows.len(), 1);
+    assert_eq!(page.rows[0].id, keep.id);
+
+    Ok(())
+}
+
+#[test]
 fn history_finalize_terminal_row_is_idempotent() -> Result<()> {
     let (_paths, db) = common::test_database("history-finalize-idempotent")?;
     let db = Arc::new(db);

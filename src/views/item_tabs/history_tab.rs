@@ -100,13 +100,34 @@ pub(crate) fn render(
                         .child(es_fluent::localize("history_tab_title", None)),
                 )
                 .child(
-                    Button::new("history-refresh")
-                        .label(es_fluent::localize("history_tab_refresh", None))
-                        .on_click(move |_, _, cx| {
-                            let _ = weak_root_refresh.update(cx, |this, cx| {
-                                this.refresh_history_for_workspace(workspace_id, cx);
-                            });
-                        }),
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .child(
+                            Button::new("history-refresh")
+                                .label(es_fluent::localize("history_tab_refresh", None))
+                                .on_click(move |_, _, cx| {
+                                    let _ = weak_root_refresh.update(cx, |this, cx| {
+                                        this.refresh_history_for_workspace(workspace_id, cx);
+                                    });
+                                }),
+                        )
+                        .child(
+                            Button::new("history-load-more-top")
+                                .ghost()
+                                .xsmall()
+                                .disabled(!has_more)
+                                .label(if has_more {
+                                    es_fluent::localize("history_tab_load_more", None)
+                                } else {
+                                    es_fluent::localize("history_tab_no_more", None)
+                                })
+                                .on_click(move |_, _, cx| {
+                                    let _ = weak_root_load_more.update(cx, |this, cx| {
+                                        this.load_more_history_for_workspace(workspace_id, cx);
+                                    });
+                                }),
+                        ),
                 ),
         )
         .child(quick_filter_row)
@@ -351,24 +372,6 @@ pub(crate) fn render(
                 })
                 .collect::<Vec<_>>()
         })
-        .child(
-            h_flex().justify_center().items_center().child(
-                Button::new("history-load-more")
-                    .ghost()
-                    .xsmall()
-                    .disabled(!has_more)
-                    .label(if has_more {
-                        es_fluent::localize("history_tab_load_more", None)
-                    } else {
-                        es_fluent::localize("history_tab_no_more", None)
-                    })
-                    .on_click(move |_, _, cx| {
-                        let _ = weak_root_load_more.update(cx, |this, cx| {
-                            this.load_more_history_for_workspace(workspace_id, cx);
-                        });
-                    }),
-            ),
-        )
         .into_any_element()
 }
 

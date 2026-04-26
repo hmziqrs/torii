@@ -597,25 +597,25 @@ async fn query_history_page(
         qb.push_bind(started_before);
     }
     if let Some(url_search) = trimmed_non_empty(url_search) {
-        let pattern = format!("%{}%", escape_like(&url_search));
-        qb.push(" AND url LIKE ");
+        let pattern = format!("%{url_search}%");
+        qb.push(" AND LOWER(url) LIKE LOWER(");
         qb.push_bind(pattern);
-        qb.push(" ESCAPE '\\\\'");
+        qb.push(")");
     }
     if let Some(search) = trimmed_non_empty(search) {
-        let pattern = format!("%{}%", escape_like(&search));
-        qb.push(" AND (method LIKE ");
+        let pattern = format!("%{search}%");
+        qb.push(" AND (LOWER(method) LIKE LOWER(");
         qb.push_bind(pattern.clone());
-        qb.push(" ESCAPE '\\\\'");
-        qb.push(" OR url LIKE ");
+        qb.push(")");
+        qb.push(" OR LOWER(url) LIKE LOWER(");
         qb.push_bind(pattern.clone());
-        qb.push(" ESCAPE '\\\\'");
-        qb.push(" OR request_name LIKE ");
+        qb.push(")");
+        qb.push(" OR LOWER(COALESCE(request_name, '')) LIKE LOWER(");
         qb.push_bind(pattern.clone());
-        qb.push(" ESCAPE '\\\\'");
-        qb.push(" OR error_message LIKE ");
+        qb.push(")");
+        qb.push(" OR LOWER(COALESCE(error_message, '')) LIKE LOWER(");
         qb.push_bind(pattern);
-        qb.push(" ESCAPE '\\\\')");
+        qb.push("))");
     }
     if let Some(cursor) = cursor {
         qb.push(" AND (started_at < ");
@@ -665,13 +665,6 @@ fn trimmed_non_empty(value: Option<String>) -> Option<String> {
             Some(trimmed.to_string())
         }
     })
-}
-
-fn escape_like(input: &str) -> String {
-    input
-        .replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_")
 }
 
 fn map_history_row(row: sqlx::sqlite::SqliteRow) -> RepoResult<HistoryEntry> {
