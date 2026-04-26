@@ -968,8 +968,7 @@ fn localize_tree_drop_error(err: &str) -> SharedString {
         "tree_drop_error_view_closed"
     } else if err.contains("cross-storage drag/drop is not supported") {
         "tree_drop_error_cross_storage"
-    } else if err.contains("cross-collection drag/drop for linked collections is not supported")
-    {
+    } else if err.contains("cross-collection drag/drop for linked collections is not supported") {
         "tree_drop_error_linked_cross_collection"
     } else if err.contains("cannot drop a folder into itself")
         || err.contains("cannot drop a folder into its descendant")
@@ -981,13 +980,10 @@ fn localize_tree_drop_error(err: &str) -> SharedString {
         || err.contains("cannot be dropped into request rows")
     {
         "tree_drop_error_invalid_target"
-    } else if err.contains("dragged")
-        && err.contains("no longer exists")
-        && !err.contains("target")
+    } else if err.contains("dragged") && err.contains("no longer exists") && !err.contains("target")
     {
         "tree_drop_error_source_missing"
-    } else if err.contains("drop target")
-        && err.contains("no longer exists")
+    } else if err.contains("drop target") && err.contains("no longer exists")
         || err.contains("drop target no longer exists after move")
         || err.contains("reorder target changed while processing")
     {

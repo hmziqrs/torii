@@ -154,7 +154,8 @@ History:
 
 - cursor-paginated `HistoryRepository::query` API
 - typed `HistoryQuery`, `HistoryCursor`, `HistoryPage`, and `HistorySort`
-- indexed filters for workspace, request, protocol, state, status range, method, URL/search text, and time range
+- indexed filters for workspace, request, collection, protocol, state, status range, method, and time range
+- bounded URL/general text search after indexed narrowing, with optional lazy FTS if needed
 - global History tab rendered through a virtualized delegate/table
 - per-request History panel using the same query model
 - details pane that can inspect response metadata, headers, cookies, timing, body preview, errors, and stream summaries
@@ -374,6 +375,12 @@ ON history_index (request_id, started_at DESC, id DESC);
 
 CREATE INDEX IF NOT EXISTS idx_history_workspace_status_started
 ON history_index (workspace_id, status_code, started_at DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_history_workspace_collection_started
+ON history_index (workspace_id, request_collection_id, started_at DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_history_workspace_method_started
+ON history_index (workspace_id, method COLLATE NOCASE, started_at DESC, id DESC);
 ```
 
 Timestamp migration:
@@ -843,6 +850,7 @@ Tasks:
 - extend `HistoryEntry`
 - add `HistoryQuery`, `HistoryCursor`, `HistoryPage`
 - implement cursor-paginated `HistoryRepository::query`
+- update history creation/finalization writes to store millisecond timestamps
 - preserve `list_recent` and `list_for_request` temporarily as wrappers
 - update startup recovery blob reference collection
 - keep `mark_pending_as_failed_on_startup` available for `RecoveryCoordinator`
@@ -1001,7 +1009,7 @@ Tasks:
 Acceptance:
 
 - invalid variables JSON blocks send with preflight error
-- operation picker lists named query/mutation operations
+- operation picker lists named query/mutation/subscription operations
 - subscription operations are visible but disabled, and attempting to send one returns a preflight error that GraphQL subscriptions over WebSocket are out of Phase 5 scope
 - selected operation name is included in the request body
 - headers/auth/environment variable resolution reuse existing HTTP behavior

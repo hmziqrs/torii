@@ -1,7 +1,8 @@
 use gpui::{AnyElement, IntoElement, ParentElement, Styled as _, WeakEntity, div, px};
 use gpui_component::{
+    Selectable as _, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
-    h_flex, v_flex, Selectable as _, Sizable as _, WindowExt as _,
+    h_flex, v_flex,
 };
 
 use crate::{
@@ -201,7 +202,12 @@ fn status_chip(state: HistoryState, status_code: Option<i64>) -> impl IntoElemen
         HistoryState::Pending => es_fluent::localize("history_tab_state_pending", None),
         HistoryState::Completed => status_code.map_or_else(
             || es_fluent::localize("history_tab_state_completed", None),
-            |code| format!("{} ({code})", es_fluent::localize("history_tab_state_completed", None)),
+            |code| {
+                format!(
+                    "{} ({code})",
+                    es_fluent::localize("history_tab_state_completed", None)
+                )
+            },
         ),
         HistoryState::Failed => es_fluent::localize("history_tab_state_failed", None),
         HistoryState::Cancelled => es_fluent::localize("history_tab_state_cancelled", None),

@@ -2,11 +2,11 @@ use std::{collections::HashSet, sync::Arc};
 
 use anyhow::{Context as _, anyhow};
 use sqlx::Row as _;
+use tracing::warn;
 
 use crate::domain::{
-    history::{HistoryEntry, HistoryState},
-    ids::{HistoryEntryId, RequestId, WorkspaceId},
-    revision::now_unix_ts,
+    history::{HistoryCursor, HistoryEntry, HistoryPage, HistoryQuery, HistorySort, HistoryState},
+    ids::{CollectionId, FolderId, HistoryEntryId, RequestId, WorkspaceId},
 };
 
 use super::{DbRef, RepoResult};
@@ -19,6 +19,38 @@ pub struct RequestSnapshot {
     pub auth_kind: Option<String>,
     pub body_summary_json: Option<String>,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryBlobRefKind {
+    ResponseBody,
+    RequestSnapshot,
+    RequestSnapshotBody,
+    StreamTranscript,
+    GrpcDescriptor,
+    Other,
+}
+
+impl HistoryBlobRefKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::ResponseBody => "response_body",
+            Self::RequestSnapshot => "request_snapshot",
+            Self::RequestSnapshotBody => "request_snapshot_body",
+            Self::StreamTranscript => "stream_transcript",
+            Self::GrpcDescriptor => "grpc_descriptor",
+            Self::Other => "other",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HistoryBlobRefInput {
+    pub blob_hash: String,
+    pub ref_kind: HistoryBlobRefKind,
+}
+
+const HISTORY_QUERY_DEFAULT_LIMIT: usize = 50;
+const HISTORY_QUERY_MAX_LIMIT: usize = 200;
 
 pub trait HistoryRepository: Send + Sync {
     fn create_pending(
@@ -44,10 +76,14 @@ pub trait HistoryRepository: Send + Sync {
     fn mark_failed(&self, id: HistoryEntryId, message: &str) -> RepoResult<()>;
     fn finalize_cancelled(&self, id: HistoryEntryId, partial_size: Option<i64>) -> RepoResult<()>;
     fn mark_pending_as_failed_on_startup(&self) -> RepoResult<usize>;
+    fn query(&self, query: HistoryQuery) -> RepoResult<HistoryPage>;
     fn list_recent(&self, workspace_id: WorkspaceId, limit: usize)
     -> RepoResult<Vec<HistoryEntry>>;
-    fn list_for_request(&self, request_id: RequestId, limit: usize)
-    -> RepoResult<Vec<HistoryEntry>>;
+    fn list_for_request(
+        &self,
+        request_id: RequestId,
+        limit: usize,
+    ) -> RepoResult<Vec<HistoryEntry>>;
     fn get_latest_for_request(&self, request_id: RequestId) -> RepoResult<Option<HistoryEntry>>;
     fn referenced_blob_hashes(&self) -> RepoResult<HashSet<String>>;
 }
@@ -72,7 +108,7 @@ impl HistoryRepository for SqliteHistoryRepository {
         url: &str,
         snapshot: Option<RequestSnapshot>,
     ) -> RepoResult<HistoryEntry> {
-        let ts = now_unix_ts();
+        let ts = now_unix_ms();
         let snap = snapshot.as_ref();
         let entry = HistoryEntry {
             id: HistoryEntryId::new(),
@@ -103,9 +139,22 @@ impl HistoryRepository for SqliteHistoryRepository {
             request_headers_redacted_json: snap.and_then(|s| s.headers_redacted_json.clone()),
             request_auth_kind: snap.and_then(|s| s.auth_kind.clone()),
             request_body_summary_json: snap.and_then(|s| s.body_summary_json.clone()),
+            protocol_kind: "http".to_string(),
+            request_name: None,
+            request_collection_id: None,
+            request_parent_folder_id: None,
+            request_snapshot_json: None,
+            request_snapshot_blob_hash: None,
+            run_summary_json: None,
+            transcript_blob_hash: None,
+            transcript_size: None,
+            message_count_in: None,
+            message_count_out: None,
+            close_reason: None,
         };
 
         self.db.block_on(async {
+            let mut tx = self.db.pool().begin().await?;
             sqlx::query(
                 "INSERT INTO history_index
                  (id, workspace_id, request_id, method, url, status_code, started_at, completed_at,
@@ -113,8 +162,11 @@ impl HistoryRepository for SqliteHistoryRepository {
                   recovery_attempts, finalized_at,
                   response_headers_json, response_media_type, response_meta_v2_json, dispatched_at, first_byte_at,
                   cancelled_at, partial_size,
-                  request_method, request_url_redacted, request_headers_redacted_json, request_auth_kind, request_body_summary_json)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  request_method, request_url_redacted, request_headers_redacted_json, request_auth_kind, request_body_summary_json,
+                  protocol_kind, request_name, request_collection_id, request_parent_folder_id, request_snapshot_json,
+                  request_snapshot_blob_hash, run_summary_json, transcript_blob_hash, transcript_size,
+                  message_count_in, message_count_out, close_reason)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(entry.id.to_string())
             .bind(entry.workspace_id.to_string())
@@ -144,9 +196,22 @@ impl HistoryRepository for SqliteHistoryRepository {
             .bind(entry.request_headers_redacted_json.clone())
             .bind(entry.request_auth_kind.clone())
             .bind(entry.request_body_summary_json.clone())
-            .execute(self.db.pool())
+            .bind(entry.protocol_kind.clone())
+            .bind(entry.request_name.clone())
+            .bind(entry.request_collection_id.map(|id| id.to_string()))
+            .bind(entry.request_parent_folder_id.map(|id| id.to_string()))
+            .bind(entry.request_snapshot_json.clone())
+            .bind(entry.request_snapshot_blob_hash.clone())
+            .bind(entry.run_summary_json.clone())
+            .bind(entry.transcript_blob_hash.clone())
+            .bind(entry.transcript_size)
+            .bind(entry.message_count_in)
+            .bind(entry.message_count_out)
+            .bind(entry.close_reason.clone())
+            .execute(&mut *tx)
             .await
             .context("failed to insert pending history row")?;
+            tx.commit().await?;
             Ok::<(), anyhow::Error>(())
         })?;
 
@@ -166,8 +231,9 @@ impl HistoryRepository for SqliteHistoryRepository {
         first_byte_at: Option<i64>,
     ) -> RepoResult<()> {
         self.db.block_on(async {
-            let ts = now_unix_ts();
-            sqlx::query(
+            let ts = now_unix_ms();
+            let mut tx = self.db.pool().begin().await?;
+            let result = sqlx::query(
                 "UPDATE history_index
                  SET status_code = ?,
                      completed_at = ?,
@@ -182,7 +248,7 @@ impl HistoryRepository for SqliteHistoryRepository {
                      response_meta_v2_json = ?,
                      dispatched_at = ?,
                      first_byte_at = ?
-                 WHERE id = ?",
+                 WHERE id = ? AND state = ?",
             )
             .bind(status_code)
             .bind(ts)
@@ -197,24 +263,36 @@ impl HistoryRepository for SqliteHistoryRepository {
             .bind(dispatched_at)
             .bind(first_byte_at)
             .bind(id.to_string())
-            .execute(self.db.pool())
+            .bind(HistoryState::Pending.as_str())
+            .execute(&mut *tx)
             .await
             .context("failed to finalize history entry")?;
+            if result.rows_affected() == 0 {
+                handle_terminal_noop(self.db.pool(), id, "completed").await?;
+                tx.commit().await?;
+                return Ok(());
+            }
+            if let Some(hash) = blob_hash {
+                insert_history_blob_ref(&mut tx, id, hash, HistoryBlobRefKind::ResponseBody, ts)
+                    .await?;
+            }
+            tx.commit().await?;
             Ok::<(), anyhow::Error>(())
         })
     }
 
     fn mark_failed(&self, id: HistoryEntryId, message: &str) -> RepoResult<()> {
         self.db.block_on(async {
-            let ts = now_unix_ts();
-            sqlx::query(
+            let ts = now_unix_ms();
+            let mut tx = self.db.pool().begin().await?;
+            let result = sqlx::query(
                 "UPDATE history_index
                  SET state = ?,
                      completed_at = ?,
                      error_message = ?,
                      updated_at = ?,
                      finalized_at = ?
-                 WHERE id = ?",
+                 WHERE id = ? AND state = ?",
             )
             .bind(HistoryState::Failed.as_str())
             .bind(ts)
@@ -222,17 +300,23 @@ impl HistoryRepository for SqliteHistoryRepository {
             .bind(ts)
             .bind(ts)
             .bind(id.to_string())
-            .execute(self.db.pool())
+            .bind(HistoryState::Pending.as_str())
+            .execute(&mut *tx)
             .await
             .context("failed to mark history as failed")?;
+            if result.rows_affected() == 0 {
+                handle_terminal_noop(self.db.pool(), id, "failed").await?;
+            }
+            tx.commit().await?;
             Ok::<(), anyhow::Error>(())
         })
     }
 
     fn finalize_cancelled(&self, id: HistoryEntryId, partial_size: Option<i64>) -> RepoResult<()> {
         self.db.block_on(async {
-            let ts = now_unix_ts();
-            sqlx::query(
+            let ts = now_unix_ms();
+            let mut tx = self.db.pool().begin().await?;
+            let result = sqlx::query(
                 "UPDATE history_index
                  SET state = ?,
                      completed_at = ?,
@@ -241,7 +325,7 @@ impl HistoryRepository for SqliteHistoryRepository {
                      blob_hash = NULL,
                      updated_at = ?,
                      finalized_at = ?
-                 WHERE id = ?",
+                 WHERE id = ? AND state = ?",
             )
             .bind(HistoryState::Cancelled.as_str())
             .bind(ts)
@@ -250,16 +334,21 @@ impl HistoryRepository for SqliteHistoryRepository {
             .bind(ts)
             .bind(ts)
             .bind(id.to_string())
-            .execute(self.db.pool())
+            .bind(HistoryState::Pending.as_str())
+            .execute(&mut *tx)
             .await
             .context("failed to finalize cancelled history entry")?;
+            if result.rows_affected() == 0 {
+                handle_terminal_noop(self.db.pool(), id, "cancelled").await?;
+            }
+            tx.commit().await?;
             Ok::<(), anyhow::Error>(())
         })
     }
 
     fn mark_pending_as_failed_on_startup(&self) -> RepoResult<usize> {
         self.db.block_on(async {
-            let ts = now_unix_ts();
+            let ts = now_unix_ms();
             let result = sqlx::query(
                 "UPDATE history_index
                  SET state = ?,
@@ -282,25 +371,19 @@ impl HistoryRepository for SqliteHistoryRepository {
         })
     }
 
+    fn query(&self, query: HistoryQuery) -> RepoResult<HistoryPage> {
+        self.db
+            .block_on(async { query_history_page(self.db.pool(), query).await })
+    }
+
     fn list_recent(
         &self,
         workspace_id: WorkspaceId,
         limit: usize,
     ) -> RepoResult<Vec<HistoryEntry>> {
-        self.db.block_on(async {
-            let rows = sqlx::query(
-                "SELECT * FROM history_index
-                 WHERE workspace_id = ?
-                 ORDER BY started_at DESC
-                 LIMIT ?",
-            )
-            .bind(workspace_id.to_string())
-            .bind(limit as i64)
-            .fetch_all(self.db.pool())
-            .await
-            .context("failed to list recent history rows")?;
-            rows.into_iter().map(map_history_row).collect()
-        })
+        let mut query = HistoryQuery::for_workspace(workspace_id);
+        query.limit = limit;
+        self.query(query).map(|page| page.rows)
     }
 
     fn get_latest_for_request(&self, request_id: RequestId) -> RepoResult<Option<HistoryEntry>> {
@@ -319,27 +402,45 @@ impl HistoryRepository for SqliteHistoryRepository {
         })
     }
 
-    fn list_for_request(&self, request_id: RequestId, limit: usize) -> RepoResult<Vec<HistoryEntry>> {
+    fn list_for_request(
+        &self,
+        request_id: RequestId,
+        limit: usize,
+    ) -> RepoResult<Vec<HistoryEntry>> {
         self.db.block_on(async {
-            let rows = sqlx::query(
-                "SELECT * FROM history_index
+            let workspace_id: Option<String> = sqlx::query_scalar(
+                "SELECT workspace_id
+                 FROM history_index
                  WHERE request_id = ?
                  ORDER BY started_at DESC, id DESC
-                 LIMIT ?",
+                 LIMIT 1",
             )
             .bind(request_id.to_string())
-            .bind(limit as i64)
-            .fetch_all(self.db.pool())
+            .fetch_optional(self.db.pool())
             .await
-            .context("failed to list history for request")?;
-            rows.into_iter().map(map_history_row).collect()
+            .context("failed to resolve request workspace for history query")?;
+
+            let Some(workspace_id) = workspace_id else {
+                return Ok(Vec::new());
+            };
+            let mut query = HistoryQuery::for_workspace(WorkspaceId::parse(&workspace_id)?);
+            query.request_id = Some(request_id);
+            query.limit = limit;
+            let page = query_history_page(self.db.pool(), query).await?;
+            Ok::<Vec<HistoryEntry>, anyhow::Error>(page.rows)
         })
     }
 
     fn referenced_blob_hashes(&self) -> RepoResult<HashSet<String>> {
         self.db.block_on(async {
             let rows = sqlx::query(
-                "SELECT DISTINCT blob_hash FROM history_index WHERE blob_hash IS NOT NULL",
+                "SELECT DISTINCT blob_hash
+                 FROM history_blob_refs
+                 WHERE blob_hash IS NOT NULL
+                 UNION
+                 SELECT DISTINCT blob_hash
+                 FROM history_index
+                 WHERE blob_hash IS NOT NULL",
             )
             .fetch_all(self.db.pool())
             .await
@@ -352,6 +453,225 @@ impl HistoryRepository for SqliteHistoryRepository {
             Ok::<HashSet<String>, anyhow::Error>(values)
         })
     }
+}
+
+async fn insert_history_blob_ref(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    history_id: HistoryEntryId,
+    blob_hash: &str,
+    ref_kind: HistoryBlobRefKind,
+    created_at: i64,
+) -> RepoResult<()> {
+    sqlx::query(
+        "INSERT OR IGNORE INTO history_blob_refs (history_id, blob_hash, ref_kind, created_at)
+         VALUES (?, ?, ?, ?)",
+    )
+    .bind(history_id.to_string())
+    .bind(blob_hash)
+    .bind(ref_kind.as_str())
+    .bind(created_at)
+    .execute(&mut **tx)
+    .await
+    .context("failed to insert history blob reference")?;
+    Ok(())
+}
+
+async fn handle_terminal_noop(
+    pool: &sqlx::SqlitePool,
+    history_id: HistoryEntryId,
+    attempted_state: &str,
+) -> RepoResult<()> {
+    let current_state: Option<String> =
+        sqlx::query_scalar("SELECT state FROM history_index WHERE id = ?")
+            .bind(history_id.to_string())
+            .fetch_optional(pool)
+            .await
+            .context("failed to read history state for idempotent finalization")?;
+
+    match current_state.as_deref() {
+        Some("completed" | "failed" | "cancelled") => {
+            warn!(
+                history_id = %history_id,
+                attempted_state,
+                current_state = current_state.unwrap_or_default(),
+                "history row already terminal; skipping duplicate finalization"
+            );
+            Ok(())
+        }
+        Some(other) => Err(anyhow!(
+            "history row not updated and not terminal (state={other}) for {}",
+            history_id
+        )),
+        None => Err(anyhow!("history row not found: {}", history_id)),
+    }
+}
+
+async fn query_history_page(
+    pool: &sqlx::SqlitePool,
+    query: HistoryQuery,
+) -> RepoResult<HistoryPage> {
+    let HistoryQuery {
+        workspace_id,
+        request_id,
+        collection_id,
+        protocol,
+        state,
+        status_family,
+        status_min,
+        status_max,
+        method,
+        url_search,
+        search,
+        started_after,
+        started_before,
+        cursor,
+        limit,
+        sort,
+    } = query;
+
+    if status_family.is_some() && (status_min.is_some() || status_max.is_some()) {
+        return Err(anyhow!(
+            "status_family cannot be combined with explicit status_min/status_max"
+        ));
+    }
+
+    let limit = if limit == 0 {
+        HISTORY_QUERY_DEFAULT_LIMIT
+    } else {
+        limit
+    }
+    .min(HISTORY_QUERY_MAX_LIMIT);
+
+    match sort {
+        HistorySort::StartedAtDesc => {}
+    }
+
+    let (status_min, status_max) = match status_family {
+        Some(family) => {
+            let (min, max) = family.bounds();
+            (Some(min), Some(max))
+        }
+        None => (status_min, status_max),
+    };
+
+    let mut qb = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+        "SELECT * FROM history_index WHERE workspace_id = ",
+    );
+    qb.push_bind(workspace_id.to_string());
+
+    if let Some(request_id) = request_id {
+        qb.push(" AND request_id = ");
+        qb.push_bind(request_id.to_string());
+    }
+    if let Some(collection_id) = collection_id {
+        qb.push(" AND request_collection_id = ");
+        qb.push_bind(collection_id.to_string());
+    }
+    if let Some(protocol) = protocol {
+        qb.push(" AND protocol_kind = ");
+        qb.push_bind(protocol);
+    }
+    if let Some(state) = state {
+        qb.push(" AND state = ");
+        qb.push_bind(state.as_str());
+    }
+    if let Some(method) = method {
+        qb.push(" AND method = ");
+        qb.push_bind(method);
+        qb.push(" COLLATE NOCASE");
+    }
+    if let Some(status_min) = status_min {
+        qb.push(" AND status_code >= ");
+        qb.push_bind(status_min as i64);
+    }
+    if let Some(status_max) = status_max {
+        qb.push(" AND status_code <= ");
+        qb.push_bind(status_max as i64);
+    }
+    if let Some(started_after) = started_after {
+        qb.push(" AND started_at >= ");
+        qb.push_bind(started_after);
+    }
+    if let Some(started_before) = started_before {
+        qb.push(" AND started_at <= ");
+        qb.push_bind(started_before);
+    }
+    if let Some(url_search) = trimmed_non_empty(url_search) {
+        let pattern = format!("%{}%", escape_like(&url_search));
+        qb.push(" AND url LIKE ");
+        qb.push_bind(pattern);
+        qb.push(" ESCAPE '\\\\'");
+    }
+    if let Some(search) = trimmed_non_empty(search) {
+        let pattern = format!("%{}%", escape_like(&search));
+        qb.push(" AND (method LIKE ");
+        qb.push_bind(pattern.clone());
+        qb.push(" ESCAPE '\\\\'");
+        qb.push(" OR url LIKE ");
+        qb.push_bind(pattern.clone());
+        qb.push(" ESCAPE '\\\\'");
+        qb.push(" OR request_name LIKE ");
+        qb.push_bind(pattern.clone());
+        qb.push(" ESCAPE '\\\\'");
+        qb.push(" OR error_message LIKE ");
+        qb.push_bind(pattern);
+        qb.push(" ESCAPE '\\\\')");
+    }
+    if let Some(cursor) = cursor {
+        qb.push(" AND (started_at < ");
+        qb.push_bind(cursor.started_at);
+        qb.push(" OR (started_at = ");
+        qb.push_bind(cursor.started_at);
+        qb.push(" AND id < ");
+        qb.push_bind(cursor.id.to_string());
+        qb.push("))");
+    }
+
+    qb.push(" ORDER BY started_at DESC, id DESC LIMIT ");
+    qb.push_bind((limit + 1) as i64);
+    let rows = qb
+        .build()
+        .fetch_all(pool)
+        .await
+        .context("failed to query history rows")?;
+
+    let has_more = rows.len() > limit;
+    let mut entries = Vec::with_capacity(rows.len().min(limit));
+    for row in rows.into_iter().take(limit) {
+        entries.push(map_history_row(row)?);
+    }
+    let next_cursor = if has_more {
+        entries.last().map(|last| HistoryCursor {
+            started_at: last.started_at,
+            id: last.id,
+        })
+    } else {
+        None
+    };
+
+    Ok(HistoryPage {
+        rows: entries,
+        next_cursor,
+        total_estimate: None,
+    })
+}
+
+fn trimmed_non_empty(value: Option<String>) -> Option<String> {
+    value.and_then(|it| {
+        let trimmed = it.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+fn escape_like(input: &str) -> String {
+    input
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 
 fn map_history_row(row: sqlx::sqlite::SqliteRow) -> RepoResult<HistoryEntry> {
@@ -395,6 +715,28 @@ fn map_history_row(row: sqlx::sqlite::SqliteRow) -> RepoResult<HistoryEntry> {
         request_headers_redacted_json: row.try_get("request_headers_redacted_json").unwrap_or(None),
         request_auth_kind: row.try_get("request_auth_kind").unwrap_or(None),
         request_body_summary_json: row.try_get("request_body_summary_json").unwrap_or(None),
+        protocol_kind: row
+            .try_get::<String, _>("protocol_kind")
+            .unwrap_or_else(|_| "http".to_string()),
+        request_name: row.try_get("request_name").unwrap_or(None),
+        request_collection_id: row
+            .try_get::<Option<String>, _>("request_collection_id")
+            .unwrap_or(None)
+            .map(|value| CollectionId::parse(&value))
+            .transpose()?,
+        request_parent_folder_id: row
+            .try_get::<Option<String>, _>("request_parent_folder_id")
+            .unwrap_or(None)
+            .map(|value| FolderId::parse(&value))
+            .transpose()?,
+        request_snapshot_json: row.try_get("request_snapshot_json").unwrap_or(None),
+        request_snapshot_blob_hash: row.try_get("request_snapshot_blob_hash").unwrap_or(None),
+        run_summary_json: row.try_get("run_summary_json").unwrap_or(None),
+        transcript_blob_hash: row.try_get("transcript_blob_hash").unwrap_or(None),
+        transcript_size: row.try_get("transcript_size").unwrap_or(None),
+        message_count_in: row.try_get("message_count_in").unwrap_or(None),
+        message_count_out: row.try_get("message_count_out").unwrap_or(None),
+        close_reason: row.try_get("close_reason").unwrap_or(None),
     })
 }
 
@@ -508,4 +850,8 @@ fn redact_url_query_values(raw_url: &str) -> String {
         Some(fragment) => format!("{path}?{redacted_query}#{fragment}"),
         None => format!("{path}?{redacted_query}"),
     }
+}
+
+fn now_unix_ms() -> i64 {
+    (time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000) as i64
 }

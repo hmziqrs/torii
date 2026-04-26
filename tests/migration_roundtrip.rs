@@ -25,6 +25,7 @@ fn migration_roundtrip_creates_and_reuses_schema() -> Result<()> {
         "environments",
         "ui_preferences",
         "history_index",
+        "history_blob_refs",
         "secret_refs",
         "startup_recovery_log",
         "tab_session_state",
@@ -43,7 +44,7 @@ fn migration_roundtrip_creates_and_reuses_schema() -> Result<()> {
             .fetch_one(db.pool())
             .await
     })?;
-    assert_eq!(applied, 4);
+    assert_eq!(applied, 5);
 
     let journal_mode: String = db.block_on(async {
         sqlx::query_scalar("PRAGMA journal_mode;")
@@ -88,6 +89,28 @@ fn migration_roundtrip_creates_and_reuses_schema() -> Result<()> {
         "environments table must not contain collection_id"
     );
 
+    let request_columns = db.block_on(async {
+        sqlx::query("PRAGMA table_info(requests);")
+            .fetch_all(db.pool())
+            .await
+    })?;
+    let request_column_names = request_columns
+        .into_iter()
+        .map(|row| row.get::<String, _>("name"))
+        .collect::<Vec<_>>();
+    assert!(
+        request_column_names
+            .iter()
+            .any(|name| name == "protocol_kind"),
+        "requests table must contain protocol_kind"
+    );
+    assert!(
+        request_column_names
+            .iter()
+            .any(|name| name == "protocol_config_json"),
+        "requests table must contain protocol_config_json"
+    );
+
     drop(db);
 
     let db2 = torii::infra::db::Database::connect(&paths)?;
@@ -96,7 +119,7 @@ fn migration_roundtrip_creates_and_reuses_schema() -> Result<()> {
             .fetch_one(db2.pool())
             .await
     })?;
-    assert_eq!(applied2, 4);
+    assert_eq!(applied2, 5);
 
     Ok(())
 }

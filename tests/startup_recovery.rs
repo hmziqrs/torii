@@ -190,3 +190,47 @@ fn startup_recovery_marks_stale_pending_for_request_as_failed() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn recovery_preserves_phase5_history_blob_refs() -> Result<()> {
+    let (paths, db) = common::test_database("startup-recovery-history-blob-refs")?;
+    let db = Arc::new(db);
+    let blob_store = Arc::new(BlobStore::new(&paths)?);
+    let workspace_repo = SqliteWorkspaceRepository::new(db.clone());
+    let history_repo = Arc::new(SqliteHistoryRepository::new(db.clone()));
+
+    let workspace = workspace_repo.create("Main")?;
+    let entry =
+        history_repo.create_pending(workspace.id, None, "GET", "https://phase5.local", None)?;
+
+    let transcript_blob = blob_store.write_bytes(b"stream transcript", Some("application/json"))?;
+    db.block_on(async {
+        sqlx::query(
+            "INSERT INTO history_blob_refs (history_id, blob_hash, ref_kind, created_at)
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind(entry.id.to_string())
+        .bind(&transcript_blob.hash)
+        .bind("stream_transcript")
+        .bind(time::OffsetDateTime::now_utc().unix_timestamp())
+        .execute(db.pool())
+        .await
+    })?;
+
+    let orphan_blob = blob_store.write_bytes(b"orphan", Some("text/plain"))?;
+    let recovery = RecoveryCoordinator::new(db.clone(), history_repo, blob_store.clone())
+        .with_stale_temp_max_age(std::time::Duration::ZERO);
+    let report = recovery.run_startup_recovery()?;
+
+    assert!(
+        transcript_blob.path.exists(),
+        "history_blob_refs references must be preserved"
+    );
+    assert!(
+        !orphan_blob.path.exists(),
+        "unreferenced blob should be cleaned up"
+    );
+    assert!(report.orphan_blob_removed >= 1);
+
+    Ok(())
+}

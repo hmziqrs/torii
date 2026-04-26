@@ -16,7 +16,7 @@ use gpui_component::{
 use crate::{
     domain::{
         collection::CollectionStorageKind,
-        history::HistoryEntry,
+        history::{HistoryCursor, HistoryEntry, HistoryQuery, HistoryState},
         ids::{RequestDraftId, RequestId, WorkspaceId},
         item_id::ItemId,
     },
@@ -53,9 +53,7 @@ pub struct AppRoot {
     request_pages: std::collections::HashMap<RequestId, Entity<request_tab::RequestTabView>>,
     request_draft_pages:
         std::collections::HashMap<RequestDraftId, Entity<request_tab::RequestTabView>>,
-    history_entries_by_workspace: std::collections::HashMap<WorkspaceId, Vec<HistoryEntry>>,
-    history_state_filter_by_workspace:
-        std::collections::HashMap<WorkspaceId, Option<crate::domain::history::HistoryState>>,
+    history_views_by_workspace: std::collections::HashMap<WorkspaceId, HistoryWorkspaceView>,
     _subscriptions: Vec<Subscription>,
     /// Tracks the previously active tab so we can release webviews on tab switch.
     previous_active_tab: Option<TabKey>,
@@ -63,6 +61,48 @@ pub struct AppRoot {
     linked_monitor_workspace_id: Option<WorkspaceId>,
     drag_auto_expand_target: Option<crate::session::workspace_session::ExpandableItem>,
     drag_auto_expand_epoch: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HistoryProtocolFilter {
+    All,
+    Http,
+    Graphql,
+    WebSocket,
+    Grpc,
+}
+
+impl HistoryProtocolFilter {
+    fn as_query_value(self) -> Option<&'static str> {
+        match self {
+            Self::All => None,
+            Self::Http => Some("http"),
+            Self::Graphql => Some("graphql"),
+            Self::WebSocket => Some("websocket"),
+            Self::Grpc => Some("grpc"),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct HistoryWorkspaceView {
+    pub entries: Vec<HistoryEntry>,
+    pub state_filter: Option<HistoryState>,
+    pub protocol_filter: HistoryProtocolFilter,
+    pub next_cursor: Option<HistoryCursor>,
+    pub has_loaded_once: bool,
+}
+
+impl Default for HistoryWorkspaceView {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+            state_filter: None,
+            protocol_filter: HistoryProtocolFilter::All,
+            next_cursor: None,
+            has_loaded_once: false,
+        }
+    }
 }
 
 impl AppRoot {
@@ -139,56 +179,54 @@ impl AppRoot {
         )
         .unwrap_or(catalog);
 
-        let subscriptions = vec![
-            cx.observe(&session, {
-                let services = services.clone();
-                let mut last_workspace_id = selected_workspace_id;
-                move |this, session, cx| {
-                    let selected_workspace_id = session.read(cx).selected_workspace_id;
-                    // Reload the catalog only when the selected workspace actually changed.
-                    // The session observer fires for every session mutation (tab open/close,
-                    // sidebar selection, etc.) — reloading on all of those runs 5 SQLite
-                    // queries per interaction unnecessarily.
-                    if selected_workspace_id != last_workspace_id {
-                        last_workspace_id = selected_workspace_id;
-                        match load_workspace_catalog(
-                            &services.repos.workspace,
-                            &services.repos.collection,
-                            &services.repos.folder,
-                            &services.repos.request,
-                            &services.repos.environment,
-                            selected_workspace_id,
-                        ) {
-                            Ok(catalog) => {
-                                telemetry::inc_tree_catalog_reload();
-                                this.catalog = catalog
-                            }
-                            Err(err) => {
-                                tracing::error!("failed to refresh workspace catalog: {err}")
-                            }
+        let subscriptions = vec![cx.observe(&session, {
+            let services = services.clone();
+            let mut last_workspace_id = selected_workspace_id;
+            move |this, session, cx| {
+                let selected_workspace_id = session.read(cx).selected_workspace_id;
+                // Reload the catalog only when the selected workspace actually changed.
+                // The session observer fires for every session mutation (tab open/close,
+                // sidebar selection, etc.) — reloading on all of those runs 5 SQLite
+                // queries per interaction unnecessarily.
+                if selected_workspace_id != last_workspace_id {
+                    last_workspace_id = selected_workspace_id;
+                    match load_workspace_catalog(
+                        &services.repos.workspace,
+                        &services.repos.collection,
+                        &services.repos.folder,
+                        &services.repos.request,
+                        &services.repos.environment,
+                        selected_workspace_id,
+                    ) {
+                        Ok(catalog) => {
+                            telemetry::inc_tree_catalog_reload();
+                            this.catalog = catalog
                         }
-                        this.sync_expansion_state_with_catalog(cx);
-                        this.sync_linked_collection_monitor(selected_workspace_id, cx);
+                        Err(err) => {
+                            tracing::error!("failed to refresh workspace catalog: {err}")
+                        }
                     }
-
-                    // Release the HTML preview webview when switching away from a request tab.
-                    // Moved here from render() to avoid entity.update() inside render —
-                    // see idle-cpu-audit-claude.md Bug 5.
-                    let active_tab = session.read(cx).tab_manager.active();
-                    if this.previous_active_tab != active_tab {
-                        this.release_html_webview_for_tab(this.previous_active_tab, cx);
-                        this.previous_active_tab = active_tab;
-                    }
-
-                    // cx.notify() must fire unconditionally — all session mutations (tab switch,
-                    // sidebar toggle, reorder, etc.) need AppRoot to re-render.
-                    if let Ok(mut shared) = services.active_environments_by_workspace.write() {
-                        *shared = session.read(cx).active_environments_by_workspace.clone();
-                    }
-                    cx.notify();
+                    this.sync_expansion_state_with_catalog(cx);
+                    this.sync_linked_collection_monitor(selected_workspace_id, cx);
                 }
-            }),
-        ];
+
+                // Release the HTML preview webview when switching away from a request tab.
+                // Moved here from render() to avoid entity.update() inside render —
+                // see idle-cpu-audit-claude.md Bug 5.
+                let active_tab = session.read(cx).tab_manager.active();
+                if this.previous_active_tab != active_tab {
+                    this.release_html_webview_for_tab(this.previous_active_tab, cx);
+                    this.previous_active_tab = active_tab;
+                }
+
+                // cx.notify() must fire unconditionally — all session mutations (tab switch,
+                // sidebar toggle, reorder, etc.) need AppRoot to re-render.
+                if let Ok(mut shared) = services.active_environments_by_workspace.write() {
+                    *shared = session.read(cx).active_environments_by_workspace.clone();
+                }
+                cx.notify();
+            }
+        })];
 
         let io_runtime = services.io_runtime.clone();
         cx.spawn(async move |this, cx| {
@@ -226,8 +264,7 @@ impl AppRoot {
             layout_debug_page,
             request_pages: std::collections::HashMap::new(),
             request_draft_pages: std::collections::HashMap::new(),
-            history_entries_by_workspace: std::collections::HashMap::new(),
-            history_state_filter_by_workspace: std::collections::HashMap::new(),
+            history_views_by_workspace: std::collections::HashMap::new(),
             _subscriptions: subscriptions,
             previous_active_tab: None,
             linked_collection_monitor: None,
@@ -435,40 +472,115 @@ impl AppRoot {
         )
     }
 
-    pub(crate) fn refresh_history_cache_for_workspace(
+    pub(crate) fn ensure_history_loaded_for_workspace(
         &mut self,
         workspace_id: WorkspaceId,
         cx: &mut Context<Self>,
     ) {
-        let services = services(cx);
-        match services.repos.history.list_recent(workspace_id, 200) {
-            Ok(entries) => {
-                self.history_entries_by_workspace.insert(workspace_id, entries);
-                cx.notify();
-            }
-            Err(err) => {
-                tracing::error!("failed to load history rows for workspace {workspace_id}: {err}");
-            }
+        let view = self.history_views_by_workspace.entry(workspace_id).or_default();
+        if !view.has_loaded_once {
+            self.refresh_history_for_workspace(workspace_id, cx);
         }
+    }
+
+    pub(crate) fn refresh_history_for_workspace(
+        &mut self,
+        workspace_id: WorkspaceId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((entries, next_cursor)) = self.query_history_page_for_workspace(
+            workspace_id,
+            None,
+            cx,
+        ) else {
+            return;
+        };
+
+        let view = self.history_views_by_workspace.entry(workspace_id).or_default();
+        view.entries = entries;
+        view.next_cursor = next_cursor;
+        view.has_loaded_once = true;
+        cx.notify();
+    }
+
+    pub(crate) fn load_more_history_for_workspace(
+        &mut self,
+        workspace_id: WorkspaceId,
+        cx: &mut Context<Self>,
+    ) {
+        let cursor = self
+            .history_views_by_workspace
+            .get(&workspace_id)
+            .and_then(|view| view.next_cursor.clone());
+        let Some(cursor) = cursor else {
+            return;
+        };
+        let Some((new_entries, next_cursor)) = self.query_history_page_for_workspace(
+            workspace_id,
+            Some(cursor),
+            cx,
+        ) else {
+            return;
+        };
+
+        let view = self.history_views_by_workspace.entry(workspace_id).or_default();
+        view.entries.extend(new_entries);
+        view.next_cursor = next_cursor;
+        view.has_loaded_once = true;
+        cx.notify();
     }
 
     pub(crate) fn set_history_state_filter_for_workspace(
         &mut self,
         workspace_id: WorkspaceId,
-        filter: Option<crate::domain::history::HistoryState>,
+        filter: Option<HistoryState>,
         cx: &mut Context<Self>,
     ) {
-        let current = self
-            .history_state_filter_by_workspace
-            .get(&workspace_id)
-            .copied()
-            .flatten();
-        if current == filter {
+        let view = self.history_views_by_workspace.entry(workspace_id).or_default();
+        if view.state_filter == filter {
             return;
         }
-        self.history_state_filter_by_workspace
-            .insert(workspace_id, filter);
-        cx.notify();
+        view.state_filter = filter;
+        self.refresh_history_for_workspace(workspace_id, cx);
+    }
+
+    pub(crate) fn set_history_protocol_filter_for_workspace(
+        &mut self,
+        workspace_id: WorkspaceId,
+        filter: HistoryProtocolFilter,
+        cx: &mut Context<Self>,
+    ) {
+        let view = self.history_views_by_workspace.entry(workspace_id).or_default();
+        if view.protocol_filter == filter {
+            return;
+        }
+        view.protocol_filter = filter;
+        self.refresh_history_for_workspace(workspace_id, cx);
+    }
+
+    fn query_history_page_for_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+        cursor: Option<HistoryCursor>,
+        cx: &Context<Self>,
+    ) -> Option<(Vec<HistoryEntry>, Option<HistoryCursor>)> {
+        let services = services(cx);
+        let view = self.history_views_by_workspace.get(&workspace_id);
+        let mut query = HistoryQuery::for_workspace(workspace_id);
+        query.limit = 100;
+        query.cursor = cursor;
+        query.state = view.and_then(|state| state.state_filter);
+        query.protocol = view
+            .and_then(|state| state.protocol_filter.as_query_value())
+            .map(ToOwned::to_owned);
+
+        match services.repos.history.query(query) {
+            Ok(page) => Some((page.rows, page.next_cursor)),
+            Err(err) => {
+                tracing::error!("failed to query history rows for workspace {workspace_id}: {err}");
+                None
+            }
+        }
     }
 
     fn render_active_tab_content(
@@ -555,20 +667,14 @@ impl AppRoot {
                 .catalog
                 .selected_workspace_id()
                 .map(|workspace_id| {
-                    let entries = self
-                        .history_entries_by_workspace
-                        .get(&workspace_id)
-                        .map(|rows| rows.as_slice())
-                        .unwrap_or(&[]);
-                    let state_filter = self
-                        .history_state_filter_by_workspace
-                        .get(&workspace_id)
-                        .copied()
-                        .flatten();
+                    self.ensure_history_loaded_for_workspace(workspace_id, cx);
+                    let view = self
+                        .history_views_by_workspace
+                        .entry(workspace_id)
+                        .or_default();
                     history_tab::render(
                         workspace_id,
-                        entries,
-                        state_filter,
+                        view,
                         cx.entity().downgrade(),
                     )
                 })

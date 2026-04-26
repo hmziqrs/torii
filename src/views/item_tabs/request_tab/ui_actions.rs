@@ -97,7 +97,10 @@ impl RequestTabView {
 
     pub(super) fn open_history_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(request_id) = self.editor.request_id() else {
-            window.push_notification(es_fluent::localize("request_tab_history_no_request", None), cx);
+            window.push_notification(
+                es_fluent::localize("request_tab_history_no_request", None),
+                cx,
+            );
             return;
         };
 
@@ -106,7 +109,10 @@ impl RequestTabView {
             Ok(entries) => entries,
             Err(err) => {
                 window.push_notification(
-                    format!("{}: {err}", es_fluent::localize("request_tab_history_load_failed", None)),
+                    format!(
+                        "{}: {err}",
+                        es_fluent::localize("request_tab_history_load_failed", None)
+                    ),
                     cx,
                 );
                 return;
@@ -265,7 +271,10 @@ impl RequestTabView {
                     (Some(hash), Some(size_bytes)) => {
                         let preview = services
                             .blob_store
-                            .read_preview(hash, crate::domain::response::ResponseBudgets::PREVIEW_CAP_BYTES)
+                            .read_preview(
+                                hash,
+                                crate::domain::response::ResponseBudgets::PREVIEW_CAP_BYTES,
+                            )
                             .ok()
                             .map(bytes::Bytes::from);
                         crate::domain::response::BodyRef::DiskBlob {
@@ -284,12 +293,15 @@ impl RequestTabView {
                     .ok()
                     .and_then(|status| status.canonical_reason().map(ToOwned::to_owned))
                     .unwrap_or_default();
-                let dispatched_at_unix_ms =
-                    history_entry.dispatched_at.map(crate::domain::response::normalize_unix_ms);
-                let first_byte_at_unix_ms =
-                    history_entry.first_byte_at.map(crate::domain::response::normalize_unix_ms);
-                let completed_at_unix_ms =
-                    history_entry.completed_at.map(crate::domain::response::normalize_unix_ms);
+                let dispatched_at_unix_ms = history_entry
+                    .dispatched_at
+                    .map(crate::domain::response::normalize_unix_ms);
+                let first_byte_at_unix_ms = history_entry
+                    .first_byte_at
+                    .map(crate::domain::response::normalize_unix_ms);
+                let completed_at_unix_ms = history_entry
+                    .completed_at
+                    .map(crate::domain::response::normalize_unix_ms);
                 let total_ms = match (dispatched_at_unix_ms, completed_at_unix_ms) {
                     (Some(dispatched), Some(completed)) if completed >= dispatched => {
                         Some((completed - dispatched) as u64)
@@ -311,35 +323,36 @@ impl RequestTabView {
                     })
                     .unwrap_or_default();
 
-                self.editor.restore_completed_response(crate::domain::response::ResponseSummary {
-                    status_code,
-                    status_text,
-                    headers_json: history_entry.response_headers_json.clone(),
-                    media_type: history_entry.response_media_type.clone(),
-                    body_ref,
-                    total_ms,
-                    ttfb_ms,
-                    dispatched_at_unix_ms,
-                    first_byte_at_unix_ms,
-                    completed_at_unix_ms,
-                    http_version: meta_v2.http_version,
-                    local_addr: meta_v2.local_addr,
-                    remote_addr: meta_v2.remote_addr,
-                    tls: meta_v2.tls,
-                    size: crate::domain::response::ResponseSizeBreakdown {
-                        body_decoded_bytes,
-                        ..meta_v2.size
-                    },
-                    request_size: meta_v2.request_size,
-                    phase_timings: if meta_v2.phase_timings.ttfb_ms.is_some() {
-                        meta_v2.phase_timings
-                    } else {
-                        crate::domain::response::PhaseTimings {
-                            ttfb_ms,
-                            ..meta_v2.phase_timings
-                        }
-                    },
-                });
+                self.editor
+                    .restore_completed_response(crate::domain::response::ResponseSummary {
+                        status_code,
+                        status_text,
+                        headers_json: history_entry.response_headers_json.clone(),
+                        media_type: history_entry.response_media_type.clone(),
+                        body_ref,
+                        total_ms,
+                        ttfb_ms,
+                        dispatched_at_unix_ms,
+                        first_byte_at_unix_ms,
+                        completed_at_unix_ms,
+                        http_version: meta_v2.http_version,
+                        local_addr: meta_v2.local_addr,
+                        remote_addr: meta_v2.remote_addr,
+                        tls: meta_v2.tls,
+                        size: crate::domain::response::ResponseSizeBreakdown {
+                            body_decoded_bytes,
+                            ..meta_v2.size
+                        },
+                        request_size: meta_v2.request_size,
+                        phase_timings: if meta_v2.phase_timings.ttfb_ms.is_some() {
+                            meta_v2.phase_timings
+                        } else {
+                            crate::domain::response::PhaseTimings {
+                                ttfb_ms,
+                                ..meta_v2.phase_timings
+                            }
+                        },
+                    });
                 self.mark_response_tables_dirty();
             }
             crate::domain::history::HistoryState::Failed => {
@@ -354,7 +367,9 @@ impl RequestTabView {
                     .restore_cancelled_response(history_entry.partial_size.map(|s| s as u64));
             }
             crate::domain::history::HistoryState::Pending => {
-                return Err(es_fluent::localize("request_tab_history_restore_pending", None).to_string());
+                return Err(
+                    es_fluent::localize("request_tab_history_restore_pending", None).to_string(),
+                );
             }
         }
         cx.notify();

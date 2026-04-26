@@ -402,7 +402,8 @@ impl TreeMutationService {
             self.move_sibling_managed(dragged, target_collection_id, target_parent)?;
         }
 
-        let mut siblings = self.mixed_siblings_for_parent_live(target_collection_id, target_parent)?;
+        let mut siblings =
+            self.mixed_siblings_for_parent_live(target_collection_id, target_parent)?;
         siblings.retain(|sibling| *sibling != dragged);
 
         let Some(insert_idx) = siblings
@@ -643,7 +644,10 @@ impl TreeMutationService {
         siblings.append(&mut folders);
         siblings.append(&mut requests);
         siblings.sort_by(|a, b| (a.0, a.1, &a.2).cmp(&(b.0, b.1, &b.2)));
-        Ok(siblings.into_iter().map(|(_, _, _, sibling)| sibling).collect())
+        Ok(siblings
+            .into_iter()
+            .map(|(_, _, _, sibling)| sibling)
+            .collect())
     }
 
     fn next_sibling_after(

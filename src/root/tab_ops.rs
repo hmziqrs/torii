@@ -912,7 +912,7 @@ impl AppRoot {
         if matches!(item_key.kind, ItemKind::History)
             && let Some(workspace_id) = self.catalog.selected_workspace_id()
         {
-            self.refresh_history_cache_for_workspace(workspace_id, cx);
+            self.ensure_history_loaded_for_workspace(workspace_id, cx);
         }
         self.session.update(cx, |session, cx| {
             session.open_or_focus(item_key, cx);
