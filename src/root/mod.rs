@@ -7,6 +7,8 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme as _, Icon, IconName, Root, Sizable as _, WindowExt as _,
     button::{Button, ButtonRounded, ButtonVariants as _},
+    calendar::Date as PickerDate,
+    date_picker::{DatePicker, DatePickerState},
     h_flex,
     input::{Input, InputState},
     resizable::{h_resizable, resizable_panel},
@@ -18,7 +20,7 @@ use crate::{
     domain::{
         collection::CollectionStorageKind,
         history::{HistoryCursor, HistoryEntry, HistoryQuery, HistoryState, StatusFamily},
-        ids::{HistoryEntryId, RequestDraftId, RequestId, WorkspaceId},
+        ids::{RequestDraftId, RequestId, WorkspaceId},
         item_id::ItemId,
     },
     repos::tab_session_repo::{TabSessionMetadata, TabSessionWorkspaceState},
@@ -98,6 +100,10 @@ enum HistoryTextFilterKind {
     Search,
     Method,
     Url,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HistoryDateFilterKind {
     StartedAfter,
     StartedBefore,
 }
@@ -114,7 +120,6 @@ pub(crate) struct HistoryWorkspaceView {
     pub started_after: Option<i64>,
     pub started_before: Option<i64>,
     pub group_by: HistoryGroupBy,
-    pub selected_history_id: Option<HistoryEntryId>,
     pub next_cursor: Option<HistoryCursor>,
     pub has_loaded_once: bool,
 }
@@ -132,7 +137,6 @@ impl Default for HistoryWorkspaceView {
             started_after: None,
             started_before: None,
             group_by: HistoryGroupBy::None,
-            selected_history_id: None,
             next_cursor: None,
             has_loaded_once: false,
         }
@@ -638,7 +642,6 @@ impl AppRoot {
         view.started_after = None;
         view.started_before = None;
         view.group_by = HistoryGroupBy::None;
-        view.selected_history_id = None;
         self.refresh_history_for_workspace(workspace_id, cx);
     }
 
@@ -657,23 +660,6 @@ impl AppRoot {
         }
         view.status_family_filter = filter;
         self.refresh_history_for_workspace(workspace_id, cx);
-    }
-
-    pub(crate) fn set_selected_history_entry_for_workspace(
-        &mut self,
-        workspace_id: WorkspaceId,
-        selected: Option<HistoryEntryId>,
-        cx: &mut Context<Self>,
-    ) {
-        let view = self
-            .history_views_by_workspace
-            .entry(workspace_id)
-            .or_default();
-        if view.selected_history_id == selected {
-            return;
-        }
-        view.selected_history_id = selected;
-        cx.notify();
     }
 
     pub(crate) fn open_history_search_dialog(
@@ -745,17 +731,10 @@ impl AppRoot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let current = self
-            .history_views_by_workspace
-            .get(&workspace_id)
-            .and_then(|view| view.started_after)
-            .map(|ms| ms.to_string())
-            .unwrap_or_default();
-        self.open_history_filter_dialog(
+        self.open_history_date_filter_dialog(
             workspace_id,
-            current,
             "history_tab_started_after_dialog_title",
-            HistoryTextFilterKind::StartedAfter,
+            HistoryDateFilterKind::StartedAfter,
             window,
             cx,
         );
@@ -767,17 +746,10 @@ impl AppRoot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let current = self
-            .history_views_by_workspace
-            .get(&workspace_id)
-            .and_then(|view| view.started_before)
-            .map(|ms| ms.to_string())
-            .unwrap_or_default();
-        self.open_history_filter_dialog(
+        self.open_history_date_filter_dialog(
             workspace_id,
-            current,
             "history_tab_started_before_dialog_title",
-            HistoryTextFilterKind::StartedBefore,
+            HistoryDateFilterKind::StartedBefore,
             window,
             cx,
         );
@@ -842,15 +814,90 @@ impl AppRoot {
                                             HistoryTextFilterKind::Url => {
                                                 view.url_search = next_value;
                                             }
-                                            HistoryTextFilterKind::StartedAfter => {
-                                                view.started_after = next_value
-                                                    .as_deref()
-                                                    .and_then(parse_history_time_filter_ms);
+                                        }
+                                        this.refresh_history_for_workspace(workspace_id, cx);
+                                    });
+                                    window.close_dialog(cx);
+                                }),
+                        ),
+                )
+        });
+    }
+
+    fn open_history_date_filter_dialog(
+        &mut self,
+        workspace_id: WorkspaceId,
+        title_key: &'static str,
+        filter_kind: HistoryDateFilterKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let current_ms = self
+            .history_views_by_workspace
+            .get(&workspace_id)
+            .and_then(|view| match filter_kind {
+                HistoryDateFilterKind::StartedAfter => view.started_after,
+                HistoryDateFilterKind::StartedBefore => view.started_before,
+            });
+        let picker_state = cx.new(|cx| DatePickerState::new(window, cx).date_format("%Y-%m-%d"));
+        if let Some(existing_date) = current_ms.and_then(unix_ms_to_picker_date) {
+            picker_state.update(cx, |state, cx| {
+                state.set_date(PickerDate::Single(Some(existing_date)), window, cx);
+            });
+        }
+        let weak_root = cx.entity().downgrade();
+
+        window.open_dialog(cx, move |dialog, _, _cx| {
+            let picker_for_apply = picker_state.clone();
+            let weak_root_for_apply = weak_root.clone();
+            dialog
+                .title(es_fluent::localize(title_key, None))
+                .overlay_closable(true)
+                .keyboard(true)
+                .child(
+                    v_flex()
+                        .w_full()
+                        .gap_2()
+                        .child(DatePicker::new(&picker_state).cleanable(true).w_full())
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(gpui::transparent_black())
+                                .child(es_fluent::localize("history_tab_date_picker_hint", None)),
+                        ),
+                )
+                .footer(
+                    h_flex()
+                        .justify_end()
+                        .gap_2()
+                        .child(
+                            Button::new("history-date-filter-cancel")
+                                .ghost()
+                                .label(es_fluent::localize("history_tab_dialog_cancel", None))
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                }),
+                        )
+                        .child(
+                            Button::new("history-date-filter-apply")
+                                .primary()
+                                .label(es_fluent::localize("history_tab_dialog_apply", None))
+                                .on_click(move |_, window, cx| {
+                                    let selected =
+                                        picker_for_apply.read(cx).date().start().and_then(|date| {
+                                            history_picker_date_to_unix_ms(date, filter_kind)
+                                        });
+                                    let _ = weak_root_for_apply.update(cx, |this, cx| {
+                                        let view = this
+                                            .history_views_by_workspace
+                                            .entry(workspace_id)
+                                            .or_default();
+                                        match filter_kind {
+                                            HistoryDateFilterKind::StartedAfter => {
+                                                view.started_after = selected;
                                             }
-                                            HistoryTextFilterKind::StartedBefore => {
-                                                view.started_before = next_value
-                                                    .as_deref()
-                                                    .and_then(parse_history_time_filter_ms);
+                                            HistoryDateFilterKind::StartedBefore => {
+                                                view.started_before = selected;
                                             }
                                         }
                                         this.refresh_history_for_workspace(workspace_id, cx);
@@ -1023,6 +1070,25 @@ fn parse_history_time_filter_ms(raw: &str) -> Option<i64> {
         return Some(dt.unix_timestamp() * 1000);
     }
     None
+}
+
+fn history_picker_date_to_unix_ms(
+    date: chrono::NaiveDate,
+    kind: HistoryDateFilterKind,
+) -> Option<i64> {
+    let midnight_ms = parse_history_time_filter_ms(&date.to_string())?;
+    match kind {
+        HistoryDateFilterKind::StartedAfter => Some(midnight_ms),
+        // Before is inclusive for the entire selected day.
+        HistoryDateFilterKind::StartedBefore => Some(midnight_ms + 86_399_999),
+    }
+}
+
+fn unix_ms_to_picker_date(raw: i64) -> Option<chrono::NaiveDate> {
+    let ms = crate::domain::response::normalize_unix_ms(raw);
+    let seconds = ms / 1000;
+    let nanos = ((ms % 1000) * 1_000_000) as u32;
+    chrono::DateTime::from_timestamp(seconds, nanos).map(|dt| dt.date_naive())
 }
 
 impl Render for AppRoot {

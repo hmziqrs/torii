@@ -1,4 +1,7 @@
-use gpui::{AnyElement, IntoElement, ParentElement, Styled as _, WeakEntity, div, px};
+use gpui::{
+    AnyElement, IntoElement, ParentElement, Styled as _, WeakEntity, div,
+    prelude::FluentBuilder as _, px,
+};
 use gpui_component::{
     Disableable as _, Selectable as _, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
@@ -39,9 +42,6 @@ pub(crate) fn render(
     let weak_root_load_more = root.clone();
     let weak_root_after = root.clone();
     let weak_root_before = root.clone();
-    let selected_entry = view
-        .selected_history_id
-        .and_then(|selected| entries.iter().find(|it| it.id == selected).cloned());
 
     let mut quick_filter_row = h_flex()
         .gap_2()
@@ -335,25 +335,12 @@ pub(crate) fn render(
                 .into_iter()
                 .map(|label| chip(label).into_any_element()),
         )
-        .children(history_rows_elements(
-            workspace_id,
-            &grouped,
-            selected_entry.as_ref().map(|it| it.id),
-            has_filters,
-            root.clone(),
-        ))
-        .child(render_details_panel(
-            workspace_id,
-            selected_entry,
-            root.clone(),
-        ))
+        .children(history_rows_elements(&grouped, has_filters, root.clone()))
         .into_any_element()
 }
 
 fn history_rows_elements(
-    workspace_id: WorkspaceId,
     grouped: &[(String, Vec<HistoryEntry>)],
-    selected_id: Option<crate::domain::ids::HistoryEntryId>,
     has_filters: bool,
     root: WeakEntity<AppRoot>,
 ) -> Vec<AnyElement> {
@@ -384,11 +371,11 @@ fn history_rows_elements(
         for entry in rows {
             let entry = entry.clone();
             let weak_root = root.clone();
-            let weak_root_select = root.clone();
             let weak_root_open = root.clone();
+            let weak_root_details = root.clone();
             let request_id = entry.request_id;
             let entry_id = entry.id;
-            let is_selected = selected_id.is_some_and(|selected| selected == entry.id);
+            let details_entry = entry.clone();
             let meta_row = {
                 let mut row = h_flex()
                     .gap_3()
@@ -427,9 +414,6 @@ fn history_rows_elements(
                         .child(status_chip(entry.state, entry.status_code)),
                 )
                 .child(meta_row);
-            if is_selected {
-                card = card.bg(gpui::hsla(210.0 / 360.0, 0.20, 0.18, 1.0));
-            }
             card = card.child(
                 h_flex()
                     .gap_2()
@@ -438,14 +422,13 @@ fn history_rows_elements(
                             .ghost()
                             .xsmall()
                             .label(es_fluent::localize("history_tab_details", None))
-                            .on_click(move |_, _, cx| {
-                                let _ = weak_root_select.update(cx, |this, cx| {
-                                    this.set_selected_history_entry_for_workspace(
-                                        workspace_id,
-                                        Some(entry_id),
-                                        cx,
-                                    );
-                                });
+                            .on_click(move |_, window, cx| {
+                                open_history_details_dialog(
+                                    details_entry.clone(),
+                                    weak_root_details.clone(),
+                                    window,
+                                    cx,
+                                );
                             }),
                     )
                     .child(
@@ -458,7 +441,7 @@ fn history_rows_elements(
                                     let Some(request_id) = request_id else {
                                         window.push_notification(
                                             es_fluent::localize(
-                                                "history_tab_restore_no_request",
+                                                "history_tab_open_request_no_request",
                                                 None,
                                             ),
                                             cx,
@@ -470,7 +453,7 @@ fn history_rows_elements(
                                     if !this.can_open_item(item_key) {
                                         window.push_notification(
                                             es_fluent::localize(
-                                                "history_tab_restore_request_deleted",
+                                                "history_tab_open_request_deleted",
                                                 None,
                                             ),
                                             cx,
@@ -662,110 +645,172 @@ fn active_filter_chips(view: &HistoryWorkspaceView) -> Vec<String> {
     chips
 }
 
-fn render_details_panel(
-    workspace_id: WorkspaceId,
-    selected_entry: Option<HistoryEntry>,
+fn open_history_details_dialog(
+    entry: HistoryEntry,
     root: WeakEntity<AppRoot>,
-) -> impl IntoElement {
-    let Some(entry) = selected_entry else {
-        return v_flex()
-            .gap_1()
-            .p_3()
-            .rounded(px(6.))
-            .border_1()
-            .child(es_fluent::localize("history_tab_details_empty", None));
-    };
+    window: &mut gpui::Window,
+    cx: &mut gpui::App,
+) {
     let weak_root_open = root.clone();
+    let weak_root_restore = root.clone();
     let request_id = entry.request_id;
     let url = entry.url.clone();
-    let details = v_flex()
-        .gap_1()
-        .child(format!(
-            "{}: {}",
-            es_fluent::localize("history_tab_protocol_filter_label", None),
-            protocol_label(&entry)
-        ))
-        .child(format!(
-            "{}: {}",
-            es_fluent::localize("history_tab_method_filter", None),
-            entry.method
-        ))
-        .child(format!(
-            "{}: {}",
-            es_fluent::localize("history_tab_url_filter", None),
-            entry.url
-        ))
-        .child(format!(
-            "{}: {}",
-            es_fluent::localize("history_tab_started_at", None),
-            entry.started_at
-        ));
+    let details_protocol = protocol_label(&entry);
+    let details_method = entry.method.clone();
+    let details_url = entry.url.clone();
+    let details_started = entry.started_at;
+    let details_completed = entry.completed_at;
+    let details_state = entry.state;
 
-    v_flex()
-        .gap_2()
-        .p_3()
-        .rounded(px(6.))
-        .border_1()
-        .child(
-            div()
-                .font_weight(gpui::FontWeight::BOLD)
-                .child(es_fluent::localize("history_tab_details", None)),
-        )
-        .child(details)
-        .child(
-            h_flex()
-                .gap_2()
-                .child(
-                    Button::new("history-details-open-request")
-                        .ghost()
-                        .xsmall()
-                        .label(es_fluent::localize("history_tab_open_request", None))
-                        .on_click(move |_, window, cx| {
-                            let _ = weak_root_open.update(cx, |this, cx| {
-                                let Some(request_id) = request_id else {
-                                    window.push_notification(
-                                        es_fluent::localize("history_tab_restore_no_request", None),
-                                        cx,
-                                    );
-                                    return;
-                                };
-                                let item_key =
-                                    crate::session::item_key::ItemKey::request(request_id);
-                                if !this.can_open_item(item_key) {
-                                    window.push_notification(
-                                        es_fluent::localize(
-                                            "history_tab_restore_request_deleted",
-                                            None,
-                                        ),
-                                        cx,
-                                    );
-                                    return;
-                                }
-                                this.open_item(item_key, cx);
-                            });
-                        }),
-                )
-                .child(
-                    Button::new("history-details-copy-url")
-                        .ghost()
-                        .xsmall()
-                        .label(es_fluent::localize("history_tab_copy_url", None))
-                        .on_click(move |_, _, cx| {
-                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(url.clone()));
-                        }),
-                ),
-        )
-        .child(
-            Button::new("history-details-clear-selection")
-                .ghost()
-                .xsmall()
-                .label(es_fluent::localize("history_tab_clear_selection", None))
-                .on_click(move |_, _, cx| {
-                    let _ = root.update(cx, |this, cx| {
-                        this.set_selected_history_entry_for_workspace(workspace_id, None, cx);
-                    });
-                }),
-        )
+    window.open_dialog(cx, move |dialog, _, _| {
+        dialog
+            .title(es_fluent::localize("history_tab_details", None))
+            .overlay_closable(true)
+            .keyboard(true)
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(format!(
+                        "{}: {}",
+                        es_fluent::localize("history_tab_protocol_filter_label", None),
+                        details_protocol
+                    ))
+                    .child(format!(
+                        "{}: {}",
+                        es_fluent::localize("history_tab_method_filter", None),
+                        details_method
+                    ))
+                    .child(format!(
+                        "{}: {}",
+                        es_fluent::localize("history_tab_url_filter", None),
+                        details_url
+                    ))
+                    .child(format!(
+                        "{}: {}",
+                        es_fluent::localize("history_tab_started_at", None),
+                        details_started
+                    ))
+                    .when_some(details_completed, |el, completed| {
+                        el.child(format!(
+                            "{}: {}",
+                            es_fluent::localize("history_tab_completed_at", None),
+                            completed
+                        ))
+                    })
+                    .child(format!(
+                        "{}: {}",
+                        es_fluent::localize("history_tab_filter_label", None),
+                        match details_state {
+                            HistoryState::Pending => {
+                                es_fluent::localize("history_tab_state_pending", None)
+                            }
+                            HistoryState::Completed => {
+                                es_fluent::localize("history_tab_state_completed", None)
+                            }
+                            HistoryState::Failed => {
+                                es_fluent::localize("history_tab_state_failed", None)
+                            }
+                            HistoryState::Cancelled => {
+                                es_fluent::localize("history_tab_state_cancelled", None)
+                            }
+                        }
+                    )),
+            )
+            .footer(
+                h_flex()
+                    .justify_end()
+                    .gap_2()
+                    .child({
+                        let weak_root_open = weak_root_open.clone();
+                        let request_id = request_id.clone();
+                        Button::new(format!("history-details-open-request-{}", entry.id))
+                            .ghost()
+                            .xsmall()
+                            .label(es_fluent::localize("history_tab_open_request", None))
+                            .on_click(move |_, window, cx| {
+                                let _ = weak_root_open.update(cx, |this, cx| {
+                                    let Some(request_id) = request_id else {
+                                        window.push_notification(
+                                            es_fluent::localize(
+                                                "history_tab_open_request_no_request",
+                                                None,
+                                            ),
+                                            cx,
+                                        );
+                                        return;
+                                    };
+                                    let item_key =
+                                        crate::session::item_key::ItemKey::request(request_id);
+                                    if !this.can_open_item(item_key) {
+                                        window.push_notification(
+                                            es_fluent::localize(
+                                                "history_tab_open_request_deleted",
+                                                None,
+                                            ),
+                                            cx,
+                                        );
+                                        return;
+                                    }
+                                    this.open_item(item_key, cx);
+                                });
+                            })
+                    })
+                    .child({
+                        let weak_root_restore = weak_root_restore.clone();
+                        let request_id = request_id.clone();
+                        Button::new(format!("history-details-restore-request-{}", entry.id))
+                            .ghost()
+                            .xsmall()
+                            .label(es_fluent::localize("history_tab_restore", None))
+                            .on_click(move |_, window, cx| {
+                                let _ = weak_root_restore.update(cx, |this, cx| {
+                                    let Some(request_id) = request_id else {
+                                        window.push_notification(
+                                            es_fluent::localize(
+                                                "history_tab_restore_no_request",
+                                                None,
+                                            ),
+                                            cx,
+                                        );
+                                        return;
+                                    };
+                                    let item_key =
+                                        crate::session::item_key::ItemKey::request(request_id);
+                                    if !this.can_open_item(item_key) {
+                                        window.push_notification(
+                                            es_fluent::localize(
+                                                "history_tab_restore_request_deleted",
+                                                None,
+                                            ),
+                                            cx,
+                                        );
+                                        return;
+                                    }
+                                    this.open_item(item_key, cx);
+                                });
+                            })
+                    })
+                    .child({
+                        let url = url.clone();
+                        Button::new(format!("history-details-copy-url-{}", entry.id))
+                            .ghost()
+                            .xsmall()
+                            .label(es_fluent::localize("history_tab_copy_url", None))
+                            .on_click(move |_, _, cx| {
+                                cx.write_to_clipboard(gpui::ClipboardItem::new_string(url.clone()));
+                            })
+                    })
+                    .child(
+                        Button::new(format!("history-details-close-{}", entry.id))
+                            .primary()
+                            .xsmall()
+                            .label(es_fluent::localize("history_tab_dialog_cancel", None))
+                            .on_click(move |_, window, cx| {
+                                window.close_dialog(cx);
+                            }),
+                    ),
+            )
+    });
 }
 
 fn protocol_label(entry: &HistoryEntry) -> String {

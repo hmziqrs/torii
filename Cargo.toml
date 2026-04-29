@@ -48,6 +48,7 @@ sea-query = "0.32"
 directories = "6"
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
 time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
+chrono = { version = "0.4", default-features = true }
 bytes = "1"
 keyring = "3"
 blake3 = "1"
@@ -103,6 +104,7 @@ sea-query.workspace = true
 directories.workspace = true
 uuid.workspace = true
 time.workspace = true
+chrono.workspace = true
 bytes.workspace = true
 keyring.workspace = true
 blake3.workspace = true

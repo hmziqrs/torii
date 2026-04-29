@@ -8856,6 +8856,7 @@ dependencies = [
  "base64",
  "blake3",
  "bytes",
+ "chrono",
  "cookie",
  "directories",
  "es-fluent",
