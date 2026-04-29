@@ -407,10 +407,12 @@ fn history_rows_elements(
             let weak_root_open = root.clone();
             let weak_root_details = root.clone();
             let weak_root_restore = root.clone();
+            let weak_root_compare = root.clone();
             let request_id = entry.request_id;
             let entry_id = entry.id;
             let details_entry = entry.clone();
             let entry_for_restore = entry.clone();
+            let entry_for_compare = entry.clone();
             let meta_row = {
                 let mut row = h_flex()
                     .gap_3()
@@ -452,6 +454,24 @@ fn history_rows_elements(
             card = card.child(
                 h_flex()
                     .gap_2()
+                    .child(
+                        Button::new(format!("history-compare-request-{entry_id}"))
+                            .ghost()
+                            .xsmall()
+                            .label(es_fluent::localize("history_tab_compare_previous", None))
+                            .on_click(move |_, window, cx| {
+                                match weak_root_compare.update(cx, |this, cx| {
+                                    this.compare_history_entry_with_previous(&entry_for_compare, cx)
+                                }) {
+                                    Ok(Ok(report)) => open_history_compare_dialog(report, window, cx),
+                                    Ok(Err(err)) => window.push_notification(err, cx),
+                                    Err(_) => window.push_notification(
+                                        es_fluent::localize("history_tab_compare_failed", None),
+                                        cx,
+                                    ),
+                                }
+                            }),
+                    )
                     .child(
                         Button::new(format!("history-select-entry-{entry_id}"))
                             .ghost()
@@ -637,6 +657,37 @@ fn status_family_filter_button(
 
 fn active_filter_chips(view: &HistoryWorkspaceView) -> Vec<String> {
     let mut chips = Vec::new();
+    if let Some(state) = view.state_filter {
+        let label = match state {
+            HistoryState::Pending => es_fluent::localize("history_tab_state_pending", None),
+            HistoryState::Completed => es_fluent::localize("history_tab_state_completed", None),
+            HistoryState::Failed => es_fluent::localize("history_tab_state_failed", None),
+            HistoryState::Cancelled => es_fluent::localize("history_tab_state_cancelled", None),
+        };
+        chips.push(format!(
+            "{}: {}",
+            es_fluent::localize("history_tab_filter_label", None),
+            label
+        ));
+    }
+    if view.protocol_filter != HistoryProtocolFilter::All {
+        let label = match view.protocol_filter {
+            HistoryProtocolFilter::All => es_fluent::localize("history_tab_filter_all", None),
+            HistoryProtocolFilter::Http => es_fluent::localize("history_tab_protocol_http", None),
+            HistoryProtocolFilter::Graphql => {
+                es_fluent::localize("history_tab_protocol_graphql", None)
+            }
+            HistoryProtocolFilter::WebSocket => {
+                es_fluent::localize("history_tab_protocol_websocket", None)
+            }
+            HistoryProtocolFilter::Grpc => es_fluent::localize("history_tab_protocol_grpc", None),
+        };
+        chips.push(format!(
+            "{}: {}",
+            es_fluent::localize("history_tab_protocol_filter_label", None),
+            label
+        ));
+    }
     if let Some(method) = &view.method_filter {
         chips.push(format!(
             "{}: {method}",
@@ -1122,7 +1173,9 @@ fn status_family_label(status_code: Option<i64>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_bytes_i64, format_history_timestamp, parse_optional_json};
+    use super::{active_filter_chips, format_bytes_i64, format_history_timestamp, parse_optional_json};
+    use crate::root::{HistoryProtocolFilter, HistoryWorkspaceView};
+    use crate::domain::history::HistoryState;
 
     #[test]
     fn format_history_timestamp_is_human_readable() {
@@ -1142,5 +1195,15 @@ mod tests {
         assert!(parse_optional_json(&Some("invalid".to_string())).is_none());
         let pretty = parse_optional_json(&Some("{\"k\":1}".to_string())).expect("pretty json");
         assert!(pretty.contains("\"k\": 1"));
+    }
+
+    #[test]
+    fn active_filter_chips_include_state_and_protocol() {
+        let mut view = HistoryWorkspaceView::default();
+        view.state_filter = Some(HistoryState::Failed);
+        view.protocol_filter = HistoryProtocolFilter::Graphql;
+        let chips = active_filter_chips(&view);
+        assert!(chips.iter().any(|chip| chip.contains("Failed")));
+        assert!(chips.iter().any(|chip| chip.contains("GraphQL")));
     }
 }
