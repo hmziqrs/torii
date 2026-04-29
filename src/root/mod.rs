@@ -116,6 +116,8 @@ pub(crate) struct HistoryWorkspaceView {
     pub method_filter: Option<String>,
     pub url_search: Option<String>,
     pub search: Option<String>,
+    pub request_filter: Option<RequestId>,
+    pub request_filter_name: Option<String>,
     pub status_family_filter: Option<StatusFamily>,
     pub started_after: Option<i64>,
     pub started_before: Option<i64>,
@@ -133,6 +135,8 @@ impl Default for HistoryWorkspaceView {
             method_filter: None,
             url_search: None,
             search: None,
+            request_filter: None,
+            request_filter_name: None,
             status_family_filter: None,
             started_after: None,
             started_before: None,
@@ -638,6 +642,8 @@ impl AppRoot {
         view.method_filter = None;
         view.url_search = None;
         view.search = None;
+        view.request_filter = None;
+        view.request_filter_name = None;
         view.status_family_filter = None;
         view.started_after = None;
         view.started_before = None;
@@ -662,6 +668,52 @@ impl AppRoot {
         self.refresh_history_for_workspace(workspace_id, cx);
     }
 
+    pub(crate) fn prune_history_before_for_workspace(
+        &mut self,
+        workspace_id: WorkspaceId,
+        started_before: i64,
+        cx: &mut Context<Self>,
+    ) -> Result<usize, String> {
+        let services = services(cx);
+        let removed = services
+            .repos
+            .history
+            .delete_before(workspace_id, started_before)
+            .map_err(|err| format!("failed to prune history: {err}"))?;
+        let mut referenced_hashes = services
+            .repos
+            .history
+            .referenced_blob_hashes()
+            .map_err(|err| format!("failed to resolve history blob refs after prune: {err}"))?;
+
+        let request_body_hashes = services
+            .db
+            .block_on(async {
+                let rows = sqlx::query(
+                    "SELECT DISTINCT body_blob_hash
+                     FROM requests
+                     WHERE body_blob_hash IS NOT NULL",
+                )
+                .fetch_all(services.db.pool())
+                .await?;
+                let mut values = std::collections::HashSet::new();
+                for row in rows {
+                    let value: String = sqlx::Row::get(&row, "body_blob_hash");
+                    values.insert(value);
+                }
+                Ok::<std::collections::HashSet<String>, sqlx::Error>(values)
+            })
+            .map_err(|err| format!("failed to resolve request blob refs after prune: {err}"))?;
+        referenced_hashes.extend(request_body_hashes);
+        services
+            .blob_store
+            .cleanup_orphan_blobs(&referenced_hashes)
+            .map_err(|err| format!("failed to cleanup orphan blobs after prune: {err}"))?;
+
+        self.refresh_history_for_workspace(workspace_id, cx);
+        Ok(removed)
+    }
+
     pub(crate) fn restore_history_entry(
         &mut self,
         entry: HistoryEntry,
@@ -684,35 +736,49 @@ impl AppRoot {
         entry: &HistoryEntry,
         cx: &App,
     ) -> Result<String, String> {
-        let Some(request_id) = entry.request_id else {
-            return Err(es_fluent::localize(
-                "history_tab_compare_requires_request",
-                None,
-            ));
-        };
         let services = services(cx);
-        let entries = services
-            .repos
-            .history
-            .list_for_request(request_id, 200)
-            .map_err(|err| {
+        let previous = if let Some(request_id) = entry.request_id {
+            let entries = services
+                .repos
+                .history
+                .list_for_request(request_id, 200)
+                .map_err(|err| {
+                    format!(
+                        "{}: {err}",
+                        es_fluent::localize("history_tab_compare_failed", None)
+                    )
+                })?;
+            let Some(current_ix) = entries.iter().position(|it| it.id == entry.id) else {
+                return Err(es_fluent::localize(
+                    "history_tab_compare_missing_current",
+                    None,
+                ));
+            };
+            entries
+                .iter()
+                .skip(current_ix + 1)
+                .find(|it| it.protocol_kind == entry.protocol_kind)
+                .cloned()
+        } else {
+            let mut query = HistoryQuery::for_workspace(entry.workspace_id);
+            query.protocol = Some(entry.protocol_kind.clone());
+            query.method = Some(entry.method.clone());
+            query.url_search = Some(entry.url.clone());
+            query.limit = 200;
+            let page = services.repos.history.query(query).map_err(|err| {
                 format!(
                     "{}: {err}",
                     es_fluent::localize("history_tab_compare_failed", None)
                 )
             })?;
-        let Some(current_ix) = entries.iter().position(|it| it.id == entry.id) else {
-            return Err(es_fluent::localize(
-                "history_tab_compare_missing_current",
-                None,
-            ));
+            let mut matched = page.rows.into_iter().filter(|it| {
+                it.protocol_kind == entry.protocol_kind
+                    && it.method.eq_ignore_ascii_case(&entry.method)
+                    && it.url == entry.url
+            });
+            matched.find(|it| it.started_at < entry.started_at)
         };
-        let Some(previous) = entries
-            .iter()
-            .skip(current_ix + 1)
-            .find(|it| it.protocol_kind == entry.protocol_kind)
-            .cloned()
-        else {
+        let Some(previous) = previous else {
             return Err(es_fluent::localize("history_tab_compare_no_previous", None));
         };
 
@@ -1025,6 +1091,7 @@ impl AppRoot {
             .and_then(|state| state.protocol_filter.as_query_value())
             .map(ToOwned::to_owned);
         query.search = view.and_then(|state| state.search.clone());
+        query.request_id = view.and_then(|state| state.request_filter);
         query.method = view.and_then(|state| state.method_filter.clone());
         query.url_search = view.and_then(|state| state.url_search.clone());
         query.status_family = view.and_then(|state| state.status_family_filter);

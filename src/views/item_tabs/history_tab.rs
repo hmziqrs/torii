@@ -38,6 +38,7 @@ pub(crate) fn render(
         || view.started_before.is_some();
     let grouped = group_entries(entries, view.group_by);
     let weak_root_search = root.clone();
+    let weak_root_prune = root.clone();
     let weak_root_method = root.clone();
     let weak_root_url = root.clone();
     let weak_root_clear = root.clone();
@@ -142,6 +143,37 @@ pub(crate) fn render(
                                 .on_click(move |_, _, cx| {
                                     let _ = weak_root_refresh.update(cx, |this, cx| {
                                         this.refresh_history_for_workspace(workspace_id, cx);
+                                    });
+                                }),
+                        )
+                        .child(
+                            Button::new("history-prune-7d")
+                                .ghost()
+                                .xsmall()
+                                .label(es_fluent::localize("history_tab_prune_7d", None))
+                                .on_click(move |_, window, cx| {
+                                    let cutoff = chrono::Utc::now()
+                                        .checked_sub_signed(chrono::Duration::days(7))
+                                        .map(|dt| dt.timestamp_millis())
+                                        .unwrap_or(0);
+                                    let _ = weak_root_prune.update(cx, |this, cx| {
+                                        match this.prune_history_before_for_workspace(
+                                            workspace_id,
+                                            cutoff,
+                                            cx,
+                                        ) {
+                                            Ok(removed) => window.push_notification(
+                                                format!(
+                                                    "{}: {removed}",
+                                                    es_fluent::localize(
+                                                        "history_tab_prune_success",
+                                                        None
+                                                    )
+                                                ),
+                                                cx,
+                                            ),
+                                            Err(err) => window.push_notification(err, cx),
+                                        }
                                     });
                                 }),
                         )
@@ -709,6 +741,16 @@ fn active_filter_chips(view: &HistoryWorkspaceView) -> Vec<String> {
             es_fluent::localize("history_tab_search", None)
         ));
     }
+    if let Some(request_id) = view.request_filter {
+        let request_label = view
+            .request_filter_name
+            .clone()
+            .unwrap_or_else(|| request_id.to_string());
+        chips.push(format!(
+            "{}: {request_label}",
+            es_fluent::localize("history_tab_request_name", None)
+        ));
+    }
     if let Some(status_family) = view.status_family_filter {
         chips.push(format!(
             "{}: {}",
@@ -803,6 +845,25 @@ fn open_history_details_dialog(
     let details_request_snapshot = parse_optional_json(&entry.request_snapshot_json);
     let details_transcript_size = entry.transcript_size;
     let details_transcript_blob_hash = entry.transcript_blob_hash.clone();
+    let details_status_code = entry.status_code;
+    let details_media_type = entry.response_media_type.clone();
+    let details_blob_size = entry.blob_size;
+    let (details_headers, _) =
+        crate::domain::response::parse_response_header_rows(entry.response_headers_json.as_deref());
+    let details_headers_preview = if details_headers.is_empty() {
+        None
+    } else {
+        let preview_rows: Vec<_> = details_headers
+            .iter()
+            .take(24)
+            .map(|h| format!("{}: {}", h.name, h.value))
+            .collect();
+        Some(preview_rows.join("\n"))
+    };
+    let details_meta = entry
+        .response_meta_v2_json
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<crate::domain::response::ResponseMetaV2>(raw).ok());
     let entry_for_copy = entry.clone();
 
     window.open_dialog(cx, move |dialog, _, _| {
@@ -834,6 +895,15 @@ fn open_history_details_dialog(
                             es_fluent::localize("history_tab_request_name", None),
                             request_name
                         ))
+                    })
+                    .when_some(details_status_code, |el, status| {
+                        el.child(format!("Status: {status}"))
+                    })
+                    .when_some(details_media_type.clone(), |el, media_type| {
+                        el.child(format!("Media Type: {media_type}"))
+                    })
+                    .when_some(details_blob_size, |el, size| {
+                        el.child(format!("Response Size: {}", format_bytes_i64(size)))
                     })
                     .child(format!(
                         "{}: {}",
@@ -897,6 +967,44 @@ fn open_history_details_dialog(
                             es_fluent::localize("history_tab_transcript_blob_hash", None),
                             blob_hash
                         ))
+                    })
+                    .when_some(details_headers_preview.clone(), |el, preview| {
+                        el.child(format!("Headers:\n{preview}"))
+                    })
+                    .when_some(details_meta.clone(), |el, meta| {
+                        let timings = &meta.phase_timings;
+                        let timing_preview = format!(
+                            "prepare={} dns={} connect={} tls={} ttfb={} download={} process={}",
+                            timings
+                                .prepare_ms
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|| "—".to_string()),
+                            timings
+                                .dns_ms
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|| "—".to_string()),
+                            timings
+                                .connect_ms
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|| "—".to_string()),
+                            timings
+                                .tls_ms
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|| "—".to_string()),
+                            timings
+                                .ttfb_ms
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|| "—".to_string()),
+                            timings
+                                .download_ms
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|| "—".to_string()),
+                            timings
+                                .process_ms
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|| "—".to_string()),
+                        );
+                        el.child(format!("Timing (ms): {timing_preview}"))
                     })
                     .when_some(details_run_summary.clone(), |el, run_summary| {
                         el.child(format!(

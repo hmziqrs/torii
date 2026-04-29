@@ -86,6 +86,7 @@ pub trait HistoryRepository: Send + Sync {
     ) -> RepoResult<Vec<HistoryEntry>>;
     fn get_latest_for_request(&self, request_id: RequestId) -> RepoResult<Option<HistoryEntry>>;
     fn referenced_blob_hashes(&self) -> RepoResult<HashSet<String>>;
+    fn delete_before(&self, workspace_id: WorkspaceId, started_before: i64) -> RepoResult<usize>;
 }
 
 #[derive(Clone)]
@@ -451,6 +452,30 @@ impl HistoryRepository for SqliteHistoryRepository {
                 values.insert(value);
             }
             Ok::<HashSet<String>, anyhow::Error>(values)
+        })
+    }
+
+    fn delete_before(&self, workspace_id: WorkspaceId, started_before: i64) -> RepoResult<usize> {
+        self.db.block_on(async {
+            let mut tx = self.db.pool().begin().await?;
+            let result = sqlx::query(
+                "DELETE FROM history_index
+                 WHERE workspace_id = ? AND started_at < ?",
+            )
+            .bind(workspace_id.to_string())
+            .bind(started_before)
+            .execute(&mut *tx)
+            .await
+            .context("failed to delete old history rows")?;
+            sqlx::query(
+                "DELETE FROM history_blob_refs
+                 WHERE history_id NOT IN (SELECT id FROM history_index)",
+            )
+            .execute(&mut *tx)
+            .await
+            .context("failed to prune dangling history blob refs")?;
+            tx.commit().await?;
+            Ok::<usize, anyhow::Error>(result.rows_affected() as usize)
         })
     }
 }

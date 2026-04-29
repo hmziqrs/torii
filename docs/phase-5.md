@@ -19,13 +19,16 @@
 - [x] History Details enriched with transcript metadata, run summary, and request snapshot display.
 - [x] Copy Details JSON action added for full entry export to clipboard.
 - [x] Request-tab history dialog upgraded: larger fetch window (200), protocol-visible rows, local timestamps, and inline compare action.
+- [x] History retention controls wired with in-app prune action and orphan blob cleanup pass.
+- [x] History compare fallback handles non-linked/file-system rows via workspace/protocol/method/url matching.
+- [x] History details inspector now shows richer response inspection context (status, media type, response size, header preview, timing preview, transcript metadata, run summary, request snapshot, JSON copy).
 
 ### 0.2 Still Pending In This Phase
 
 - [ ] Virtualized global history row delegate/table (current implementation is still eager card rendering).
 - [ ] First-class per-request history panel replacing the modal flow.
-- [ ] History details pane reuse of response panel semantics for headers/cookies/timing/body preview inspection.
-- [ ] History retention management and blob cleanup policy wiring beyond current reference tracking.
+- [ ] History details pane full parity with response panel (table-level headers/cookies/timing + full body preview affordances).
+- [ ] Automated retention policies (scheduled/background retention strategies) beyond manual prune control.
 
 ## 1. Objective
 
