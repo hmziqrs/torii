@@ -662,6 +662,23 @@ impl AppRoot {
         self.refresh_history_for_workspace(workspace_id, cx);
     }
 
+    pub(crate) fn restore_history_entry(
+        &mut self,
+        entry: HistoryEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<bool, String> {
+        if let Some(request_id) = entry.request_id {
+            let item_key = crate::session::item_key::ItemKey::request(request_id);
+            if self.can_open_item(item_key) {
+                self.open_item(item_key, cx);
+                return Ok(false);
+            }
+        }
+        self.restore_history_entry_as_draft(&entry, window, cx)?;
+        Ok(true)
+    }
+
     pub(crate) fn open_history_search_dialog(
         &mut self,
         workspace_id: WorkspaceId,

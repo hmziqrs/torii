@@ -282,6 +282,70 @@ fn history_query_started_after_filters_by_local_day_start() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn history_query_filters_informational_and_redirection_families() -> Result<()> {
+    let (_paths, db) = common::test_database("history-query-status-families")?;
+    let db = Arc::new(db);
+    let workspace_repo = SqliteWorkspaceRepository::new(db.clone());
+    let history_repo = SqliteHistoryRepository::new(db.clone());
+
+    let workspace = workspace_repo.create("Main")?;
+    let informational =
+        history_repo.create_pending(workspace.id, None, "GET", "https://api.local/101", None)?;
+    let redirection =
+        history_repo.create_pending(workspace.id, None, "GET", "https://api.local/302", None)?;
+    let client_error =
+        history_repo.create_pending(workspace.id, None, "GET", "https://api.local/404", None)?;
+
+    history_repo.finalize_completed(
+        informational.id,
+        101,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )?;
+    history_repo.finalize_completed(
+        redirection.id,
+        302,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )?;
+    history_repo.finalize_completed(
+        client_error.id,
+        404,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )?;
+
+    let mut query = HistoryQuery::for_workspace(workspace.id);
+    query.status_family = Some(StatusFamily::Informational);
+    let informational_page = history_repo.query(query)?;
+    assert_eq!(informational_page.rows.len(), 1);
+    assert_eq!(informational_page.rows[0].id, informational.id);
+
+    let mut query = HistoryQuery::for_workspace(workspace.id);
+    query.status_family = Some(StatusFamily::Redirection);
+    let redirection_page = history_repo.query(query)?;
+    assert_eq!(redirection_page.rows.len(), 1);
+    assert_eq!(redirection_page.rows[0].id, redirection.id);
+
+    Ok(())
+}
+
 fn local_ts_ms(date: chrono::NaiveDate, hour: u32, minute: u32, second: u32, millis: u32) -> i64 {
     let dt = Local
         .with_ymd_and_hms(date.year(), date.month(), date.day(), hour, minute, second)

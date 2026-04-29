@@ -1,7 +1,7 @@
 use super::{AppRoot, services};
 use crate::{
     domain::{
-        history::HistoryState,
+        history::{HistoryEntry, HistoryState},
         ids::{CollectionId, FolderId, RequestDraftId},
         response::{
             BodyRef, PhaseTimings, ResponseBudgets, ResponseMetaV2, ResponseSizeBreakdown,
@@ -181,7 +181,7 @@ impl AppRoot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_draft_request_with_parent(collection_id, None, false, window, cx);
+        let _ = self.open_draft_request_with_parent(collection_id, None, false, window, cx);
     }
 
     /// Open a new draft request tab under the given folder.
@@ -192,7 +192,7 @@ impl AppRoot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_draft_request_with_parent(
+        let _ = self.open_draft_request_with_parent(
             collection_id,
             Some(parent_folder_id),
             false,
@@ -208,7 +208,7 @@ impl AppRoot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_draft_request_with_parent(collection_id, None, true, window, cx);
+        let _ = self.open_draft_request_with_parent(collection_id, None, true, window, cx);
     }
 
     /// Open a new request in folder and persist it immediately with default values.
@@ -219,7 +219,7 @@ impl AppRoot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_draft_request_with_parent(
+        let _ = self.open_draft_request_with_parent(
             collection_id,
             Some(parent_folder_id),
             true,
@@ -235,7 +235,7 @@ impl AppRoot {
         persist_immediately: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> RequestDraftId {
         let draft_id = RequestDraftId::new();
         let page = cx.new(|cx| request_tab::RequestTabView::new_draft(collection_id, window, cx));
         if parent_folder_id.is_some() {
@@ -326,5 +326,63 @@ impl AppRoot {
                 tracing::error!("failed to auto-save new request: {err}");
             }
         }
+
+        draft_id
+    }
+
+    pub(crate) fn restore_history_entry_as_draft(
+        &mut self,
+        entry: &HistoryEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let Some(selected_workspace) = self.catalog.selected_workspace() else {
+            return Err(es_fluent::localize("request_tab_no_workspace", None));
+        };
+        let collection_id = entry
+            .request_collection_id
+            .filter(|collection_id| {
+                selected_workspace
+                    .collections
+                    .iter()
+                    .any(|collection| collection.collection.id == *collection_id)
+            })
+            .or_else(|| {
+                selected_workspace
+                    .collections
+                    .first()
+                    .map(|collection| collection.collection.id)
+            })
+            .ok_or_else(|| es_fluent::localize("history_tab_restore_no_collection", None))?;
+        let parent_folder_id = entry.request_parent_folder_id.filter(|folder_id| {
+            selected_workspace
+                .collections
+                .iter()
+                .any(|collection| collection.find_folder_tree(*folder_id).is_some())
+        });
+
+        let draft_id =
+            self.open_draft_request_with_parent(collection_id, parent_folder_id, false, window, cx);
+        let Some(page) = self.request_draft_pages.get(&draft_id).cloned() else {
+            return Err(es_fluent::localize(
+                "history_tab_restore_draft_failed",
+                None,
+            ));
+        };
+
+        page.update(cx, |tab, cx| {
+            let draft = tab.editor_mut().draft_mut();
+            draft.name = entry
+                .request_name
+                .clone()
+                .unwrap_or_else(|| es_fluent::localize("history_tab_restore_draft_name", None));
+            draft.method = entry.method.to_ascii_uppercase();
+            draft.url = entry.url.clone();
+            draft.parent_folder_id = parent_folder_id;
+            tab.editor_mut().refresh_save_status();
+            tab.mark_draft_dirty(cx);
+        });
+
+        Ok(())
     }
 }

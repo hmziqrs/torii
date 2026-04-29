@@ -224,8 +224,22 @@ pub(crate) fn render(
                 .child(status_family_filter_button(
                     workspace_id,
                     view.status_family_filter,
+                    Some(StatusFamily::Informational),
+                    es_fluent::localize("history_tab_status_family_1xx", None),
+                    root.clone(),
+                ))
+                .child(status_family_filter_button(
+                    workspace_id,
+                    view.status_family_filter,
                     Some(StatusFamily::Success),
                     es_fluent::localize("history_tab_status_family_2xx", None),
+                    root.clone(),
+                ))
+                .child(status_family_filter_button(
+                    workspace_id,
+                    view.status_family_filter,
+                    Some(StatusFamily::Redirection),
+                    es_fluent::localize("history_tab_status_family_3xx", None),
                     root.clone(),
                 ))
                 .child(status_family_filter_button(
@@ -370,12 +384,13 @@ fn history_rows_elements(
 
         for entry in rows {
             let entry = entry.clone();
-            let weak_root = root.clone();
             let weak_root_open = root.clone();
             let weak_root_details = root.clone();
+            let weak_root_restore = root.clone();
             let request_id = entry.request_id;
             let entry_id = entry.id;
             let details_entry = entry.clone();
+            let entry_for_restore = entry.clone();
             let meta_row = {
                 let mut row = h_flex()
                     .gap_3()
@@ -472,31 +487,33 @@ fn history_rows_elements(
                             .disabled(request_id.is_none())
                             .label(es_fluent::localize("history_tab_restore", None))
                             .on_click(move |_, window, cx| {
-                                let _ = weak_root.update(cx, |this, cx| {
-                                    let Some(request_id) = request_id else {
-                                        window.push_notification(
-                                            es_fluent::localize(
-                                                "history_tab_restore_no_request",
-                                                None,
-                                            ),
-                                            cx,
-                                        );
-                                        return;
-                                    };
-                                    let item_key =
-                                        crate::session::item_key::ItemKey::request(request_id);
-                                    if !this.can_open_item(item_key) {
-                                        window.push_notification(
-                                            es_fluent::localize(
-                                                "history_tab_restore_request_deleted",
-                                                None,
-                                            ),
-                                            cx,
-                                        );
-                                        return;
+                                match weak_root_restore.update(cx, |this, cx| {
+                                    this.restore_history_entry(
+                                        entry_for_restore.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                }) {
+                                    Ok(Ok(created_draft)) => {
+                                        if created_draft {
+                                            window.push_notification(
+                                                es_fluent::localize(
+                                                    "history_tab_restore_draft_created",
+                                                    None,
+                                                ),
+                                                cx,
+                                            );
+                                        }
                                     }
-                                    this.open_item(item_key, cx);
-                                });
+                                    Ok(Err(err)) => window.push_notification(err, cx),
+                                    Err(_) => window.push_notification(
+                                        es_fluent::localize(
+                                            "history_tab_restore_draft_failed",
+                                            None,
+                                        ),
+                                        cx,
+                                    ),
+                                }
                             }),
                     ),
             );
@@ -634,17 +651,32 @@ fn active_filter_chips(view: &HistoryWorkspaceView) -> Vec<String> {
     }
     if let Some(after) = view.started_after {
         chips.push(format!(
-            "{}: {after}",
-            es_fluent::localize("history_tab_started_after", None)
+            "{}: {}",
+            es_fluent::localize("history_tab_started_after", None),
+            format_filter_time(after)
         ));
     }
     if let Some(before) = view.started_before {
         chips.push(format!(
-            "{}: {before}",
-            es_fluent::localize("history_tab_started_before", None)
+            "{}: {}",
+            es_fluent::localize("history_tab_started_before", None),
+            format_filter_time(before)
         ));
     }
     chips
+}
+
+fn format_filter_time(raw: i64) -> String {
+    let ms = crate::domain::response::normalize_unix_ms(raw);
+    let seconds = ms / 1000;
+    let nanos = ((ms % 1000) * 1_000_000) as u32;
+    chrono::DateTime::from_timestamp(seconds, nanos)
+        .map(|dt| {
+            dt.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string()
+        })
+        .unwrap_or_else(|| raw.to_string())
 }
 
 fn open_history_details_dialog(
@@ -655,6 +687,7 @@ fn open_history_details_dialog(
 ) {
     let weak_root_open = root.clone();
     let weak_root_restore = root.clone();
+    let entry_for_restore = entry.clone();
     let request_id = entry.request_id;
     let url = entry.url.clone();
     let details_protocol = protocol_label(&entry);
@@ -663,6 +696,10 @@ fn open_history_details_dialog(
     let details_started = entry.started_at;
     let details_completed = entry.completed_at;
     let details_state = entry.state;
+    let details_request_name = entry.request_name.clone();
+    let details_close_reason = entry.close_reason.clone();
+    let details_message_count_in = entry.message_count_in;
+    let details_message_count_out = entry.message_count_out;
 
     window.open_dialog(cx, move |dialog, _, _| {
         dialog
@@ -687,6 +724,13 @@ fn open_history_details_dialog(
                         es_fluent::localize("history_tab_url_filter", None),
                         details_url
                     ))
+                    .when_some(details_request_name.clone(), |el, request_name| {
+                        el.child(format!(
+                            "{}: {}",
+                            es_fluent::localize("history_tab_request_name", None),
+                            request_name
+                        ))
+                    })
                     .child(format!(
                         "{}: {}",
                         es_fluent::localize("history_tab_started_at", None),
@@ -716,7 +760,26 @@ fn open_history_details_dialog(
                                 es_fluent::localize("history_tab_state_cancelled", None)
                             }
                         }
-                    )),
+                    ))
+                    .when_some(details_message_count_in, |el, count| {
+                        el.child(format!(
+                            "{}: {count}",
+                            es_fluent::localize("history_tab_message_count_in", None)
+                        ))
+                    })
+                    .when_some(details_message_count_out, |el, count| {
+                        el.child(format!(
+                            "{}: {count}",
+                            es_fluent::localize("history_tab_message_count_out", None)
+                        ))
+                    })
+                    .when_some(details_close_reason.clone(), |el, reason| {
+                        el.child(format!(
+                            "{}: {}",
+                            es_fluent::localize("history_tab_close_reason", None),
+                            reason
+                        ))
+                    }),
             )
             .footer(
                 h_flex()
@@ -760,38 +823,40 @@ fn open_history_details_dialog(
                     })
                     .child({
                         let weak_root_restore = weak_root_restore.clone();
-                        let request_id = request_id.clone();
+                        let entry_for_restore = entry_for_restore.clone();
                         Button::new(format!("history-details-restore-request-{}", entry.id))
                             .ghost()
                             .xsmall()
                             .disabled(request_id.is_none())
                             .label(es_fluent::localize("history_tab_restore", None))
                             .on_click(move |_, window, cx| {
-                                let _ = weak_root_restore.update(cx, |this, cx| {
-                                    let Some(request_id) = request_id else {
-                                        window.push_notification(
-                                            es_fluent::localize(
-                                                "history_tab_restore_no_request",
-                                                None,
-                                            ),
-                                            cx,
-                                        );
-                                        return;
-                                    };
-                                    let item_key =
-                                        crate::session::item_key::ItemKey::request(request_id);
-                                    if !this.can_open_item(item_key) {
-                                        window.push_notification(
-                                            es_fluent::localize(
-                                                "history_tab_restore_request_deleted",
-                                                None,
-                                            ),
-                                            cx,
-                                        );
-                                        return;
+                                match weak_root_restore.update(cx, |this, cx| {
+                                    this.restore_history_entry(
+                                        entry_for_restore.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                }) {
+                                    Ok(Ok(created_draft)) => {
+                                        if created_draft {
+                                            window.push_notification(
+                                                es_fluent::localize(
+                                                    "history_tab_restore_draft_created",
+                                                    None,
+                                                ),
+                                                cx,
+                                            );
+                                        }
                                     }
-                                    this.open_item(item_key, cx);
-                                });
+                                    Ok(Err(err)) => window.push_notification(err, cx),
+                                    Err(_) => window.push_notification(
+                                        es_fluent::localize(
+                                            "history_tab_restore_draft_failed",
+                                            None,
+                                        ),
+                                        cx,
+                                    ),
+                                }
                             })
                     })
                     .child({
