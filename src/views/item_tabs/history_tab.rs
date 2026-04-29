@@ -40,6 +40,7 @@ pub(crate) fn render(
     let weak_root_url = root.clone();
     let weak_root_clear = root.clone();
     let weak_root_load_more = root.clone();
+    let weak_root_load_more_bottom = root.clone();
     let weak_root_after = root.clone();
     let weak_root_before = root.clone();
 
@@ -350,6 +351,24 @@ pub(crate) fn render(
                 .map(|label| chip(label).into_any_element()),
         )
         .children(history_rows_elements(&grouped, has_filters, root.clone()))
+        .child(
+            h_flex().justify_center().child(
+                Button::new("history-load-more-bottom")
+                    .ghost()
+                    .xsmall()
+                    .disabled(!has_more)
+                    .label(if has_more {
+                        es_fluent::localize("history_tab_load_more", None)
+                    } else {
+                        es_fluent::localize("history_tab_no_more", None)
+                    })
+                    .on_click(move |_, _, cx| {
+                        let _ = weak_root_load_more_bottom.update(cx, |this, cx| {
+                            this.load_more_history_for_workspace(workspace_id, cx);
+                        });
+                    }),
+            ),
+        )
         .into_any_element()
 }
 
@@ -399,13 +418,13 @@ fn history_rows_elements(
                     .child(format!(
                         "{}: {}",
                         es_fluent::localize("history_tab_started_at", None),
-                        entry.started_at
+                        format_history_timestamp(entry.started_at)
                     ));
                 if let Some(completed_at) = entry.completed_at {
                     row = row.child(format!(
                         "{}: {}",
                         es_fluent::localize("history_tab_completed_at", None),
-                        completed_at
+                        format_history_timestamp(completed_at)
                     ));
                 }
                 row
@@ -666,6 +685,10 @@ fn active_filter_chips(view: &HistoryWorkspaceView) -> Vec<String> {
 }
 
 fn format_filter_time(raw: i64) -> String {
+    format_history_timestamp(raw)
+}
+
+fn format_history_timestamp(raw: i64) -> String {
     let ms = crate::domain::response::normalize_unix_ms(raw);
     let seconds = ms / 1000;
     let nanos = ((ms % 1000) * 1_000_000) as u32;
@@ -676,6 +699,26 @@ fn format_filter_time(raw: i64) -> String {
                 .to_string()
         })
         .unwrap_or_else(|| raw.to_string())
+}
+
+fn format_bytes_i64(size: i64) -> String {
+    if size <= 0 {
+        return "0 B".to_string();
+    }
+    let size = size as f64;
+    if size < 1024.0 {
+        format!("{:.0} B", size)
+    } else if size < (1024.0 * 1024.0) {
+        format!("{:.1} KB", size / 1024.0)
+    } else {
+        format!("{:.2} MB", size / (1024.0 * 1024.0))
+    }
+}
+
+fn parse_optional_json(value: &Option<String>) -> Option<String> {
+    let raw = value.as_ref()?;
+    let parsed = serde_json::from_str::<serde_json::Value>(raw).ok()?;
+    serde_json::to_string_pretty(&parsed).ok()
 }
 
 fn open_history_details_dialog(
@@ -699,6 +742,11 @@ fn open_history_details_dialog(
     let details_close_reason = entry.close_reason.clone();
     let details_message_count_in = entry.message_count_in;
     let details_message_count_out = entry.message_count_out;
+    let details_run_summary = parse_optional_json(&entry.run_summary_json);
+    let details_request_snapshot = parse_optional_json(&entry.request_snapshot_json);
+    let details_transcript_size = entry.transcript_size;
+    let details_transcript_blob_hash = entry.transcript_blob_hash.clone();
+    let entry_for_copy = entry.clone();
 
     window.open_dialog(cx, move |dialog, _, _| {
         dialog
@@ -733,13 +781,13 @@ fn open_history_details_dialog(
                     .child(format!(
                         "{}: {}",
                         es_fluent::localize("history_tab_started_at", None),
-                        details_started
+                        format_history_timestamp(details_started)
                     ))
                     .when_some(details_completed, |el, completed| {
                         el.child(format!(
                             "{}: {}",
                             es_fluent::localize("history_tab_completed_at", None),
-                            completed
+                            format_history_timestamp(completed)
                         ))
                     })
                     .child(format!(
@@ -777,6 +825,34 @@ fn open_history_details_dialog(
                             "{}: {}",
                             es_fluent::localize("history_tab_close_reason", None),
                             reason
+                        ))
+                    })
+                    .when_some(details_transcript_size, |el, size| {
+                        el.child(format!(
+                            "{}: {}",
+                            es_fluent::localize("history_tab_transcript_size", None),
+                            format_bytes_i64(size)
+                        ))
+                    })
+                    .when_some(details_transcript_blob_hash.clone(), |el, blob_hash| {
+                        el.child(format!(
+                            "{}: {}",
+                            es_fluent::localize("history_tab_transcript_blob_hash", None),
+                            blob_hash
+                        ))
+                    })
+                    .when_some(details_run_summary.clone(), |el, run_summary| {
+                        el.child(format!(
+                            "{}:\n{}",
+                            es_fluent::localize("history_tab_run_summary", None),
+                            run_summary
+                        ))
+                    })
+                    .when_some(details_request_snapshot.clone(), |el, request_snapshot| {
+                        el.child(format!(
+                            "{}:\n{}",
+                            es_fluent::localize("history_tab_request_snapshot", None),
+                            request_snapshot
                         ))
                     }),
             )
@@ -851,6 +927,36 @@ fn open_history_details_dialog(
                                         es_fluent::localize(
                                             "history_tab_restore_draft_failed",
                                             None,
+                                        ),
+                                        cx,
+                                    ),
+                                }
+                            })
+                    })
+                    .child({
+                        let entry_for_copy = entry_for_copy.clone();
+                        Button::new(format!("history-details-copy-json-{}", entry.id))
+                            .ghost()
+                            .xsmall()
+                            .label(es_fluent::localize("history_tab_copy_details_json", None))
+                            .on_click(move |_, window, cx| {
+                                match serde_json::to_string_pretty(&entry_for_copy) {
+                                    Ok(json) => {
+                                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                            json,
+                                        ));
+                                        window.push_notification(
+                                            es_fluent::localize("request_tab_copy_ok", None),
+                                            cx,
+                                        );
+                                    }
+                                    Err(err) => window.push_notification(
+                                        format!(
+                                            "{}: {err}",
+                                            es_fluent::localize(
+                                                "history_tab_copy_details_json_failed",
+                                                None,
+                                            )
                                         ),
                                         cx,
                                     ),
@@ -958,5 +1064,30 @@ fn status_family_label(status_code: Option<i64>) -> String {
             es_fluent::localize("history_tab_status_family_5xx", None)
         }
         _ => es_fluent::localize("history_tab_status_family_unknown", None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_bytes_i64, format_history_timestamp, parse_optional_json};
+
+    #[test]
+    fn format_history_timestamp_is_human_readable() {
+        let result = format_history_timestamp(1_800_000_000_000);
+        assert!(result.contains('-'));
+        assert!(result.contains(':'));
+    }
+
+    #[test]
+    fn format_bytes_i64_scales() {
+        assert_eq!(format_bytes_i64(10), "10 B");
+        assert_eq!(format_bytes_i64(2048), "2.0 KB");
+    }
+
+    #[test]
+    fn parse_optional_json_handles_invalid_and_valid() {
+        assert!(parse_optional_json(&Some("invalid".to_string())).is_none());
+        let pretty = parse_optional_json(&Some("{\"k\":1}".to_string())).expect("pretty json");
+        assert!(pretty.contains("\"k\": 1"));
     }
 }
