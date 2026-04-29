@@ -679,6 +679,89 @@ impl AppRoot {
         Ok(true)
     }
 
+    pub(crate) fn compare_history_entry_with_previous(
+        &self,
+        entry: &HistoryEntry,
+        cx: &App,
+    ) -> Result<String, String> {
+        let Some(request_id) = entry.request_id else {
+            return Err(es_fluent::localize(
+                "history_tab_compare_requires_request",
+                None,
+            ));
+        };
+        let services = services(cx);
+        let entries = services
+            .repos
+            .history
+            .list_for_request(request_id, 200)
+            .map_err(|err| {
+                format!(
+                    "{}: {err}",
+                    es_fluent::localize("history_tab_compare_failed", None)
+                )
+            })?;
+        let Some(current_ix) = entries.iter().position(|it| it.id == entry.id) else {
+            return Err(es_fluent::localize(
+                "history_tab_compare_missing_current",
+                None,
+            ));
+        };
+        let Some(previous) = entries
+            .iter()
+            .skip(current_ix + 1)
+            .find(|it| it.protocol_kind == entry.protocol_kind)
+            .cloned()
+        else {
+            return Err(es_fluent::localize("history_tab_compare_no_previous", None));
+        };
+
+        let current_body = read_history_body_preview(entry, &services.blob_store);
+        let previous_body = read_history_body_preview(&previous, &services.blob_store);
+        let body_compare = compare_history_bodies(entry, &previous, current_body, previous_body);
+        let current_headers_count = history_headers_count(entry);
+        let previous_headers_count = history_headers_count(&previous);
+        let current_cookie_count = history_cookie_count(entry);
+        let previous_cookie_count = history_cookie_count(&previous);
+
+        let report = serde_json::json!({
+            "current": {
+                "id": entry.id.to_string(),
+                "started_at": entry.started_at,
+                "state": format!("{:?}", entry.state),
+                "status_code": entry.status_code,
+                "blob_size": entry.blob_size,
+                "headers_count": current_headers_count,
+                "cookies_count": current_cookie_count,
+                "timing_ms": history_timing_summary(entry),
+            },
+            "previous": {
+                "id": previous.id.to_string(),
+                "started_at": previous.started_at,
+                "state": format!("{:?}", previous.state),
+                "status_code": previous.status_code,
+                "blob_size": previous.blob_size,
+                "headers_count": previous_headers_count,
+                "cookies_count": previous_cookie_count,
+                "timing_ms": history_timing_summary(&previous),
+            },
+            "diff": {
+                "status_code_changed": entry.status_code != previous.status_code,
+                "state_changed": entry.state != previous.state,
+                "blob_size_delta": entry.blob_size.unwrap_or(0) - previous.blob_size.unwrap_or(0),
+                "headers_delta": current_headers_count as i64 - previous_headers_count as i64,
+                "cookies_delta": current_cookie_count as i64 - previous_cookie_count as i64,
+                "body": body_compare,
+            }
+        });
+        serde_json::to_string_pretty(&report).map_err(|err| {
+            format!(
+                "{}: {err}",
+                es_fluent::localize("history_tab_compare_failed", None)
+            )
+        })
+    }
+
     pub(crate) fn open_history_search_dialog(
         &mut self,
         workspace_id: WorkspaceId,
@@ -1419,4 +1502,174 @@ impl Render for AppRoot {
 
 fn services(cx: &App) -> std::sync::Arc<AppServices> {
     cx.global::<AppServicesGlobal>().0.clone()
+}
+
+fn history_headers_count(entry: &HistoryEntry) -> usize {
+    crate::domain::response::parse_response_header_rows(entry.response_headers_json.as_deref())
+        .0
+        .len()
+}
+
+fn history_cookie_count(entry: &HistoryEntry) -> usize {
+    crate::domain::response::parse_response_header_rows(entry.response_headers_json.as_deref())
+        .0
+        .iter()
+        .filter(|row| row.name.eq_ignore_ascii_case("set-cookie"))
+        .count()
+}
+
+fn history_timing_summary(entry: &HistoryEntry) -> serde_json::Value {
+    let total = match (entry.dispatched_at, entry.completed_at) {
+        (Some(d), Some(c)) if c >= d => Some(c - d),
+        _ => None,
+    };
+    let ttfb = match (entry.dispatched_at, entry.first_byte_at) {
+        (Some(d), Some(f)) if f >= d => Some(f - d),
+        _ => None,
+    };
+    serde_json::json!({
+        "total": total,
+        "ttfb": ttfb,
+    })
+}
+
+fn read_history_body_preview(
+    entry: &HistoryEntry,
+    blob_store: &std::sync::Arc<crate::infra::blobs::BlobStore>,
+) -> Option<Vec<u8>> {
+    let blob_hash = entry.blob_hash.as_ref()?;
+    blob_store
+        .read_preview(
+            blob_hash,
+            crate::domain::response::ResponseBudgets::PREVIEW_CAP_BYTES,
+        )
+        .ok()
+}
+
+fn compare_history_bodies(
+    current: &HistoryEntry,
+    previous: &HistoryEntry,
+    current_bytes: Option<Vec<u8>>,
+    previous_bytes: Option<Vec<u8>>,
+) -> serde_json::Value {
+    let Some(current_bytes) = current_bytes else {
+        return serde_json::json!({
+            "mode": "metadata_only",
+            "reason": "current response body preview unavailable",
+        });
+    };
+    let Some(previous_bytes) = previous_bytes else {
+        return serde_json::json!({
+            "mode": "metadata_only",
+            "reason": "previous response body preview unavailable",
+        });
+    };
+
+    let media_type = current.response_media_type.as_deref().unwrap_or("");
+    let current_text = String::from_utf8_lossy(&current_bytes).to_string();
+    let previous_text = String::from_utf8_lossy(&previous_bytes).to_string();
+
+    if media_type.eq_ignore_ascii_case("application/json")
+        || previous
+            .response_media_type
+            .as_deref()
+            .unwrap_or("")
+            .eq_ignore_ascii_case("application/json")
+    {
+        if let (Ok(current_json), Ok(previous_json)) = (
+            serde_json::from_str::<serde_json::Value>(&current_text),
+            serde_json::from_str::<serde_json::Value>(&previous_text),
+        ) {
+            let mut changed_paths = Vec::new();
+            collect_json_diff_paths("", &current_json, &previous_json, &mut changed_paths, 64);
+            return serde_json::json!({
+                "mode": "json_structured",
+                "changed_paths_count": changed_paths.len(),
+                "changed_paths": changed_paths,
+            });
+        }
+    }
+
+    let unified = simple_unified_text_diff(&previous_text, &current_text, 80);
+    serde_json::json!({
+        "mode": "text_unified",
+        "diff": unified,
+    })
+}
+
+fn collect_json_diff_paths(
+    base: &str,
+    current: &serde_json::Value,
+    previous: &serde_json::Value,
+    out: &mut Vec<String>,
+    max: usize,
+) {
+    if out.len() >= max {
+        return;
+    }
+    if current == previous {
+        return;
+    }
+    match (current, previous) {
+        (serde_json::Value::Object(c), serde_json::Value::Object(p)) => {
+            let keys: std::collections::BTreeSet<_> = c.keys().chain(p.keys()).cloned().collect();
+            for key in keys {
+                if out.len() >= max {
+                    return;
+                }
+                let path = if base.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{base}.{key}")
+                };
+                match (c.get(&key), p.get(&key)) {
+                    (Some(cv), Some(pv)) => collect_json_diff_paths(&path, cv, pv, out, max),
+                    _ => out.push(path),
+                }
+            }
+        }
+        (serde_json::Value::Array(c), serde_json::Value::Array(p)) => {
+            let max_len = c.len().max(p.len());
+            for ix in 0..max_len {
+                if out.len() >= max {
+                    return;
+                }
+                let path = if base.is_empty() {
+                    format!("[{ix}]")
+                } else {
+                    format!("{base}[{ix}]")
+                };
+                match (c.get(ix), p.get(ix)) {
+                    (Some(cv), Some(pv)) => collect_json_diff_paths(&path, cv, pv, out, max),
+                    _ => out.push(path),
+                }
+            }
+        }
+        _ => out.push(base.to_string()),
+    }
+}
+
+fn simple_unified_text_diff(previous: &str, current: &str, max_lines: usize) -> String {
+    let old_lines: Vec<&str> = previous.lines().collect();
+    let new_lines: Vec<&str> = current.lines().collect();
+    let max = old_lines.len().max(new_lines.len()).min(max_lines);
+    let mut diff = Vec::new();
+    for ix in 0..max {
+        let old = old_lines.get(ix).copied().unwrap_or("");
+        let new = new_lines.get(ix).copied().unwrap_or("");
+        if old == new {
+            diff.push(format!(" {}", old));
+        } else {
+            if !old.is_empty() {
+                diff.push(format!("-{}", old));
+            }
+            if !new.is_empty() {
+                diff.push(format!("+{}", new));
+            }
+        }
+    }
+    if old_lines.len().max(new_lines.len()) > max {
+        diff.push("... (truncated)".to_string());
+    }
+    diff.join("\n")
 }

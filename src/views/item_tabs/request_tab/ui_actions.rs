@@ -105,7 +105,7 @@ impl RequestTabView {
         };
 
         let services = cx.global::<AppServicesGlobal>().0.clone();
-        let entries = match services.repos.history.list_for_request(request_id, 50) {
+        let entries = match services.repos.history.list_for_request(request_id, 200) {
             Ok(entries) => entries,
             Err(err) => {
                 window.push_notification(
@@ -190,7 +190,7 @@ impl RequestTabView {
                                                             "history_tab_started_at",
                                                             None,
                                                         ),
-                                                        entry.started_at
+                                                        format_history_timestamp(entry.started_at)
                                                     )),
                                             )
                                             .child(
@@ -375,4 +375,17 @@ impl RequestTabView {
         cx.notify();
         Ok(())
     }
+}
+
+fn format_history_timestamp(raw: i64) -> String {
+    let ms = crate::domain::response::normalize_unix_ms(raw);
+    let seconds = ms / 1000;
+    let nanos = ((ms % 1000) * 1_000_000) as u32;
+    chrono::DateTime::from_timestamp(seconds, nanos)
+        .map(|dt| {
+            dt.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string()
+        })
+        .unwrap_or_else(|| raw.to_string())
 }
