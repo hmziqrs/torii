@@ -1529,7 +1529,7 @@ fn history_timing_summary(entry: &HistoryEntry) -> serde_json::Value {
 
 fn read_history_body_preview(
     entry: &HistoryEntry,
-    blob_store: &std::sync::Arc<crate::infra::blob_store::BlobStore>,
+    blob_store: &std::sync::Arc<crate::infra::blobs::BlobStore>,
 ) -> Option<Vec<u8>> {
     let blob_hash = entry.blob_hash.as_ref()?;
     blob_store
