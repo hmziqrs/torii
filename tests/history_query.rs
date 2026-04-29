@@ -3,6 +3,7 @@ mod common;
 use std::sync::Arc;
 
 use anyhow::Result;
+use chrono::{Datelike, Duration, Local, TimeZone as _, Timelike};
 use torii::{
     domain::history::{HistoryQuery, HistoryState, StatusFamily},
     repos::{
@@ -175,4 +176,120 @@ fn history_finalize_terminal_row_is_idempotent() -> Result<()> {
     assert_eq!(row.status_code, Some(200));
 
     Ok(())
+}
+
+#[test]
+fn history_query_started_before_filters_by_local_day_end() -> Result<()> {
+    let (_paths, db) = common::test_database("history-query-started-before")?;
+    let db = Arc::new(db);
+    let workspace_repo = SqliteWorkspaceRepository::new(db.clone());
+    let history_repo = SqliteHistoryRepository::new(db.clone());
+
+    let workspace = workspace_repo.create("Main")?;
+    let early =
+        history_repo.create_pending(workspace.id, None, "GET", "https://api.local/early", None)?;
+    let edge =
+        history_repo.create_pending(workspace.id, None, "GET", "https://api.local/edge", None)?;
+    let late =
+        history_repo.create_pending(workspace.id, None, "GET", "https://api.local/late", None)?;
+
+    let day = chrono::NaiveDate::from_ymd_opt(2026, 4, 28).expect("valid date");
+    let day_start = local_ts_ms(day, 0, 0, 0, 0);
+    let day_end = local_ts_ms(day, 23, 59, 59, 999);
+    let next_day_start = local_ts_ms(day + Duration::days(1), 0, 0, 0, 0);
+
+    db.block_on(async {
+        sqlx::query("UPDATE history_index SET started_at = ? WHERE id = ?")
+            .bind(day_start)
+            .bind(early.id.to_string())
+            .execute(db.pool())
+            .await?;
+        sqlx::query("UPDATE history_index SET started_at = ? WHERE id = ?")
+            .bind(day_end)
+            .bind(edge.id.to_string())
+            .execute(db.pool())
+            .await?;
+        sqlx::query("UPDATE history_index SET started_at = ? WHERE id = ?")
+            .bind(next_day_start)
+            .bind(late.id.to_string())
+            .execute(db.pool())
+            .await?;
+        Ok::<(), sqlx::Error>(())
+    })?;
+
+    let mut query = HistoryQuery::for_workspace(workspace.id);
+    query.started_before = Some(day_end);
+    query.limit = 10;
+    let page = history_repo.query(query)?;
+
+    let ids: std::collections::HashSet<_> = page.rows.iter().map(|it| it.id).collect();
+    assert!(ids.contains(&early.id));
+    assert!(ids.contains(&edge.id));
+    assert!(!ids.contains(&late.id));
+
+    Ok(())
+}
+
+#[test]
+fn history_query_started_after_filters_by_local_day_start() -> Result<()> {
+    let (_paths, db) = common::test_database("history-query-started-after")?;
+    let db = Arc::new(db);
+    let workspace_repo = SqliteWorkspaceRepository::new(db.clone());
+    let history_repo = SqliteHistoryRepository::new(db.clone());
+
+    let workspace = workspace_repo.create("Main")?;
+    let prev =
+        history_repo.create_pending(workspace.id, None, "GET", "https://api.local/prev", None)?;
+    let start =
+        history_repo.create_pending(workspace.id, None, "GET", "https://api.local/start", None)?;
+    let later =
+        history_repo.create_pending(workspace.id, None, "GET", "https://api.local/later", None)?;
+
+    let day = chrono::NaiveDate::from_ymd_opt(2026, 4, 28).expect("valid date");
+    let prev_day_end = local_ts_ms(day - Duration::days(1), 23, 59, 59, 999);
+    let day_start = local_ts_ms(day, 0, 0, 0, 0);
+    let midday = local_ts_ms(day, 12, 0, 0, 0);
+
+    db.block_on(async {
+        sqlx::query("UPDATE history_index SET started_at = ? WHERE id = ?")
+            .bind(prev_day_end)
+            .bind(prev.id.to_string())
+            .execute(db.pool())
+            .await?;
+        sqlx::query("UPDATE history_index SET started_at = ? WHERE id = ?")
+            .bind(day_start)
+            .bind(start.id.to_string())
+            .execute(db.pool())
+            .await?;
+        sqlx::query("UPDATE history_index SET started_at = ? WHERE id = ?")
+            .bind(midday)
+            .bind(later.id.to_string())
+            .execute(db.pool())
+            .await?;
+        Ok::<(), sqlx::Error>(())
+    })?;
+
+    let mut query = HistoryQuery::for_workspace(workspace.id);
+    query.started_after = Some(day_start);
+    query.limit = 10;
+    let page = history_repo.query(query)?;
+
+    let ids: std::collections::HashSet<_> = page.rows.iter().map(|it| it.id).collect();
+    assert!(!ids.contains(&prev.id));
+    assert!(ids.contains(&start.id));
+    assert!(ids.contains(&later.id));
+
+    Ok(())
+}
+
+fn local_ts_ms(date: chrono::NaiveDate, hour: u32, minute: u32, second: u32, millis: u32) -> i64 {
+    let dt = Local
+        .with_ymd_and_hms(date.year(), date.month(), date.day(), hour, minute, second)
+        .single()
+        .expect("unambiguous local datetime")
+        + Duration::milliseconds(i64::from(millis));
+    assert_eq!(dt.hour(), hour);
+    assert_eq!(dt.minute(), minute);
+    assert_eq!(dt.second(), second);
+    dt.timestamp_millis()
 }

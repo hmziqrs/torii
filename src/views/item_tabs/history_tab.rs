@@ -435,6 +435,7 @@ fn history_rows_elements(
                         Button::new(format!("history-open-request-{entry_id}"))
                             .ghost()
                             .xsmall()
+                            .disabled(request_id.is_none())
                             .label(es_fluent::localize("history_tab_open_request", None))
                             .on_click(move |_, window, cx| {
                                 let _ = weak_root_open.update(cx, |this, cx| {
@@ -468,6 +469,7 @@ fn history_rows_elements(
                         Button::new(format!("history-restore-request-{entry_id}"))
                             .ghost()
                             .xsmall()
+                            .disabled(request_id.is_none())
                             .label(es_fluent::localize("history_tab_restore", None))
                             .on_click(move |_, window, cx| {
                                 let _ = weak_root.update(cx, |this, cx| {
@@ -726,6 +728,7 @@ fn open_history_details_dialog(
                         Button::new(format!("history-details-open-request-{}", entry.id))
                             .ghost()
                             .xsmall()
+                            .disabled(request_id.is_none())
                             .label(es_fluent::localize("history_tab_open_request", None))
                             .on_click(move |_, window, cx| {
                                 let _ = weak_root_open.update(cx, |this, cx| {
@@ -761,6 +764,7 @@ fn open_history_details_dialog(
                         Button::new(format!("history-details-restore-request-{}", entry.id))
                             .ghost()
                             .xsmall()
+                            .disabled(request_id.is_none())
                             .label(es_fluent::localize("history_tab_restore", None))
                             .on_click(move |_, window, cx| {
                                 let _ = weak_root_restore.update(cx, |this, cx| {

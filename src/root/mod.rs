@@ -1054,41 +1054,28 @@ impl Focusable for AppRoot {
     }
 }
 
-fn parse_history_time_filter_ms(raw: &str) -> Option<i64> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    if let Ok(value) = trimmed.parse::<i64>() {
-        return Some(crate::domain::response::normalize_unix_ms(value));
-    }
-    if let Ok(date) = time::Date::parse(
-        trimmed,
-        &time::format_description::well_known::Iso8601::DATE,
-    ) {
-        let dt = date.with_time(time::Time::MIDNIGHT).assume_utc();
-        return Some(dt.unix_timestamp() * 1000);
-    }
-    None
-}
-
 fn history_picker_date_to_unix_ms(
     date: chrono::NaiveDate,
     kind: HistoryDateFilterKind,
 ) -> Option<i64> {
-    let midnight_ms = parse_history_time_filter_ms(&date.to_string())?;
-    match kind {
-        HistoryDateFilterKind::StartedAfter => Some(midnight_ms),
-        // Before is inclusive for the entire selected day.
-        HistoryDateFilterKind::StartedBefore => Some(midnight_ms + 86_399_999),
-    }
+    use chrono::{Local, TimeZone as _};
+
+    let midnight = date.and_hms_milli_opt(0, 0, 0, 0)?;
+    let end_of_day = date.and_hms_milli_opt(23, 59, 59, 999)?;
+    let local_dt = match kind {
+        HistoryDateFilterKind::StartedAfter => Local.from_local_datetime(&midnight).single(),
+        // Before is inclusive for the entire selected local day.
+        HistoryDateFilterKind::StartedBefore => Local.from_local_datetime(&end_of_day).single(),
+    }?;
+    Some(local_dt.timestamp_millis())
 }
 
 fn unix_ms_to_picker_date(raw: i64) -> Option<chrono::NaiveDate> {
     let ms = crate::domain::response::normalize_unix_ms(raw);
     let seconds = ms / 1000;
     let nanos = ((ms % 1000) * 1_000_000) as u32;
-    chrono::DateTime::from_timestamp(seconds, nanos).map(|dt| dt.date_naive())
+    chrono::DateTime::from_timestamp(seconds, nanos)
+        .map(|dt| dt.with_timezone(&chrono::Local).date_naive())
 }
 
 impl Render for AppRoot {
