@@ -5,6 +5,28 @@
 > Builds on `docs/completed/phase-4.md`
 > Date: 2026-04-26
 
+## 0. Progress Status (Updated: 2026-04-30)
+
+### 0.1 Latest Completed History Batch
+
+- [x] Compare Previous button restored in History Details footer.
+- [x] Compare Previous now supports linked/file-system rows without `request_id` via workspace/protocol/method/url fallback.
+- [x] Global history card row now exposes Compare Previous action directly.
+- [x] Compare dialog includes JSON/text/metadata fallback diff payload output.
+- [x] Bottom Load More control added to global history surface.
+- [x] History list timestamps normalized to local human-readable format.
+- [x] History Details timestamps normalized to local human-readable format.
+- [x] History Details enriched with transcript metadata, run summary, and request snapshot display.
+- [x] Copy Details JSON action added for full entry export to clipboard.
+- [x] Request-tab history dialog upgraded: larger fetch window (200), protocol-visible rows, local timestamps, and inline compare action.
+
+### 0.2 Still Pending In This Phase
+
+- [ ] Virtualized global history row delegate/table (current implementation is still eager card rendering).
+- [ ] First-class per-request history panel replacing the modal flow.
+- [ ] History details pane reuse of response panel semantics for headers/cookies/timing/body preview inspection.
+- [ ] History retention management and blob cleanup policy wiring beyond current reference tracking.
+
 ## 1. Objective
 
 Expand Torii from a REST-focused API client into a history-first multi-protocol client without weakening the V2 state architecture.

@@ -105,7 +105,7 @@ impl RequestTabView {
         };
 
         let services = cx.global::<AppServicesGlobal>().0.clone();
-        let entries = match services.repos.history.list_for_request(request_id, 50) {
+        let entries = match services.repos.history.list_for_request(request_id, 200) {
             Ok(entries) => entries,
             Err(err) => {
                 window.push_notification(
@@ -141,9 +141,44 @@ impl RequestTabView {
                                         )),
                                 )
                             })
-                            .children(entries.iter().map(|entry| {
+                            .children(entries.iter().enumerate().map(|(idx, entry)| {
                                 let weak_view = weak_view.clone();
                                 let entry_for_restore = entry.clone();
+                                let compare_report = entries
+                                    .iter()
+                                    .skip(idx + 1)
+                                    .find(|candidate| {
+                                        candidate.protocol_kind == entry.protocol_kind
+                                            && candidate.method.eq_ignore_ascii_case(&entry.method)
+                                            && candidate.url == entry.url
+                                    })
+                                    .map(|previous| {
+                                        serde_json::json!({
+                                            "current": {
+                                                "id": entry.id.to_string(),
+                                                "protocol": entry.protocol_kind,
+                                                "method": entry.method,
+                                                "url": entry.url,
+                                                "state": format!("{:?}", entry.state),
+                                                "status_code": entry.status_code,
+                                                "started_at": entry.started_at,
+                                            },
+                                            "previous": {
+                                                "id": previous.id.to_string(),
+                                                "protocol": previous.protocol_kind,
+                                                "method": previous.method,
+                                                "url": previous.url,
+                                                "state": format!("{:?}", previous.state),
+                                                "status_code": previous.status_code,
+                                                "started_at": previous.started_at,
+                                            },
+                                            "diff": {
+                                                "state_changed": entry.state != previous.state,
+                                                "status_code_changed": entry.status_code != previous.status_code,
+                                                "started_at_delta_ms": entry.started_at - previous.started_at,
+                                            }
+                                        })
+                                    });
                                 let state_label = match entry.state {
                                     crate::domain::history::HistoryState::Pending => {
                                         es_fluent::localize("history_tab_state_pending", None)
@@ -168,7 +203,10 @@ impl RequestTabView {
                                         h_flex()
                                             .justify_between()
                                             .items_center()
-                                            .child(format!("{} {}", entry.method, entry.url))
+                                            .child(format!(
+                                                "[{}] {} {}",
+                                                entry.protocol_kind, entry.method, entry.url
+                                            ))
                                             .child(
                                                 div()
                                                     .text_xs()
@@ -190,10 +228,10 @@ impl RequestTabView {
                                                             "history_tab_started_at",
                                                             None,
                                                         ),
-                                                        entry.started_at
+                                                        format_history_timestamp(entry.started_at)
                                                     )),
                                             )
-                                            .child(
+                                            .child(h_flex().gap_2().child(
                                                 Button::new(format!(
                                                     "request-history-restore-{}",
                                                     entry.id
@@ -237,7 +275,49 @@ impl RequestTabView {
                                                         }
                                                     }
                                                 }),
-                                            ),
+                                            )
+                                            .when_some(compare_report, |el, report| {
+                                                el.child(
+                                                    Button::new(format!("request-history-compare-{}", entry.id))
+                                                        .ghost()
+                                                        .xsmall()
+                                                        .label(es_fluent::localize("history_tab_compare_previous", None))
+                                                        .on_click(move |_, window, cx| {
+                                                            let report = serde_json::to_string_pretty(&report)
+                                                                .unwrap_or_else(|_| "{}".to_string());
+                                                            window.open_dialog(cx, move |dialog, _, _| {
+                                                                dialog
+                                                                    .title(es_fluent::localize("history_tab_compare_previous", None))
+                                                                    .overlay_closable(true)
+                                                                    .keyboard(true)
+                                                                    .child(
+                                                                        div()
+                                                                            .max_h(px(320.))
+                                                                            .overflow_y_scrollbar()
+                                                                            .child(
+                                                                                div()
+                                                                                    .text_xs()
+                                                                                    .font_family("monospace")
+                                                                                    .child(report.clone()),
+                                                                            ),
+                                                                    )
+                                                                    .footer(
+                                                                        h_flex().justify_end().child(
+                                                                            Button::new("request-history-compare-close")
+                                                                                .primary()
+                                                                                .label(es_fluent::localize(
+                                                                                    "history_tab_dialog_cancel",
+                                                                                    None,
+                                                                                ))
+                                                                                .on_click(move |_, window, cx| {
+                                                                                    window.close_dialog(cx);
+                                                                                }),
+                                                                        ),
+                                                                    )
+                                                            });
+                                                        }),
+                                                )
+                                            })),
                                     )
                             })),
                     ),
@@ -375,4 +455,17 @@ impl RequestTabView {
         cx.notify();
         Ok(())
     }
+}
+
+fn format_history_timestamp(raw: i64) -> String {
+    let ms = crate::domain::response::normalize_unix_ms(raw);
+    let seconds = ms / 1000;
+    let nanos = ((ms % 1000) * 1_000_000) as u32;
+    chrono::DateTime::from_timestamp(seconds, nanos)
+        .map(|dt| {
+            dt.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string()
+        })
+        .unwrap_or_else(|| raw.to_string())
 }

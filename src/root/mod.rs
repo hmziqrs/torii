@@ -685,7 +685,10 @@ impl AppRoot {
         cx: &App,
     ) -> Result<String, String> {
         let Some(request_id) = entry.request_id else {
-            return Err(es_fluent::localize("history_tab_compare_requires_request", None));
+            return Err(es_fluent::localize(
+                "history_tab_compare_requires_request",
+                None,
+            ));
         };
         let services = services(cx);
         let entries = services
@@ -699,7 +702,10 @@ impl AppRoot {
                 )
             })?;
         let Some(current_ix) = entries.iter().position(|it| it.id == entry.id) else {
-            return Err(es_fluent::localize("history_tab_compare_missing_current", None));
+            return Err(es_fluent::localize(
+                "history_tab_compare_missing_current",
+                None,
+            ));
         };
         let Some(previous) = entries
             .iter()
@@ -1533,7 +1539,10 @@ fn read_history_body_preview(
 ) -> Option<Vec<u8>> {
     let blob_hash = entry.blob_hash.as_ref()?;
     blob_store
-        .read_preview(blob_hash, crate::domain::response::ResponseBudgets::PREVIEW_CAP_BYTES)
+        .read_preview(
+            blob_hash,
+            crate::domain::response::ResponseBudgets::PREVIEW_CAP_BYTES,
+        )
         .ok()
 }
 
@@ -1572,13 +1581,7 @@ fn compare_history_bodies(
             serde_json::from_str::<serde_json::Value>(&previous_text),
         ) {
             let mut changed_paths = Vec::new();
-            collect_json_diff_paths(
-                "",
-                &current_json,
-                &previous_json,
-                &mut changed_paths,
-                64,
-            );
+            collect_json_diff_paths("", &current_json, &previous_json, &mut changed_paths, 64);
             return serde_json::json!({
                 "mode": "json_structured",
                 "changed_paths_count": changed_paths.len(),

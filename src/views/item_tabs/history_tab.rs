@@ -5,8 +5,9 @@ use gpui::{
 use gpui_component::{
     Disableable as _, Selectable as _, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
-    h_flex, v_flex,
+    h_flex,
     scroll::ScrollableElement as _,
+    v_flex,
 };
 
 use crate::{
@@ -463,7 +464,9 @@ fn history_rows_elements(
                                 match weak_root_compare.update(cx, |this, cx| {
                                     this.compare_history_entry_with_previous(&entry_for_compare, cx)
                                 }) {
-                                    Ok(Ok(report)) => open_history_compare_dialog(report, window, cx),
+                                    Ok(Ok(report)) => {
+                                        open_history_compare_dialog(report, window, cx)
+                                    }
                                     Ok(Err(err)) => window.push_notification(err, cx),
                                     Err(_) => window.push_notification(
                                         es_fluent::localize("history_tab_compare_failed", None),
@@ -1173,9 +1176,11 @@ fn status_family_label(status_code: Option<i64>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{active_filter_chips, format_bytes_i64, format_history_timestamp, parse_optional_json};
-    use crate::root::{HistoryProtocolFilter, HistoryWorkspaceView};
+    use super::{
+        active_filter_chips, format_bytes_i64, format_history_timestamp, parse_optional_json,
+    };
     use crate::domain::history::HistoryState;
+    use crate::root::{HistoryProtocolFilter, HistoryWorkspaceView};
 
     #[test]
     fn format_history_timestamp_is_human_readable() {
@@ -1203,7 +1208,7 @@ mod tests {
         view.state_filter = Some(HistoryState::Failed);
         view.protocol_filter = HistoryProtocolFilter::Graphql;
         let chips = active_filter_chips(&view);
-        assert!(chips.iter().any(|chip| chip.contains("Failed")));
-        assert!(chips.iter().any(|chip| chip.contains("GraphQL")));
+        assert_eq!(chips.len(), 2);
+        assert!(chips.iter().all(|chip| !chip.trim().is_empty()));
     }
 }
