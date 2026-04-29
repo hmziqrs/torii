@@ -6,7 +6,6 @@ use gpui_component::{
     Disableable as _, Selectable as _, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex, v_flex,
-    scroll::ScrollableElement as _,
 };
 
 use crate::{
@@ -730,7 +729,6 @@ fn open_history_details_dialog(
 ) {
     let weak_root_open = root.clone();
     let weak_root_restore = root.clone();
-    let weak_root_compare = root.clone();
     let entry_for_restore = entry.clone();
     let request_id = entry.request_id;
     let url = entry.url.clone();
@@ -936,29 +934,6 @@ fn open_history_details_dialog(
                             })
                     })
                     .child({
-                        let weak_root_compare = weak_root_compare.clone();
-                        let entry_for_compare = entry.clone();
-                        Button::new(format!("history-details-compare-{}", entry.id))
-                            .ghost()
-                            .xsmall()
-                            .label(es_fluent::localize("history_tab_compare_previous", None))
-                            .on_click(move |_, window, cx| {
-                                let compare_result = weak_root_compare.update(cx, |this, cx| {
-                                    this.compare_history_entry_with_previous(&entry_for_compare, cx)
-                                });
-                                match compare_result {
-                                    Ok(Ok(report)) => {
-                                        open_history_compare_dialog(report, window, cx);
-                                    }
-                                    Ok(Err(err)) => window.push_notification(err, cx),
-                                    Err(_) => window.push_notification(
-                                        es_fluent::localize("history_tab_compare_failed", None),
-                                        cx,
-                                    ),
-                                }
-                            })
-                    })
-                    .child({
                         let entry_for_copy = entry_for_copy.clone();
                         Button::new(format!("history-details-copy-json-{}", entry.id))
                             .ghost()
@@ -1007,34 +982,6 @@ fn open_history_details_dialog(
                                 window.close_dialog(cx);
                             }),
                     ),
-            )
-    });
-}
-
-fn open_history_compare_dialog(report: String, window: &mut gpui::Window, cx: &mut gpui::App) {
-    window.open_dialog(cx, move |dialog, _, _| {
-        dialog
-            .title(es_fluent::localize("history_tab_compare_previous", None))
-            .overlay_closable(true)
-            .keyboard(true)
-            .child(
-                div().max_h(px(420.)).overflow_y_scrollbar().child(
-                    div()
-                        .text_xs()
-                        .font_family("monospace")
-                        .child(report.clone()),
-                ),
-            )
-            .footer(
-                h_flex().justify_end().child(
-                    Button::new("history-compare-close")
-                        .primary()
-                        .xsmall()
-                        .label(es_fluent::localize("history_tab_dialog_cancel", None))
-                        .on_click(move |_, window, cx| {
-                            window.close_dialog(cx);
-                        }),
-                ),
             )
     });
 }

@@ -5,32 +5,6 @@
 > Builds on `docs/completed/phase-4.md`
 > Date: 2026-04-26
 
-## 0. Progress Status (Updated: 2026-04-29)
-
-### 0.1 History Track
-
-- [x] `HistoryRepository::query` with typed `HistoryQuery` / `HistoryCursor` / `HistoryPage`
-- [x] Cursor pagination with `next_cursor` and `Load More` UX in global history
-- [x] Workspace history filters: state, protocol, status family, method, URL, full-text search, started-after/before
-- [x] Grouping in global history: none/date/protocol/status family
-- [x] Restore behavior: open existing request or create new draft fallback when request is missing/deleted
-- [x] History details dialog expanded with protocol, request name, message counters, close reason, transcript metadata, run summary, request snapshot
-- [x] Copy actions: URL copy, details JSON copy, structured error copy (preflight + execution failures)
-- [x] Status family coverage includes `1xx` and `3xx`
-- [x] Request-tab history restore paths validated for completed/failed/cancelled snapshots
-- [x] History compare workflow added (`Compare Previous`) with:
-  - [x] status/timing/headers/cookies/size diff summary
-  - [x] JSON-structured body diff path (changed field paths)
-  - [x] text unified diff fallback
-  - [x] metadata-only fallback when body previews are unavailable
-- [x] Synthetic test coverage for history query/status/date filters and message/close-reason metadata roundtrip
-
-### 0.2 Non-History Track (Still Pending In This Plan)
-
-- [ ] Protocol-domain/editor/execution completion for GraphQL
-- [ ] WebSocket lifecycle + transcript pipeline
-- [ ] gRPC unary/streaming + descriptor workflows
-
 ## 1. Objective
 
 Expand Torii from a REST-focused API client into a history-first multi-protocol client without weakening the V2 state architecture.
