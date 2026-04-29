@@ -121,17 +121,53 @@ pub(super) fn render_response_panel(
                                 }),
                         )
                         .child(
-                            Button::new("error-detail-toggle")
-                                .ghost()
-                                .label(if expanded {
-                                    es_fluent::localize("request_tab_error_detail_collapse", None)
-                                } else {
-                                    es_fluent::localize("request_tab_error_detail_expand", None)
-                                })
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.error_detail_expanded = !this.error_detail_expanded;
-                                    cx.notify();
-                                })),
+                            h_flex()
+                                .gap_2()
+                                .child(
+                                    Button::new("error-detail-copy-json")
+                                        .ghost()
+                                        .xsmall()
+                                        .icon(IconName::Copy)
+                                        .tooltip(es_fluent::localize(
+                                            "request_tab_copy_error_json",
+                                            None,
+                                        ))
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            if let Err(err) =
+                                                this.copy_failed_exec_error_payload(cx)
+                                            {
+                                                window.push_notification(err, cx);
+                                            } else {
+                                                window.push_notification(
+                                                    es_fluent::localize(
+                                                        "request_tab_copy_ok",
+                                                        None,
+                                                    ),
+                                                    cx,
+                                                );
+                                            }
+                                        })),
+                                )
+                                .child(
+                                    Button::new("error-detail-toggle")
+                                        .ghost()
+                                        .label(if expanded {
+                                            es_fluent::localize(
+                                                "request_tab_error_detail_collapse",
+                                                None,
+                                            )
+                                        } else {
+                                            es_fluent::localize(
+                                                "request_tab_error_detail_expand",
+                                                None,
+                                            )
+                                        })
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.error_detail_expanded =
+                                                !this.error_detail_expanded;
+                                            cx.notify();
+                                        })),
+                                ),
                         ),
                 )
         }

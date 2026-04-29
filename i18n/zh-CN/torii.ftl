@@ -452,6 +452,7 @@ request_tab_error_request_timeout = 请求超时
 request_tab_error_transport_generic = 传输错误
 request_tab_error_detail_expand = 显示详情
 request_tab_error_detail_collapse = 隐藏详情
+request_tab_copy_error_json = 复制错误 JSON
 request_tab_response_action_copy = 复制
 request_tab_response_action_copy_disabled_tooltip = 仅支持复制文本类型的响应内容
 request_tab_response_action_save = 保存

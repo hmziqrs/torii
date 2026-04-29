@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _, WindowExt as _,
+    ActiveTheme as _, Disableable as _, IconName, Selectable as _, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
     divider::Divider,

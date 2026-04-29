@@ -452,6 +452,7 @@ request_tab_error_request_timeout = Request Timeout
 request_tab_error_transport_generic = Transport Error
 request_tab_error_detail_expand = Show Details
 request_tab_error_detail_collapse = Hide Details
+request_tab_copy_error_json = Copy Error JSON
 request_tab_response_action_copy = Copy
 request_tab_response_action_copy_disabled_tooltip = Copy is only available for text-based responses
 request_tab_response_action_save = Save

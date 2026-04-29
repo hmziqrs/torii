@@ -408,18 +408,36 @@ impl RequestTabView {
             url = %resolved_request.url,
             "send"
         );
+        let history_request_id = resolve_history_request_id(self.editor.request_id(), &services);
         let history_entry = match services.request_execution.create_pending_history(
             workspace_id,
-            self.editor.request_id(),
+            history_request_id,
             &resolved_request,
         ) {
             Ok(entry) => entry,
             Err(e) => {
                 tracing::error!(error = %e, request_id = ?self.editor.request_id(), "send: failed to create history entry");
-                self.editor.set_preflight_error(format!(
+                let message = format!(
                     "{}: {e}",
                     es_fluent::localize("request_tab_history_create_failed", None)
-                ));
+                );
+                let details_json = serde_json::to_string_pretty(&serde_json::json!({
+                    "error": {
+                        "message": e.to_string(),
+                    },
+                    "context": {
+                        "stage": "history_create_pending",
+                        "workspace_id": workspace_id.to_string(),
+                        "editor_request_id": self.editor.request_id().map(|id| id.to_string()),
+                        "history_request_id": history_request_id.map(|id| id.to_string()),
+                    },
+                    "payload": {
+                        "request": resolved_request,
+                    },
+                }))
+                .ok();
+                self.editor
+                    .set_preflight_error_with_details(message, details_json);
                 cx.notify();
                 return;
             }
@@ -609,6 +627,50 @@ impl RequestTabView {
             return Err(es_fluent::localize("request_tab_copy_unavailable", None).to_string());
         };
         cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+        Ok(())
+    }
+
+    pub fn copy_preflight_error_payload(&self, cx: &mut Context<Self>) -> Result<(), String> {
+        let Some(preflight) = self.editor.preflight_error() else {
+            return Err(es_fluent::localize("request_tab_copy_unavailable", None).to_string());
+        };
+        let json = build_error_payload_json(
+            "preflight",
+            &preflight.message,
+            preflight.details_json.as_deref(),
+            self.editor.draft(),
+            self.editor.request_id(),
+            self.editor.active_operation_id(),
+            self.editor.latest_history_id(),
+            None,
+            None,
+        );
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(json));
+        Ok(())
+    }
+
+    pub fn copy_failed_exec_error_payload(&self, cx: &mut Context<Self>) -> Result<(), String> {
+        let ExecStatus::Failed {
+            summary,
+            classified,
+        } = self.editor.exec_status()
+        else {
+            return Err(es_fluent::localize("request_tab_copy_unavailable", None).to_string());
+        };
+
+        let (_title, detail) = classified_error_display(classified.as_ref(), summary);
+        let json = build_error_payload_json(
+            "execution_failed",
+            summary,
+            Some(detail.as_str()),
+            self.editor.draft(),
+            self.editor.request_id(),
+            self.editor.active_operation_id(),
+            self.editor.latest_history_id(),
+            classified.as_ref(),
+            Some(summary),
+        );
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(json));
         Ok(())
     }
 
@@ -809,6 +871,100 @@ fn ensure_parent_exists(
     Ok(())
 }
 
+fn resolve_history_request_id(
+    request_id: Option<crate::domain::ids::RequestId>,
+    services: &AppServices,
+) -> Option<crate::domain::ids::RequestId> {
+    let Some(request_id) = request_id else {
+        return None;
+    };
+    match services.repos.request.get(request_id) {
+        Ok(Some(_)) => Some(request_id),
+        Ok(None) => {
+            tracing::info!(
+                request_id = %request_id,
+                "send: request id missing from managed repo; writing history entry without linked request id"
+            );
+            None
+        }
+        Err(err) => {
+            tracing::warn!(
+                request_id = %request_id,
+                error = %err,
+                "send: failed to resolve request id for history row; writing unlinked history entry"
+            );
+            None
+        }
+    }
+}
+
+fn build_error_payload_json(
+    stage: &str,
+    message: &str,
+    details: Option<&str>,
+    draft: &RequestItem,
+    request_id: Option<crate::domain::ids::RequestId>,
+    active_operation_id: Option<crate::domain::ids::HistoryEntryId>,
+    latest_history_id: Option<crate::domain::ids::HistoryEntryId>,
+    classified: Option<&ClassifiedError>,
+    summary: Option<&str>,
+) -> String {
+    let details_value = details.map(parse_json_or_string);
+    let classified_value = classified.map(classified_error_json);
+    let payload = serde_json::json!({
+        "error": {
+            "stage": stage,
+            "message": message,
+            "summary": summary,
+            "details": details_value,
+            "classified": classified_value,
+        },
+        "context": {
+            "request_id": request_id.map(|id| id.to_string()),
+            "active_operation_id": active_operation_id.map(|id| id.to_string()),
+            "latest_history_id": latest_history_id.map(|id| id.to_string()),
+        },
+        "payload": {
+            "request": draft,
+        },
+    });
+    serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string())
+}
+
+fn parse_json_or_string(input: &str) -> serde_json::Value {
+    serde_json::from_str::<serde_json::Value>(input)
+        .unwrap_or_else(|_| serde_json::Value::String(input.to_string()))
+}
+
+fn classified_error_json(classified: &ClassifiedError) -> serde_json::Value {
+    match classified {
+        ClassifiedError::DnsFailure { host } => serde_json::json!({
+            "kind": "dns_failure",
+            "host": host,
+        }),
+        ClassifiedError::ConnectionRefused { host, port } => serde_json::json!({
+            "kind": "connection_refused",
+            "host": host,
+            "port": port,
+        }),
+        ClassifiedError::ConnectionTimeout => serde_json::json!({
+            "kind": "connection_timeout",
+        }),
+        ClassifiedError::TlsError { reason } => serde_json::json!({
+            "kind": "tls_error",
+            "reason": reason,
+        }),
+        ClassifiedError::RequestTimeout => serde_json::json!({
+            "kind": "request_timeout",
+        }),
+        ClassifiedError::TransportError { summary, detail } => serde_json::json!({
+            "kind": "transport_error",
+            "summary": summary,
+            "detail": detail,
+        }),
+    }
+}
+
 fn next_linked_request_sort(
     folders: &[crate::domain::folder::Folder],
     requests: &[RequestItem],
@@ -906,7 +1062,14 @@ fn next_postman_style_name(base: &str, existing_names: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{next_duplicate_request_name, next_postman_style_name};
+    use super::{
+        build_error_payload_json, next_duplicate_request_name, next_postman_style_name,
+        parse_json_or_string,
+    };
+    use crate::{
+        domain::{ids::CollectionId, request::RequestItem},
+        services::error_classifier::ClassifiedError,
+    };
 
     #[test]
     fn duplicate_name_uses_copy_suffix_and_increments() {
@@ -930,6 +1093,47 @@ mod tests {
         assert_eq!(
             next_postman_style_name("Untitled Request", &existing),
             "Untitled Request (3)"
+        );
+    }
+
+    #[test]
+    fn parse_json_or_string_parses_json() {
+        let value = parse_json_or_string("{\"a\":1}");
+        assert_eq!(value["a"], serde_json::json!(1));
+    }
+
+    #[test]
+    fn parse_json_or_string_falls_back_to_string() {
+        let value = parse_json_or_string("not-json");
+        assert_eq!(value, serde_json::json!("not-json"));
+    }
+
+    #[test]
+    fn build_error_payload_includes_context_and_request_payload() {
+        let request = RequestItem::new(CollectionId::new(), None, "Test", "GET", "https://x", 0);
+        let payload = build_error_payload_json(
+            "execution_failed",
+            "request failed",
+            Some("{\"source\":\"mock\"}"),
+            &request,
+            None,
+            None,
+            None,
+            Some(&ClassifiedError::RequestTimeout),
+            Some("request failed"),
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&payload).expect("valid json");
+        assert_eq!(
+            parsed["error"]["stage"],
+            serde_json::json!("execution_failed")
+        );
+        assert_eq!(
+            parsed["error"]["classified"]["kind"],
+            serde_json::json!("request_timeout")
+        );
+        assert_eq!(
+            parsed["payload"]["request"]["name"],
+            serde_json::json!("Test")
         );
     }
 }

@@ -22,7 +22,8 @@ pub(super) fn render_request_tab(
     let preflight_notice = view
         .editor
         .preflight_error()
-        .map(|err| render_preflight_notice(&err.message, cx));
+        .cloned()
+        .map(|err| render_preflight_notice(&err, cx));
 
     let latest_run = latest_run_summary(view.editor.exec_status());
 
@@ -345,8 +346,11 @@ pub(super) fn render_request_tab(
         )
 }
 
-fn render_preflight_notice(message: &str, cx: &App) -> gpui::Div {
-    let (missing_vars, scopes) = parse_preflight_message(message);
+fn render_preflight_notice(
+    error: &crate::session::request_editor_state::PreflightError,
+    cx: &mut Context<RequestTabView>,
+) -> gpui::Div {
+    let (missing_vars, scopes) = parse_preflight_message(&error.message);
 
     v_flex()
         .mx_4()
@@ -358,11 +362,33 @@ fn render_preflight_notice(message: &str, cx: &App) -> gpui::Div {
         .border_color(cx.theme().danger.opacity(0.6))
         .bg(cx.theme().danger.opacity(0.08))
         .child(
-            div()
-                .text_sm()
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(cx.theme().danger)
-                .child(es_fluent::localize("request_tab_preflight", None)),
+            h_flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(cx.theme().danger)
+                        .child(es_fluent::localize("request_tab_preflight", None)),
+                )
+                .child(
+                    Button::new("request-preflight-copy-json")
+                        .ghost()
+                        .xsmall()
+                        .icon(IconName::Copy)
+                        .tooltip(es_fluent::localize("request_tab_copy_error_json", None))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            if let Err(err) = this.copy_preflight_error_payload(cx) {
+                                window.push_notification(err, cx);
+                            } else {
+                                window.push_notification(
+                                    es_fluent::localize("request_tab_copy_ok", None),
+                                    cx,
+                                );
+                            }
+                        })),
+                ),
         )
         .child(
             div()
@@ -373,7 +399,7 @@ fn render_preflight_notice(message: &str, cx: &App) -> gpui::Div {
                         "{}: {vars}",
                         es_fluent::localize("request_tab_preflight_missing_vars", None)
                     ),
-                    None => message.to_string(),
+                    None => error.message.clone(),
                 }),
         )
         .when_some(scopes, |el, checked_scopes| {

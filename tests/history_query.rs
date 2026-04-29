@@ -346,6 +346,53 @@ fn history_query_filters_informational_and_redirection_families() -> Result<()> 
     Ok(())
 }
 
+#[test]
+fn history_query_returns_message_counts_and_close_reason_fields() -> Result<()> {
+    let (_paths, db) = common::test_database("history-query-message-metadata")?;
+    let db = Arc::new(db);
+    let workspace_repo = SqliteWorkspaceRepository::new(db.clone());
+    let history_repo = SqliteHistoryRepository::new(db.clone());
+
+    let workspace = workspace_repo.create("Main")?;
+    let row = history_repo.create_pending(
+        workspace.id,
+        None,
+        "GET",
+        "https://api.local/messages",
+        None,
+    )?;
+    history_repo.finalize_completed(row.id, 200, None, None, None, None, None, None, None)?;
+
+    db.block_on(async {
+        sqlx::query(
+            "UPDATE history_index
+             SET request_name = ?, message_count_in = ?, message_count_out = ?, close_reason = ?
+             WHERE id = ?",
+        )
+        .bind("Synthetic conversation request")
+        .bind(11_i64)
+        .bind(7_i64)
+        .bind("server_closed")
+        .bind(row.id.to_string())
+        .execute(db.pool())
+        .await?;
+        Ok::<(), sqlx::Error>(())
+    })?;
+
+    let page = history_repo.query(HistoryQuery::for_workspace(workspace.id))?;
+    assert_eq!(page.rows.len(), 1);
+    let loaded = &page.rows[0];
+    assert_eq!(
+        loaded.request_name.as_deref(),
+        Some("Synthetic conversation request")
+    );
+    assert_eq!(loaded.message_count_in, Some(11));
+    assert_eq!(loaded.message_count_out, Some(7));
+    assert_eq!(loaded.close_reason.as_deref(), Some("server_closed"));
+
+    Ok(())
+}
+
 fn local_ts_ms(date: chrono::NaiveDate, hour: u32, minute: u32, second: u32, millis: u32) -> i64 {
     let dt = Local
         .with_ymd_and_hms(date.year(), date.month(), date.day(), hour, minute, second)

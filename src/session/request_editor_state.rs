@@ -74,6 +74,7 @@ impl ExecStatus {
 #[derive(Debug, Clone)]
 pub struct PreflightError {
     pub message: String,
+    pub details_json: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -399,7 +400,21 @@ impl RequestEditorState {
     }
 
     pub fn set_preflight_error(&mut self, message: String) {
-        self.preflight_error = Some(PreflightError { message });
+        self.preflight_error = Some(PreflightError {
+            message,
+            details_json: None,
+        });
+    }
+
+    pub fn set_preflight_error_with_details(
+        &mut self,
+        message: String,
+        details_json: Option<String>,
+    ) {
+        self.preflight_error = Some(PreflightError {
+            message,
+            details_json,
+        });
     }
 
     pub fn clear_preflight_error(&mut self) {
