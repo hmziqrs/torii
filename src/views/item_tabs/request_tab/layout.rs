@@ -58,6 +58,7 @@ pub(super) fn render_request_tab(
         RequestSectionTab::Body => {
             body_editor::render_body_editor(view, &draft, window, cx).into_any_element()
         }
+        RequestSectionTab::History => view.render_request_history_section(cx),
         RequestSectionTab::Scripts => v_flex()
             .gap_2()
             .child(
@@ -215,6 +216,16 @@ pub(super) fn render_request_tab(
                     }),
                 ))
                 .child(section_tab_button(
+                    "request-tab-history",
+                    es_fluent::localize("request_tab_history_open_label", None).to_string(),
+                    view.active_section == RequestSectionTab::History,
+                    cx,
+                    cx.listener(|this, _, _, cx| {
+                        this.set_active_section(RequestSectionTab::History, cx);
+                        this.refresh_request_history(cx);
+                    }),
+                ))
+                .child(section_tab_button(
                     "request-tab-scripts",
                     es_fluent::localize("request_tab_scripts_label", None).to_string(),
                     view.active_section == RequestSectionTab::Scripts,
@@ -243,16 +254,6 @@ pub(super) fn render_request_tab(
                             es_fluent::localize("request_tab_latest_run_label", None),
                             latest_run
                         )),
-                )
-                .child(
-                    Button::new("request-history-open")
-                        .ghost()
-                        .flex_shrink_0()
-                        .disabled(view.editor.request_id().is_none())
-                        .label(es_fluent::localize("request_tab_history_open_label", None))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.open_history_dialog(window, cx);
-                        })),
                 )
                 .child(
                     Button::new("request-settings-open")

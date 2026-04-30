@@ -95,244 +95,29 @@ impl RequestTabView {
         });
     }
 
-    pub(super) fn open_history_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn refresh_request_history(&mut self, cx: &mut Context<Self>) {
         let Some(request_id) = self.editor.request_id() else {
-            window.push_notification(
-                es_fluent::localize("request_tab_history_no_request", None),
-                cx,
-            );
+            self.request_history_entries.clear();
+            self.request_history_error =
+                Some(es_fluent::localize("request_tab_history_no_request", None));
+            cx.notify();
             return;
         };
-
         let services = cx.global::<AppServicesGlobal>().0.clone();
-        let entries = match services.repos.history.list_for_request(request_id, 200) {
-            Ok(entries) => entries,
-            Err(err) => {
-                window.push_notification(
-                    format!(
-                        "{}: {err}",
-                        es_fluent::localize("request_tab_history_load_failed", None)
-                    ),
-                    cx,
-                );
-                return;
+        match services.repos.history.list_for_request(request_id, 200) {
+            Ok(entries) => {
+                self.request_history_entries = entries;
+                self.request_history_error = None;
             }
-        };
-        let weak_view = cx.entity().downgrade();
-
-        window.open_dialog(cx, move |dialog, _window, cx| {
-            let muted = cx.theme().muted_foreground;
-            dialog
-                .title(es_fluent::localize("request_tab_history_dialog_title", None))
-                .overlay_closable(true)
-                .keyboard(true)
-                .child(
-                    div().max_h(px(420.)).overflow_y_scrollbar().child(
-                        v_flex()
-                            .gap_2()
-                            .when(entries.is_empty(), |el| {
-                                el.child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(muted)
-                                        .child(es_fluent::localize(
-                                            "request_tab_history_empty",
-                                            None,
-                                        )),
-                                )
-                            })
-                            .children(entries.iter().enumerate().map(|(idx, entry)| {
-                                let weak_view = weak_view.clone();
-                                let entry_for_restore = entry.clone();
-                                let compare_report = entries
-                                    .iter()
-                                    .skip(idx + 1)
-                                    .find(|candidate| {
-                                        candidate.protocol_kind == entry.protocol_kind
-                                            && candidate.method.eq_ignore_ascii_case(&entry.method)
-                                            && candidate.url == entry.url
-                                    })
-                                    .map(|previous| {
-                                        serde_json::json!({
-                                            "current": {
-                                                "id": entry.id.to_string(),
-                                                "protocol": entry.protocol_kind,
-                                                "method": entry.method,
-                                                "url": entry.url,
-                                                "state": format!("{:?}", entry.state),
-                                                "status_code": entry.status_code,
-                                                "started_at": entry.started_at,
-                                            },
-                                            "previous": {
-                                                "id": previous.id.to_string(),
-                                                "protocol": previous.protocol_kind,
-                                                "method": previous.method,
-                                                "url": previous.url,
-                                                "state": format!("{:?}", previous.state),
-                                                "status_code": previous.status_code,
-                                                "started_at": previous.started_at,
-                                            },
-                                            "diff": {
-                                                "state_changed": entry.state != previous.state,
-                                                "status_code_changed": entry.status_code != previous.status_code,
-                                                "started_at_delta_ms": entry.started_at - previous.started_at,
-                                            }
-                                        })
-                                    });
-                                let state_label = match entry.state {
-                                    crate::domain::history::HistoryState::Pending => {
-                                        es_fluent::localize("history_tab_state_pending", None)
-                                    }
-                                    crate::domain::history::HistoryState::Completed => {
-                                        es_fluent::localize("history_tab_state_completed", None)
-                                    }
-                                    crate::domain::history::HistoryState::Failed => {
-                                        es_fluent::localize("history_tab_state_failed", None)
-                                    }
-                                    crate::domain::history::HistoryState::Cancelled => {
-                                        es_fluent::localize("history_tab_state_cancelled", None)
-                                    }
-                                };
-                                v_flex()
-                                    .gap_1()
-                                    .p_2()
-                                    .rounded(cx.theme().radius)
-                                    .border_1()
-                                    .border_color(cx.theme().border)
-                                    .child(
-                                        h_flex()
-                                            .justify_between()
-                                            .items_center()
-                                            .child(format!(
-                                                "[{}] {} {}",
-                                                entry.protocol_kind, entry.method, entry.url
-                                            ))
-                                            .child(
-                                                div()
-                                                    .text_xs()
-                                                    .text_color(muted)
-                                                    .child(state_label),
-                                            ),
-                                    )
-                                    .child(
-                                        h_flex()
-                                            .justify_between()
-                                            .items_center()
-                                            .child(
-                                                div()
-                                                    .text_xs()
-                                                    .text_color(muted)
-                                                    .child(format!(
-                                                        "{}: {}",
-                                                        es_fluent::localize(
-                                                            "history_tab_started_at",
-                                                            None,
-                                                        ),
-                                                        format_history_timestamp(entry.started_at)
-                                                    )),
-                                            )
-                                            .child(h_flex().gap_2().child(
-                                                Button::new(format!(
-                                                    "request-history-restore-{}",
-                                                    entry.id
-                                                ))
-                                                .ghost()
-                                                .xsmall()
-                                                .label(es_fluent::localize(
-                                                    "request_tab_history_restore",
-                                                    None,
-                                                ))
-                                                .on_click(move |_, window, cx| {
-                                                    let result = weak_view
-                                                        .update(cx, |this, cx| {
-                                                            this.restore_from_history_entry(
-                                                                entry_for_restore.clone(),
-                                                                cx,
-                                                            )
-                                                        })
-                                                        .unwrap_or_else(|_| {
-                                                            Err(
-                                                                es_fluent::localize(
-                                                                    "request_tab_history_restore_failed",
-                                                                    None,
-                                                                )
-                                                                .to_string(),
-                                                            )
-                                                        });
-                                                    match result {
-                                                        Ok(()) => {
-                                                            window.push_notification(
-                                                                es_fluent::localize(
-                                                                    "request_tab_history_restore_ok",
-                                                                    None,
-                                                                ),
-                                                                cx,
-                                                            );
-                                                            window.close_dialog(cx);
-                                                        }
-                                                        Err(err) => {
-                                                            window.push_notification(err, cx);
-                                                        }
-                                                    }
-                                                }),
-                                            )
-                                            .when_some(compare_report, |el, report| {
-                                                el.child(
-                                                    Button::new(format!("request-history-compare-{}", entry.id))
-                                                        .ghost()
-                                                        .xsmall()
-                                                        .label(es_fluent::localize("history_tab_compare_previous", None))
-                                                        .on_click(move |_, window, cx| {
-                                                            let report = serde_json::to_string_pretty(&report)
-                                                                .unwrap_or_else(|_| "{}".to_string());
-                                                            window.open_dialog(cx, move |dialog, _, _| {
-                                                                dialog
-                                                                    .title(es_fluent::localize("history_tab_compare_previous", None))
-                                                                    .overlay_closable(true)
-                                                                    .keyboard(true)
-                                                                    .child(
-                                                                        div()
-                                                                            .max_h(px(320.))
-                                                                            .overflow_y_scrollbar()
-                                                                            .child(
-                                                                                div()
-                                                                                    .text_xs()
-                                                                                    .font_family("monospace")
-                                                                                    .child(report.clone()),
-                                                                            ),
-                                                                    )
-                                                                    .footer(
-                                                                        h_flex().justify_end().child(
-                                                                            Button::new("request-history-compare-close")
-                                                                                .primary()
-                                                                                .label(es_fluent::localize(
-                                                                                    "history_tab_dialog_cancel",
-                                                                                    None,
-                                                                                ))
-                                                                                .on_click(move |_, window, cx| {
-                                                                                    window.close_dialog(cx);
-                                                                                }),
-                                                                        ),
-                                                                    )
-                                                            });
-                                                        }),
-                                                )
-                                            })),
-                                    )
-                            })),
-                    ),
-                )
-                .footer(
-                    h_flex().justify_end().child(
-                        Button::new("request-history-close")
-                            .primary()
-                            .label(es_fluent::localize("request_tab_dirty_close_cancel", None))
-                            .on_click(move |_, window, cx| {
-                                window.close_dialog(cx);
-                            }),
-                    ),
-                )
-        });
+            Err(err) => {
+                self.request_history_entries.clear();
+                self.request_history_error = Some(format!(
+                    "{}: {err}",
+                    es_fluent::localize("request_tab_history_load_failed", None)
+                ));
+            }
+        }
+        cx.notify();
     }
 
     fn restore_from_history_entry(
@@ -454,6 +239,90 @@ impl RequestTabView {
         }
         cx.notify();
         Ok(())
+    }
+
+    pub(super) fn render_request_history_section(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let muted = cx.theme().muted_foreground;
+        v_flex()
+            .gap_2()
+            .child(
+                h_flex()
+                    .justify_between()
+                    .items_center()
+                    .child(div().text_xs().text_color(muted).child(es_fluent::localize(
+                        "request_tab_history_dialog_title",
+                        None,
+                    )))
+                    .child(
+                        Button::new("request-history-refresh-inline")
+                            .ghost()
+                            .xsmall()
+                            .label(es_fluent::localize("history_tab_refresh", None))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.refresh_request_history(cx);
+                            })),
+                    ),
+            )
+            .when_some(self.request_history_error.clone(), |el, err| {
+                el.child(div().text_sm().text_color(gpui::red()).child(err))
+            })
+            .child(
+                div()
+                    .max_h(px(360.))
+                    .overflow_y_scrollbar()
+                    .child(v_flex().gap_2().children(
+                        self.request_history_entries.iter().cloned().map(|entry| {
+                            let state = format!("{:?}", entry.state);
+                            let entry_for_restore = entry.clone();
+                            v_flex()
+                                .gap_1()
+                                .p_2()
+                                .border_1()
+                                .rounded(px(6.))
+                                .child(format!(
+                                    "[{}] {} {}",
+                                    entry.protocol_kind, entry.method, entry.url
+                                ))
+                                .child(div().text_xs().text_color(muted).child(format!(
+                                    "{} | {}",
+                                    state,
+                                    format_history_timestamp(entry.started_at)
+                                )))
+                                .child(
+                                    h_flex().gap_2().child(
+                                        Button::new(format!(
+                                            "request-history-inline-restore-{}",
+                                            entry.id
+                                        ))
+                                        .ghost()
+                                        .xsmall()
+                                        .label(es_fluent::localize(
+                                            "request_tab_history_restore",
+                                            None,
+                                        ))
+                                        .on_click(
+                                            cx.listener(move |this, _, window, cx| {
+                                                match this.restore_from_history_entry(
+                                                    entry_for_restore.clone(),
+                                                    cx,
+                                                ) {
+                                                    Ok(()) => window.push_notification(
+                                                        es_fluent::localize(
+                                                            "request_tab_history_restore_ok",
+                                                            None,
+                                                        ),
+                                                        cx,
+                                                    ),
+                                                    Err(err) => window.push_notification(err, cx),
+                                                }
+                                            }),
+                                        ),
+                                    ),
+                                )
+                        }),
+                    )),
+            )
+            .into_any_element()
     }
 }
 

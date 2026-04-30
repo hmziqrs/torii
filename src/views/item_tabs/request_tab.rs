@@ -18,6 +18,7 @@ use gpui_wry::WebView;
 
 use crate::{
     domain::{
+        history::HistoryEntry,
         ids::WorkspaceId,
         request::{ApiKeyLocation, AuthType, BodyType, KeyValuePair, RequestItem},
         response::{BodyRef, HeaderJsonFormat, ResponseBudgets, parse_response_header_rows},
@@ -129,6 +130,8 @@ pub struct RequestTabView {
     headers_kv_dirty: bool,
     body_urlencoded_kv_dirty: bool,
     body_form_text_kv_dirty: bool,
+    request_history_entries: Vec<HistoryEntry>,
+    request_history_error: Option<String>,
 }
 
 impl RequestTabView {

@@ -6,6 +6,7 @@ pub(super) enum RequestSectionTab {
     Auth,
     Headers,
     Body,
+    History,
     Scripts,
     Tests,
 }

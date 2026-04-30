@@ -350,6 +350,8 @@ impl RequestTabView {
             headers_kv_dirty: true,
             body_urlencoded_kv_dirty: true,
             body_form_text_kv_dirty: true,
+            request_history_entries: Vec::new(),
+            request_history_error: None,
         };
         this.rebuild_kv_rows(KvTarget::Params, &initial.params, window, cx);
         this.rebuild_kv_rows(KvTarget::Headers, &initial.headers, window, cx);

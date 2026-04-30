@@ -347,6 +347,40 @@ fn history_query_filters_informational_and_redirection_families() -> Result<()> 
 }
 
 #[test]
+fn history_delete_before_prunes_old_rows() -> Result<()> {
+    let (_paths, db) = common::test_database("history-delete-before")?;
+    let db = Arc::new(db);
+    let workspace_repo = SqliteWorkspaceRepository::new(db.clone());
+    let history_repo = SqliteHistoryRepository::new(db.clone());
+    let workspace = workspace_repo.create("Main")?;
+
+    let old =
+        history_repo.create_pending(workspace.id, None, "GET", "https://api.local/old", None)?;
+    let keep =
+        history_repo.create_pending(workspace.id, None, "GET", "https://api.local/keep", None)?;
+    db.block_on(async {
+        sqlx::query("UPDATE history_index SET started_at = ? WHERE id = ?")
+            .bind(1_700_000_000_000_i64)
+            .bind(old.id.to_string())
+            .execute(db.pool())
+            .await?;
+        sqlx::query("UPDATE history_index SET started_at = ? WHERE id = ?")
+            .bind(1_900_000_000_000_i64)
+            .bind(keep.id.to_string())
+            .execute(db.pool())
+            .await?;
+        Ok::<(), sqlx::Error>(())
+    })?;
+
+    let removed = history_repo.delete_before(workspace.id, 1_800_000_000_000_i64)?;
+    assert_eq!(removed, 1);
+    let rows = history_repo.list_recent(workspace.id, 10)?;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].id, keep.id);
+    Ok(())
+}
+
+#[test]
 fn history_query_returns_message_counts_and_close_reason_fields() -> Result<()> {
     let (_paths, db) = common::test_database("history-query-message-metadata")?;
     let db = Arc::new(db);

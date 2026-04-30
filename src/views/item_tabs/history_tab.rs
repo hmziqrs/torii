@@ -864,6 +864,27 @@ fn open_history_details_dialog(
         .response_meta_v2_json
         .as_deref()
         .and_then(|raw| serde_json::from_str::<crate::domain::response::ResponseMetaV2>(raw).ok());
+    let details_body_preview = {
+        let services = cx
+            .global::<crate::services::app_services::AppServicesGlobal>()
+            .0
+            .clone();
+        let bytes = match &entry.blob_hash {
+            Some(hash) => services.blob_store.read_all(hash).ok().unwrap_or_default(),
+            None => Vec::new(),
+        };
+        if bytes.is_empty() {
+            None
+        } else {
+            let cap = crate::domain::response::ResponseBudgets::PREVIEW_CAP_BYTES.min(bytes.len());
+            let raw = String::from_utf8_lossy(&bytes[..cap]).to_string();
+            Some(if bytes.len() > cap {
+                format!("{raw}\n… truncated")
+            } else {
+                raw
+            })
+        }
+    };
     let entry_for_copy = entry.clone();
 
     window.open_dialog(cx, move |dialog, _, _| {
@@ -872,7 +893,11 @@ fn open_history_details_dialog(
             .overlay_closable(true)
             .keyboard(true)
             .child(
-                v_flex()
+                div()
+                    .max_h(px(480.))
+                    .overflow_y_scrollbar()
+                    .child(
+                        v_flex()
                     .gap_2()
                     .child(format!(
                         "{}: {}",
@@ -1013,6 +1038,9 @@ fn open_history_details_dialog(
                             run_summary
                         ))
                     })
+                    .when_some(details_body_preview.clone(), |el, body| {
+                        el.child(format!("Body Preview:\n{body}"))
+                    })
                     .when_some(details_request_snapshot.clone(), |el, request_snapshot| {
                         el.child(format!(
                             "{}:\n{}",
@@ -1020,6 +1048,7 @@ fn open_history_details_dialog(
                             request_snapshot
                         ))
                     }),
+                    ),
             )
             .footer(
                 h_flex()
@@ -1182,6 +1211,7 @@ fn open_history_compare_dialog(report: String, window: &mut gpui::Window, cx: &m
             .child(
                 div().max_h(px(420.)).overflow_y_scrollbar().child(
                     div()
+                        .overflow_x_scrollbar()
                         .text_xs()
                         .font_family("monospace")
                         .child(report.clone()),

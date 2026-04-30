@@ -20,6 +20,7 @@ pub struct RecoveryCoordinator {
     history_repo: HistoryRepoRef,
     blob_store: Arc<BlobStore>,
     stale_temp_max_age: Duration,
+    history_retention_days: i64,
 }
 
 impl RecoveryCoordinator {
@@ -33,11 +34,17 @@ impl RecoveryCoordinator {
             history_repo,
             blob_store,
             stale_temp_max_age: Duration::from_secs(60 * 60 * 24),
+            history_retention_days: 30,
         }
     }
 
     pub fn with_stale_temp_max_age(mut self, stale_temp_max_age: Duration) -> Self {
         self.stale_temp_max_age = stale_temp_max_age;
+        self
+    }
+
+    pub fn with_history_retention_days(mut self, days: i64) -> Self {
+        self.history_retention_days = days.max(1);
         self
     }
 
@@ -52,6 +59,33 @@ impl RecoveryCoordinator {
             .history_repo
             .mark_pending_as_failed_on_startup()
             .context("failed to reconcile pending history rows")?;
+        let history_retention_cutoff_ms = time::OffsetDateTime::now_utc()
+            .checked_sub(time::Duration::days(self.history_retention_days))
+            .map(|ts| ts.unix_timestamp() * 1000)
+            .unwrap_or(0);
+        let workspace_ids = self
+            .db
+            .block_on(async {
+                let workspace_rows = sqlx::query(
+                    "SELECT DISTINCT workspace_id FROM history_index WHERE workspace_id IS NOT NULL",
+                )
+                .fetch_all(self.db.pool())
+                .await?;
+                let mut ids = Vec::new();
+                for row in workspace_rows {
+                    let workspace_id: String = sqlx::Row::get(&row, "workspace_id");
+                    ids.push(crate::domain::ids::WorkspaceId::parse(&workspace_id)?);
+                }
+                Ok::<Vec<crate::domain::ids::WorkspaceId>, anyhow::Error>(ids)
+            })
+            .context("failed to enumerate workspaces for history retention pruning")?;
+        let mut deleted_history_rows = 0usize;
+        for workspace_id in workspace_ids {
+            deleted_history_rows += self
+                .history_repo
+                .delete_before(workspace_id, history_retention_cutoff_ms)
+                .context("failed to prune retained history rows during startup recovery")?;
+        }
 
         let referenced_hashes: HashSet<String> = self
             .history_repo
@@ -116,6 +150,7 @@ impl RecoveryCoordinator {
             stale_temp_removed = report.stale_temp_removed,
             orphan_blob_removed = report.orphan_blob_removed,
             pending_history_failed = report.pending_history_failed,
+            deleted_history_rows,
             "startup recovery completed"
         );
 
