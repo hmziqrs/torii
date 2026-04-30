@@ -274,6 +274,8 @@ impl RequestTabView {
                         self.request_history_entries.iter().cloned().map(|entry| {
                             let state = format!("{:?}", entry.state);
                             let entry_for_restore = entry.clone();
+                            let entry_for_compare = entry.clone();
+                            let entry_for_details = entry.clone();
                             v_flex()
                                 .gap_1()
                                 .p_2()
@@ -288,36 +290,127 @@ impl RequestTabView {
                                     state,
                                     format_history_timestamp(entry.started_at)
                                 )))
-                                .child(
-                                    h_flex().gap_2().child(
-                                        Button::new(format!(
-                                            "request-history-inline-restore-{}",
-                                            entry.id
-                                        ))
-                                        .ghost()
-                                        .xsmall()
-                                        .label(es_fluent::localize(
-                                            "request_tab_history_restore",
-                                            None,
-                                        ))
-                                        .on_click(
-                                            cx.listener(move |this, _, window, cx| {
-                                                match this.restore_from_history_entry(
-                                                    entry_for_restore.clone(),
-                                                    cx,
-                                                ) {
+                                .child(h_flex().gap_2()
+                                    .child(
+                                        Button::new(format!("request-history-inline-restore-{}", entry.id))
+                                            .ghost()
+                                            .xsmall()
+                                            .label(es_fluent::localize("request_tab_history_restore", None))
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                match this.restore_from_history_entry(entry_for_restore.clone(), cx) {
                                                     Ok(()) => window.push_notification(
-                                                        es_fluent::localize(
-                                                            "request_tab_history_restore_ok",
-                                                            None,
-                                                        ),
+                                                        es_fluent::localize("request_tab_history_restore_ok", None),
                                                         cx,
                                                     ),
                                                     Err(err) => window.push_notification(err, cx),
                                                 }
-                                            }),
-                                        ),
-                                    ),
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new(format!("request-history-inline-compare-{}", entry.id))
+                                            .ghost()
+                                            .xsmall()
+                                            .label(es_fluent::localize("history_tab_compare_previous", None))
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                let current_ix = this
+                                                    .request_history_entries
+                                                    .iter()
+                                                    .position(|it| it.id == entry_for_compare.id);
+                                                let report = current_ix.and_then(|ix| {
+                                                    this.request_history_entries
+                                                        .iter()
+                                                        .skip(ix + 1)
+                                                        .find(|candidate| {
+                                                            candidate.protocol_kind == entry_for_compare.protocol_kind
+                                                                && candidate.method.eq_ignore_ascii_case(&entry_for_compare.method)
+                                                                && candidate.url == entry_for_compare.url
+                                                        })
+                                                        .map(|previous| serde_json::json!({
+                                                            "current": {
+                                                                "id": entry_for_compare.id.to_string(),
+                                                                "protocol": entry_for_compare.protocol_kind,
+                                                                "method": entry_for_compare.method,
+                                                                "url": entry_for_compare.url,
+                                                                "state": format!("{:?}", entry_for_compare.state),
+                                                                "status_code": entry_for_compare.status_code,
+                                                                "started_at": entry_for_compare.started_at,
+                                                            },
+                                                            "previous": {
+                                                                "id": previous.id.to_string(),
+                                                                "protocol": previous.protocol_kind,
+                                                                "method": previous.method,
+                                                                "url": previous.url,
+                                                                "state": format!("{:?}", previous.state),
+                                                                "status_code": previous.status_code,
+                                                                "started_at": previous.started_at,
+                                                            },
+                                                        }))
+                                                });
+                                                let Some(report) = report else {
+                                                    window.push_notification(
+                                                        es_fluent::localize("history_tab_compare_no_previous", None),
+                                                        cx,
+                                                    );
+                                                    return;
+                                                };
+                                                let report = serde_json::to_string_pretty(&report)
+                                                    .unwrap_or_else(|_| "{}".to_string());
+                                                window.open_dialog(cx, move |dialog, _, _| {
+                                                    dialog
+                                                        .title(es_fluent::localize("history_tab_compare_previous", None))
+                                                        .overlay_closable(true)
+                                                        .keyboard(true)
+                                                        .child(
+                                                            div()
+                                                                .h(px(360.))
+                                                                .overflow_y_scrollbar()
+                                                                .child(div().text_xs().font_family("monospace").child(report.clone())),
+                                                        )
+                                                        .footer(
+                                                            h_flex().justify_end().child(
+                                                                Button::new("request-history-inline-compare-close")
+                                                                    .primary()
+                                                                    .label(es_fluent::localize("history_tab_dialog_cancel", None))
+                                                                    .on_click(move |_, window, cx| {
+                                                                        window.close_dialog(cx);
+                                                                    }),
+                                                            ),
+                                                        )
+                                                });
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new(format!("request-history-inline-details-{}", entry.id))
+                                            .ghost()
+                                            .xsmall()
+                                            .label(es_fluent::localize("history_tab_details", None))
+                                            .on_click(cx.listener(move |_, _, window, cx| {
+                                                let raw = serde_json::to_string_pretty(&entry_for_details)
+                                                    .unwrap_or_else(|_| "{}".to_string());
+                                                window.open_dialog(cx, move |dialog, _, _| {
+                                                    dialog
+                                                        .title(es_fluent::localize("history_tab_details", None))
+                                                        .overlay_closable(true)
+                                                        .keyboard(true)
+                                                        .child(
+                                                            div()
+                                                                .h(px(360.))
+                                                                .overflow_y_scrollbar()
+                                                                .child(div().text_xs().font_family("monospace").child(raw.clone())),
+                                                        )
+                                                        .footer(
+                                                            h_flex().justify_end().child(
+                                                                Button::new("request-history-inline-details-close")
+                                                                    .primary()
+                                                                    .label(es_fluent::localize("history_tab_dialog_cancel", None))
+                                                                    .on_click(move |_, window, cx| {
+                                                                        window.close_dialog(cx);
+                                                                    }),
+                                                            ),
+                                                        )
+                                                });
+                                            })),
+                                    )
                                 )
                         }),
                     )),
