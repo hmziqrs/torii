@@ -25,7 +25,7 @@
 
 ### 0.2 Still Pending In This Phase
 
-- [ ] True virtualized global history row delegate/table (current implementation is paginated but still eager card rendering).
+- [x] Virtualized global history row rendering via `uniform_list` (replaces eager full-card list rendering path).
 - [x] First-class per-request history panel in request editor section (modal history flow removed).
 - [x] History details pane parity updates shipped (dedicated headers/cookies/timing/body preview inspection affordances in details flows).
 - [x] Automated retention policy on startup recovery (default 30-day prune) plus manual prune controls.

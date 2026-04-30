@@ -1,6 +1,6 @@
 use gpui::{
     AnyElement, IntoElement, ParentElement, Styled as _, WeakEntity, div,
-    prelude::FluentBuilder as _, px,
+    prelude::FluentBuilder as _, px, uniform_list,
 };
 use gpui_component::{
     Disableable as _, Selectable as _, Sizable as _, WindowExt as _,
@@ -22,6 +22,7 @@ pub(crate) fn render(
     workspace_id: WorkspaceId,
     view: &HistoryWorkspaceView,
     root: WeakEntity<AppRoot>,
+    cx: &mut gpui::Context<AppRoot>,
 ) -> AnyElement {
     let weak_root_refresh = root.clone();
     let state_filter = view.state_filter;
@@ -36,7 +37,7 @@ pub(crate) fn render(
         || view.status_family_filter.is_some()
         || view.started_after.is_some()
         || view.started_before.is_some();
-    let grouped = group_entries(entries, view.group_by);
+    let rows_for_list: Vec<HistoryEntry> = entries.to_vec();
     let weak_root_search = root.clone();
     let weak_root_prune = root.clone();
     let weak_root_method = root.clone();
@@ -384,7 +385,34 @@ pub(crate) fn render(
                 .into_iter()
                 .map(|label| chip(label).into_any_element()),
         )
-        .children(history_rows_elements(&grouped, has_filters, root.clone()))
+        .child(div().flex_1().min_h_0().child(if rows_for_list.is_empty() {
+            div()
+                .text_color(gpui::transparent_black())
+                .child(if has_filters {
+                    es_fluent::localize("history_tab_no_results", None)
+                } else {
+                    es_fluent::localize("history_tab_empty", None)
+                })
+                .into_any_element()
+        } else {
+            uniform_list(
+                "history-virtualized-rows",
+                rows_for_list.len(),
+                cx.processor(move |_this, range: std::ops::Range<usize>, _window, _cx| {
+                    let mut items = Vec::with_capacity(range.end.saturating_sub(range.start));
+                    for ix in range {
+                        if let Some(entry) = rows_for_list.get(ix) {
+                            items.push(
+                                render_history_row(entry.clone(), root.clone()).into_any_element(),
+                            );
+                        }
+                    }
+                    items
+                }),
+            )
+            .h_full()
+            .into_any_element()
+        }))
         .child(
             h_flex().justify_center().child(
                 Button::new("history-load-more-bottom")
@@ -404,6 +432,153 @@ pub(crate) fn render(
             ),
         )
         .into_any_element()
+}
+
+fn render_history_row(entry: HistoryEntry, root: WeakEntity<AppRoot>) -> impl IntoElement {
+    let weak_root_open = root.clone();
+    let weak_root_details = root.clone();
+    let weak_root_restore = root.clone();
+    let weak_root_compare = root.clone();
+    let request_id = entry.request_id;
+    let entry_id = entry.id;
+    let details_entry = entry.clone();
+    let entry_for_restore = entry.clone();
+    let entry_for_compare = entry.clone();
+    let meta_row = {
+        let mut row = h_flex()
+            .gap_3()
+            .text_sm()
+            .text_color(gpui::transparent_black())
+            .child(format!(
+                "{}: {}",
+                es_fluent::localize("history_tab_started_at", None),
+                format_history_timestamp(entry.started_at)
+            ));
+        if let Some(completed_at) = entry.completed_at {
+            row = row.child(format!(
+                "{}: {}",
+                es_fluent::localize("history_tab_completed_at", None),
+                format_history_timestamp(completed_at)
+            ));
+        }
+        row
+    };
+    v_flex()
+        .gap_1()
+        .p_3()
+        .rounded(px(6.))
+        .border_1()
+        .child(
+            h_flex()
+                .justify_between()
+                .items_center()
+                .child(format!(
+                    "[{}] {} {}",
+                    protocol_label(&entry),
+                    entry.method,
+                    entry.url
+                ))
+                .child(status_chip(entry.state, entry.status_code)),
+        )
+        .child(meta_row)
+        .child(
+            h_flex()
+                .gap_2()
+                .child(
+                    Button::new(format!("history-compare-request-{entry_id}"))
+                        .ghost()
+                        .xsmall()
+                        .label(es_fluent::localize("history_tab_compare_previous", None))
+                        .on_click(move |_, window, cx| {
+                            match weak_root_compare.update(cx, |this, cx| {
+                                this.compare_history_entry_with_previous(&entry_for_compare, cx)
+                            }) {
+                                Ok(Ok(report)) => open_history_compare_dialog(report, window, cx),
+                                Ok(Err(err)) => window.push_notification(err, cx),
+                                Err(_) => window.push_notification(
+                                    es_fluent::localize("history_tab_compare_failed", None),
+                                    cx,
+                                ),
+                            }
+                        }),
+                )
+                .child(
+                    Button::new(format!("history-select-entry-{entry_id}"))
+                        .ghost()
+                        .xsmall()
+                        .label(es_fluent::localize("history_tab_details", None))
+                        .on_click(move |_, window, cx| {
+                            open_history_details_dialog(
+                                details_entry.clone(),
+                                weak_root_details.clone(),
+                                window,
+                                cx,
+                            );
+                        }),
+                )
+                .child(
+                    Button::new(format!("history-open-request-{entry_id}"))
+                        .ghost()
+                        .xsmall()
+                        .disabled(request_id.is_none())
+                        .label(es_fluent::localize("history_tab_open_request", None))
+                        .on_click(move |_, window, cx| {
+                            let _ = weak_root_open.update(cx, |this, cx| {
+                                let Some(request_id) = request_id else {
+                                    window.push_notification(
+                                        es_fluent::localize(
+                                            "history_tab_open_request_no_request",
+                                            None,
+                                        ),
+                                        cx,
+                                    );
+                                    return;
+                                };
+                                let item_key =
+                                    crate::session::item_key::ItemKey::request(request_id);
+                                if !this.can_open_item(item_key) {
+                                    window.push_notification(
+                                        es_fluent::localize(
+                                            "history_tab_open_request_deleted",
+                                            None,
+                                        ),
+                                        cx,
+                                    );
+                                    return;
+                                }
+                                this.open_item(item_key, cx);
+                            });
+                        }),
+                )
+                .child(
+                    Button::new(format!("history-restore-request-{entry_id}"))
+                        .ghost()
+                        .xsmall()
+                        .label(es_fluent::localize("history_tab_restore", None))
+                        .on_click(move |_, window, cx| {
+                            match weak_root_restore.update(cx, |this, cx| {
+                                this.restore_history_entry(entry_for_restore.clone(), window, cx)
+                            }) {
+                                Ok(Ok(created_draft)) => {
+                                    if created_draft {
+                                        window.push_notification(
+                                            es_fluent::localize(
+                                                "history_tab_restore_draft_created",
+                                                None,
+                                            ),
+                                            cx,
+                                        );
+                                    }
+                                }
+                                Ok(Err(err)) => window.push_notification(err, cx),
+                                Err(_) => window.push_notification(
+                                    es_fluent::localize("history_tab_restore_draft_failed", None),
+                                    cx,
+                                ),
+                            }
+                        }),
+                ),
+        )
 }
 
 fn history_rows_elements(

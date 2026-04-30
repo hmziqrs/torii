@@ -1196,7 +1196,7 @@ impl AppRoot {
                         .history_views_by_workspace
                         .entry(workspace_id)
                         .or_default();
-                    history_tab::render(workspace_id, view, cx.entity().downgrade())
+                    history_tab::render(workspace_id, view, cx.entity().downgrade(), cx)
                 })
                 .unwrap_or_else(|| {
                     render_empty_state(
