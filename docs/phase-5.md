@@ -23,12 +23,13 @@
 - [x] History compare fallback handles non-linked/file-system rows via workspace/protocol/method/url matching.
 - [x] History details inspector now shows richer response inspection context (status, media type, response size, header preview, timing preview, transcript metadata, run summary, request snapshot, JSON copy).
 
-### 0.2 Still Pending In This Phase
+### 0.2 History Scope Status
 
 - [x] Virtualized global history row rendering via `uniform_list` (replaces eager full-card list rendering path).
 - [x] First-class per-request history panel in request editor section (modal history flow removed).
 - [x] History details pane parity updates shipped (dedicated headers/cookies/timing/body preview inspection affordances in details flows).
 - [x] Automated retention policy on startup recovery (default 30-day prune) plus manual prune controls.
+- [x] History module implementation complete for Phase 5 scope.
 
 ## 1. Objective
 
