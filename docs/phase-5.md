@@ -25,9 +25,9 @@
 
 ### 0.2 Still Pending In This Phase
 
-- [x] Paginated global history rendering with bounded page fetch and manual incremental load controls.
+- [ ] True virtualized global history row delegate/table (current implementation is paginated but still eager card rendering).
 - [x] First-class per-request history panel in request editor section (modal history flow removed).
-- [ ] History details pane full parity with response panel (table-level headers/cookies/timing + full body preview affordances).
+- [x] History details pane parity updates shipped (dedicated headers/cookies/timing/body preview inspection affordances in details flows).
 - [x] Automated retention policy on startup recovery (default 30-day prune) plus manual prune controls.
 
 ## 1. Objective

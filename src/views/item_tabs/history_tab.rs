@@ -894,7 +894,7 @@ fn open_history_details_dialog(
             .keyboard(true)
             .child(
                 div()
-                    .max_h(px(480.))
+                    .h(px(480.))
                     .overflow_y_scrollbar()
                     .child(
                         v_flex()
@@ -1055,6 +1055,65 @@ fn open_history_details_dialog(
                     .justify_end()
                     .gap_2()
                     .child({
+                        let headers = details_headers_preview.clone();
+                        Button::new(format!("history-details-open-headers-{}", entry.id))
+                            .ghost()
+                            .xsmall()
+                            .disabled(headers.is_none())
+                            .label("Headers")
+                            .on_click(move |_, window, cx| {
+                                if let Some(headers) = headers.clone() {
+                                    open_history_text_dialog(
+                                        "Headers".to_string(),
+                                        headers,
+                                        window,
+                                        cx,
+                                    );
+                                }
+                            })
+                    })
+                    .child({
+                        let body = details_body_preview.clone();
+                        Button::new(format!("history-details-open-body-{}", entry.id))
+                            .ghost()
+                            .xsmall()
+                            .disabled(body.is_none())
+                            .label("Body")
+                            .on_click(move |_, window, cx| {
+                                if let Some(body) = body.clone() {
+                                    open_history_text_dialog("Body Preview".to_string(), body, window, cx);
+                                }
+                            })
+                    })
+                    .child({
+                        let timing = details_meta.clone().map(|meta| {
+                            serde_json::to_string_pretty(&meta.phase_timings)
+                                .unwrap_or_else(|_| "{}".to_string())
+                        });
+                        Button::new(format!("history-details-open-timing-{}", entry.id))
+                            .ghost()
+                            .xsmall()
+                            .disabled(timing.is_none())
+                            .label("Timing")
+                            .on_click(move |_, window, cx| {
+                                if let Some(timing) = timing.clone() {
+                                    open_history_text_dialog("Timing".to_string(), timing, window, cx);
+                                }
+                            })
+                    })
+                    .child({
+                        let cookies = details_headers.clone();
+                        Button::new(format!("history-details-open-cookies-{}", entry.id))
+                            .ghost()
+                            .xsmall()
+                            .disabled(cookies.is_empty())
+                            .label("Cookies")
+                            .on_click(move |_, window, cx| {
+                                let text = format_history_cookies(&cookies);
+                                open_history_text_dialog("Cookies".to_string(), text, window, cx);
+                            })
+                    })
+                    .child({
                         let weak_root_open = weak_root_open.clone();
                         let request_id = request_id.clone();
                         Button::new(format!("history-details-open-request-{}", entry.id))
@@ -1209,7 +1268,7 @@ fn open_history_compare_dialog(report: String, window: &mut gpui::Window, cx: &m
             .overlay_closable(true)
             .keyboard(true)
             .child(
-                div().max_h(px(420.)).overflow_y_scrollbar().child(
+                div().h(px(420.)).overflow_y_scrollbar().child(
                     div()
                         .overflow_x_scrollbar()
                         .text_xs()
@@ -1229,6 +1288,53 @@ fn open_history_compare_dialog(report: String, window: &mut gpui::Window, cx: &m
                 ),
             )
     });
+}
+
+fn open_history_text_dialog(
+    title: String,
+    content: String,
+    window: &mut gpui::Window,
+    cx: &mut gpui::App,
+) {
+    window.open_dialog(cx, move |dialog, _, _| {
+        dialog
+            .title(title.clone())
+            .overlay_closable(true)
+            .keyboard(true)
+            .child(
+                div().h(px(420.)).overflow_y_scrollbar().child(
+                    div()
+                        .text_xs()
+                        .font_family("monospace")
+                        .child(content.clone()),
+                ),
+            )
+            .footer(
+                h_flex().justify_end().child(
+                    Button::new("history-text-close")
+                        .primary()
+                        .xsmall()
+                        .label(es_fluent::localize("history_tab_dialog_cancel", None))
+                        .on_click(move |_, window, cx| {
+                            window.close_dialog(cx);
+                        }),
+                ),
+            )
+    });
+}
+
+fn format_history_cookies(headers: &[crate::domain::response::ResponseHeaderRow]) -> String {
+    let mut rows = Vec::new();
+    for header in headers {
+        if header.name.eq_ignore_ascii_case("set-cookie") {
+            rows.push(header.value.clone());
+        }
+    }
+    if rows.is_empty() {
+        "No Set-Cookie headers".to_string()
+    } else {
+        rows.join("\n")
+    }
 }
 
 fn protocol_label(entry: &HistoryEntry) -> String {
